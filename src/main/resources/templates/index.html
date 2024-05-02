@@ -106,10 +106,11 @@
     setInterval(refreshChart, 3000);
 
     // 屏幕直播
-    const myVideo = document.getElementById('myVideo');
-    myVideo.addEventListener('ended', function() {
-        log.info('video ended');
-        myVideo.src = '/api/screenshot/hls.m3u8';
+    const myVideo = videojs('myVideo');
+    myVideo.on('ended', function() {
+        log.info('video play ended');
+        myVideo.src('http://127.0.0.1:8080/api/screenshot/hls.m3u8?refresh' + Math.random());
+        myVideo.play();
     });
 </script>
 </body>
