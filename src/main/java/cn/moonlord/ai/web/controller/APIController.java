@@ -1,16 +1,15 @@
 package cn.moonlord.ai.web.controller;
 
+import cn.moonlord.ai.run.PerformanceRecorder;
 import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import oshi.SystemInfo;
-import oshi.hardware.HardwareAbstractionLayer;
-import oshi.software.os.OperatingSystem;
 
 import javax.imageio.ImageIO;
 import java.awt.*;
@@ -21,15 +20,20 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
+@Slf4j
 @CrossOrigin(origins = "*")
 @RestController
-@Slf4j
 public class APIController {
 
-    private static final PerformanceVO performance = new PerformanceVO();
+    @Autowired
+    private PerformanceRecorder performanceRecorder;
+
+    private static final ConcurrentLinkedDeque<String> videoCache = new ConcurrentLinkedDeque<>();
     private static final Map<String, Object> cache = new ConcurrentHashMap<>();
 
+    @SneakyThrows
     @RequestMapping("/api")
     public String api() {
         return "Hello World";
@@ -38,22 +42,8 @@ public class APIController {
     @SneakyThrows
     @RequestMapping("/api/performance")
     public PerformanceVO performance() {
-        HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
-        OperatingSystem operatingSystem = new SystemInfo().getOperatingSystem();
-
-        String computerName = operatingSystem.getNetworkParams().getHostName();
-        double cpuLoad = hardware.getProcessor().getSystemCpuLoad(1000);
-        double availableMemory = hardware.getMemory().getAvailable();
-        double totalMemory = hardware.getMemory().getTotal();
-        double availableDisk = operatingSystem.getFileSystem().getFileStores().get(0).getUsableSpace();
-        double totalDisk = operatingSystem.getFileSystem().getFileStores().get(0).getTotalSpace();
-
-        Long cpu = Math.round(cpuLoad * 100);
-        Long memory = Math.round((totalMemory - availableMemory) / totalMemory * 100);
-        Long disk = Math.round((totalDisk - availableDisk) / totalDisk * 100);
-        performance.setComputerName(computerName);
-        performance.addRecord(cpu, memory, disk);
-        return performance;
+        performanceRecorder.record();
+        return performanceRecorder.getPerformance();
     }
 
     @SneakyThrows

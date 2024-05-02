@@ -22,13 +22,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class PerformanceVO {
 
     @JsonIgnore
-    private volatile CopyOnWriteArrayList<RecordVO> records = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<RecordVO> records = new CopyOnWriteArrayList<>();
     @JsonIgnore
-    private String computerName;
+    private volatile String computerName;
 
     private volatile List<String> labels = new ArrayList<>();
     private volatile List<DatasetVO> datasets = new ArrayList<>();
 
+    @SneakyThrows
     public synchronized void addRecord(@NotNull Long cpu, @NotNull Long memory, @NotNull Long disk) {
         records.add(new RecordVO(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")), cpu, memory, disk));
         if (records.size() > 10L) {
@@ -40,6 +41,12 @@ public class PerformanceVO {
         tmp.add(new DatasetVO().setType("bar").setLabel("Memory").setData(records.stream().map(record -> record.memory).toList()));
         tmp.add(new DatasetVO().setType("bar").setLabel("Disk").setData(records.stream().map(record -> record.disk).toList()));
         datasets = tmp;
+    }
+
+    @SneakyThrows
+    @Override
+    public String toString() {
+        return (new ObjectMapper()).writeValueAsString(this);
     }
 
     @Data
@@ -54,6 +61,7 @@ public class PerformanceVO {
         private String borderColor = "#c0c0c0"; // gray
         private String borderWidth = "1";
 
+        @SneakyThrows
         public DatasetVO setData(List<Long> data) {
             this.data = data;
             this.backgroundColor = data.stream().map(usage -> {
@@ -80,12 +88,6 @@ public class PerformanceVO {
         private Long cpu;
         private Long memory;
         private Long disk;
-    }
-
-    @SneakyThrows
-    @Override
-    public String toString() {
-        return (new ObjectMapper()).writeValueAsString(this);
     }
 
 }
