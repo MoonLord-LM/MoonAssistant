@@ -4,6 +4,7 @@ import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.Data;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import oshi.SystemInfo;
@@ -20,10 +21,9 @@ public class PerformanceRecorder {
     private volatile Long lastRefreshTime = System.currentTimeMillis();
 
     @SneakyThrows
-    @Scheduled(fixedRate = 10 * 60 * 1000)
-    public synchronized void record() {
-        lastRefreshTime = System.currentTimeMillis();
-
+    @Async
+    @Scheduled(fixedRate = 3 * 1000)
+    public void record() {
         HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
         OperatingSystem operatingSystem = new SystemInfo().getOperatingSystem();
 
@@ -39,14 +39,7 @@ public class PerformanceRecorder {
         Long disk = Math.round((totalDisk - availableDisk) / totalDisk * 100);
         performance.setComputerName(computerName);
         performance.addRecord(cpu, memory, disk);
-    }
-
-    @SneakyThrows
-    public PerformanceVO getPerformance() {
-        if(performance.getRecords().isEmpty() || System.currentTimeMillis() - lastRefreshTime >= 3000){
-            record();
-        }
-        return performance;
+        lastRefreshTime = System.currentTimeMillis();
     }
 
 }

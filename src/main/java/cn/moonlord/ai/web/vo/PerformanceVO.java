@@ -23,10 +23,12 @@ public class PerformanceVO {
 
     @JsonIgnore
     private final CopyOnWriteArrayList<RecordVO> records = new CopyOnWriteArrayList<>();
+
     @JsonIgnore
     private volatile String computerName;
 
     private volatile List<String> labels = new ArrayList<>();
+
     private volatile List<DatasetVO> datasets = new ArrayList<>();
 
     @SneakyThrows

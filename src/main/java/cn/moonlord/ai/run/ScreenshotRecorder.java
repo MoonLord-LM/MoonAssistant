@@ -3,6 +3,7 @@ package cn.moonlord.ai.run;
 import lombok.Data;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -17,13 +18,10 @@ public class ScreenshotRecorder {
 
     private volatile BufferedImage screenCapture;
 
-    private volatile Long lastRefreshTime = System.currentTimeMillis();
-
     @SneakyThrows
-    @Scheduled(fixedRate = 10 * 60 * 1000)
-    public synchronized void record() {
-        lastRefreshTime = System.currentTimeMillis();
-
+    @Async
+    @Scheduled(fixedRate = 2 * 1000)
+    public void record() {
         // fix: java.awt.AWTException: headless environment
         System.setProperty("java.awt.headless", "false");
 
@@ -40,14 +38,6 @@ public class ScreenshotRecorder {
         Robot robot = new Robot();
         List<Image> captures = robot.createMultiResolutionScreenCapture(virtualRectangle).getResolutionVariants();
         screenCapture = (BufferedImage) captures.get(captures.size() - 1);
-    }
-
-    @SneakyThrows
-    public BufferedImage getScreenCapture() {
-        if (screenCapture == null || System.currentTimeMillis() - lastRefreshTime >= 2000) {
-            record();
-        }
-        return screenCapture;
     }
 
     @SneakyThrows
