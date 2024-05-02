@@ -60,11 +60,6 @@ public class ScreenshotVideoRecorder {
     }
 
     @SneakyThrows
-    public byte[] getData() {
-        return (byte[]) videoCache.getLast().get("data");
-    }
-
-    @SneakyThrows
     public String getHLSPlaylist() {
         StringBuilder m3u8 = new StringBuilder();
         m3u8.append("#EXTM3U\n");
@@ -77,6 +72,15 @@ public class ScreenshotVideoRecorder {
         }
         m3u8.append("#EXT-X-ENDLIST");
         return m3u8.toString();
+    }
+
+    @SneakyThrows
+    public byte[] getData() {
+        if (videoCache.isEmpty()) {
+            // fix: java.lang.NullPointerException
+            record();
+        }
+        return (byte[]) videoCache.getLast().get("data");
     }
 
 }

@@ -62,4 +62,13 @@ public class ScreenshotRecorder {
         return screenCapture;
     }
 
+    @SneakyThrows
+    public BufferedImage getScreenCapture() {
+        if (screenCapture == null) {
+            // fix: java.lang.NullPointerException
+            record();
+        }
+        return this.screenCapture;
+    }
+
 }
