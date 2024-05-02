@@ -52,7 +52,6 @@ public class ScreenshotVideoRecorder {
         log.info("record exitCode: {}", exitCode);
 
         byte[] data = IOUtils.toByteArray(new FileInputStream(fileName));
-        FileUtils.delete(new File(fileName));
         log.info("record data: {}", data.length);
 
         Properties video = new Properties();
