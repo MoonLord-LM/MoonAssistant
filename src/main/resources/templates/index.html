@@ -43,7 +43,7 @@
                     <span th:text="${performance.getComputerName()}"></span>
                     <span>屏幕直播</span>
                 </p>
-                <video id="video-player" class="video-js" controls preload="auto" data-setup='{}'>
+                <video class="video-js" controls preload="auto" data-setup='{"fluid": true}'>
                     <source src="/api/screenshot/hls.m3u8" type="application/x-mpegURL">
                 </video>
             </div>
@@ -69,7 +69,7 @@
     const screenshot = document.getElementById('screenshot');
     const refreshScreenshot = function () {
         let url = new URL(screenshot.src);
-        if(url.searchParams.has('refresh')){
+        if (url.searchParams.has('refresh')) {
             url.searchParams.set('refresh', Math.random());
         }
         var img = new Image();
