@@ -52,7 +52,7 @@ public class APIController {
 
     @SneakyThrows
     @RequestMapping("/api/screenshot")
-    public ResponseEntity<byte[]> screenshot(@RequestParam(value = "scale", required = false) Double scale) {
+    public ResponseEntity<byte[]> screenshot(@RequestParam(value = "scale", required = false) Double scale, @RequestParam(value = "format", required = false) String format) {
         // fix: java.awt.AWTException: headless environment
         System.setProperty("java.awt.headless", "false");
 
@@ -76,14 +76,29 @@ public class APIController {
             int scaledHeight = (int) (screenCapture.getHeight() * scale);
             BufferedImage scaledImage = new BufferedImage(scaledWidth, scaledHeight, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = scaledImage.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
             g.drawImage(screenCapture, 0, 0, scaledWidth, scaledHeight, null);
             g.dispose();
             screenCapture = scaledImage;
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        ImageIO.write(screenCapture, "png", output);
-        return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.IMAGE_PNG_VALUE)).body(output.toByteArray());
+        if (format != null && format.equals("jpg")) {
+            ImageIO.write(screenCapture, "jpg", output);
+            return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.IMAGE_JPEG_VALUE)).body(output.toByteArray());
+        } else if (format != null && format.equals("gif")) {
+            ImageIO.write(screenCapture, "gif", output);
+            return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.IMAGE_GIF_VALUE)).body(output.toByteArray());
+        } else {
+            ImageIO.write(screenCapture, "png", output);
+            return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.IMAGE_PNG_VALUE)).body(output.toByteArray());
+        }
     }
 
 }
