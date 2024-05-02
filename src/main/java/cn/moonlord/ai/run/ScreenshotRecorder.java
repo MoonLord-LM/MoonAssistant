@@ -44,7 +44,7 @@ public class ScreenshotRecorder {
 
     @SneakyThrows
     public BufferedImage getScreenCapture() {
-        if(screenCapture == null || System.currentTimeMillis() - lastRefreshTime < 2000){
+        if(screenCapture == null || System.currentTimeMillis() - lastRefreshTime >= 2000){
             record();
         }
         return screenCapture;

@@ -43,7 +43,7 @@ public class PerformanceRecorder {
 
     @SneakyThrows
     public PerformanceVO getPerformance() {
-        if(performance.getRecords().isEmpty() || System.currentTimeMillis() - lastRefreshTime < 3000){
+        if(performance.getRecords().isEmpty() || System.currentTimeMillis() - lastRefreshTime >= 3000){
             record();
         }
         return performance;
