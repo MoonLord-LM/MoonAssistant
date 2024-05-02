@@ -3,8 +3,10 @@ package cn.moonlord.ai.web.controller;
 import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.tomcat.util.http.fileupload.IOUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -15,7 +17,11 @@ import oshi.software.os.OperatingSystem;
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 @RestController
@@ -99,6 +105,60 @@ public class APIController {
             ImageIO.write(screenCapture, "png", output);
             return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.IMAGE_PNG_VALUE)).body(output.toByteArray());
         }
+    }
+
+    @SneakyThrows
+    @RequestMapping("/api/screenshot/hls.m3u8")
+    public String getHLSPlaylist() {
+        Long videoTimeSecond = 6L;
+        StringBuilder playlist = new StringBuilder();
+        playlist.append("#EXTM3U\r\n");
+        playlist.append("#EXT-X-VERSION:3\r\n");
+        playlist.append("#EXT-X-TARGETDURATION:").append(videoTimeSecond).append("\r\n");
+        playlist.append("#EXT-X-MEDIA-SEQUENCE:1\r\n");
+        playlist.append("\r\n");
+        for (int i = 1; i <= 100; i++) {
+            playlist.append("#EXTINF:").append(videoTimeSecond).append(",\r\n");
+            playlist.append("segment-").append(i).append(".ts\r\n");
+        }
+        playlist.append("\r\n");
+        playlist.append("#EXT-X-ENDLIST\r\n");
+        return playlist.toString();
+    }
+
+    @SneakyThrows
+    @RequestMapping("/api/screenshot/segment-{segmentNumber}.ts")
+    public synchronized ResponseEntity<byte[]> getHLSSegment(@PathVariable("segmentNumber") Long segmentNumber) {
+        log.info("getHLSSegment i: {}", segmentNumber);
+        Long videoTimeSecond = 6L;
+        String filePath = segmentNumber + ".ts";
+
+        if(Path.of(filePath).toFile().exists()) {
+            return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body(Files.readAllBytes(Path.of(filePath)));
+        }
+
+        String[] command = {
+                "ffmpeg.exe",
+                "-f", "gdigrab",
+                "-framerate", "30",
+                "-t", String.valueOf(videoTimeSecond),
+                "-video_size", "1920x1080",
+                "-i", "desktop",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                filePath
+        };
+        ProcessBuilder pb = new ProcessBuilder(command);
+        Process process = pb.start();
+        process.getOutputStream().flush();
+        process.getOutputStream().close();
+        int exitCode = process.waitFor();
+        if (exitCode == 0) {
+            log.info("FFmpeg command executed successfully.");
+        } else {
+            log.info("FFmpeg command failed.");
+        }
+        return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body(Files.readAllBytes(Path.of(filePath)));
     }
 
 }

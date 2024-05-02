@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" integrity="sha512-jnSuA4Ss2PkkikSOLtYs8BlYIeeIK1h99ty4YfvRPAlzr377vr3CXDb7sb7eEEBYjDtcYj+AjBH3FLv5uSJuXg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js" integrity="sha512-7Pi/otdlbbCR+LnW+F7PwFcSDJOuUJB3OxtEHbg4vSMvzvJjde4Po1v4BR9Gdc9aXNUNFVUY+SK51wWT8WF0Gg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" integrity="sha512-ZwR1/gSZM3ai6vCdI+LVF1zSq/5HznD3ZSTk7kajkaj4D292NLuduDCO1c/NT8Id+jE58KYLKT7hXnbtryGmMg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/video.js/8.13.0/video-js.min.css" integrity="sha512-TPVEYi8BA+0OcvvK2ZC/iCcwFSuRz+m1XoVGJb4PO/WnRQjPASwxJe9dSbEqLG/kIE2OI2MUgsqdjdqgIZ40yA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/video.js/8.13.0/video.min.js" integrity="sha512-e8b+OnOdKNXYeEFhCuorZ/jKcNzOcg0QARMu30ViduYoM3fN2hw+42sA/ybIOCQarZo6WdT1SyAS3iPbeS1FDg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 
 <body>
@@ -19,7 +21,7 @@
                     <span th:text="${performance.getComputerName()}"></span>
                     <span>屏幕截图</span>
                 </p>
-                <img id="screenshot" src="/api/screenshot?scale=0.5&refresh=0" alt="Placeholder Image" class="img-fluid">
+                <img id="screenshot" src="/api/screenshot?scale=0.5&refresh=0" class="img-fluid">
             </div>
         </div>
         <div class="col-4 shadow">
@@ -32,6 +34,21 @@
             </div>
         </div>
         <div class="col-2"></div>
+    </div>
+    <div class="row">
+        <div class="col-2"></div>
+        <div class="col-4 shadow">
+            <div>
+                <p>
+                    <span th:text="${performance.getComputerName()}"></span>
+                    <span>屏幕直播</span>
+                </p>
+                <video id="video-player" class="video-js" controls preload="auto" data-setup='{}'>
+                    <source src="/api/screenshot/hls.m3u8" type="application/x-mpegURL">
+                </video>
+            </div>
+        </div>
+        <div class="col-6"></div>
     </div>
 </div>
 
