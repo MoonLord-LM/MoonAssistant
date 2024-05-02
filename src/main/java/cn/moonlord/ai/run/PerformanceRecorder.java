@@ -18,8 +18,6 @@ public class PerformanceRecorder {
 
     private final PerformanceVO performance = new PerformanceVO();
 
-    private volatile Long lastRefreshTime = System.currentTimeMillis();
-
     @SneakyThrows
     @Async
     @Scheduled(fixedRate = 3 * 1000)
@@ -39,7 +37,6 @@ public class PerformanceRecorder {
         Long disk = Math.round((totalDisk - availableDisk) / totalDisk * 100);
         performance.setComputerName(computerName);
         performance.addRecord(cpu, memory, disk);
-        lastRefreshTime = System.currentTimeMillis();
     }
 
 }
