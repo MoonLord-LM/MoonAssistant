@@ -18,7 +18,7 @@ public class CleanupRunner {
         File[] files = new File("./").listFiles((dir, name) -> name.endsWith(".ts"));
         if (files != null) {
             for (File file : files) {
-                FileUtils.delete(file);
+                FileUtils.deleteQuietly(file);
             }
         }
     }
