@@ -33,4 +33,7 @@ build/
 .vscode/
 
 ### Temp Files ###
+ffmpeg.exe
+ffplay.exe
+ffprobe.exe
 *.ts
