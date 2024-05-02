@@ -4,12 +4,10 @@ import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import oshi.SystemInfo;
 import oshi.hardware.HardwareAbstractionLayer;
 import oshi.software.os.OperatingSystem;
@@ -24,6 +22,7 @@ import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
+@CrossOrigin(origins = "*")
 @RestController
 @Slf4j
 public class APIController {
@@ -127,7 +126,28 @@ public class APIController {
 
             // ffmpeg
             String ffmpegCommand1 = "ffmpeg.exe -loglevel quiet -y -f gdigrab -i desktop -s 1280x720 -r 5 -t 30 -c:v libx264 -c:a aac -pix_fmt yuv420p " + filePath;
+            // TODO String ffmpegCommand1 = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 5 -t 30 -c:v libx264 -c:a aac -pix_fmt yuv420p " + filePath;
             Process process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", ffmpegCommand1});
+            process.getOutputStream().close();
+            Process finalProcess1 = process;
+            new Thread(new Runnable() {
+                @SneakyThrows
+                @Override
+                public void run() {
+                    String input = new String(IOUtils.toCharArray(finalProcess1.getInputStream(), StandardCharsets.UTF_8));
+                    // TODO
+                    log.info("getHLSPlaylist finalProcess1 input: {}", input);
+                }
+            });
+            new Thread(new Runnable() {
+                @SneakyThrows
+                @Override
+                public void run() {
+                    String error = new String(IOUtils.toCharArray(finalProcess1.getErrorStream(), StandardCharsets.UTF_8));
+                    // TODO
+                    log.info("getHLSPlaylist finalProcess1 error: {}", error);
+                }
+            });
             int exitCode = process.waitFor();
             process.destroy();
             if (exitCode == 0) {
@@ -136,7 +156,28 @@ public class APIController {
                 log.error("getHLSSegment ffmpegCommand1 failed");
             }
             String ffmpegCommand2 = "ffmpeg.exe -loglevel quiet -y -i " + filePath + " -c:v libx264 -c:a aac -f hls -hls_time 5 -hls_list_size 0 video.m3u8";
+            // TODO String ffmpegCommand2 = "ffmpeg.exe -y -i " + filePath + " -c:v libx264 -c:a aac -f hls -hls_time 5 -hls_list_size 0 video.m3u8";
             process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", ffmpegCommand2});
+            process.getOutputStream().close();
+            Process finalProcess2 = process;
+            new Thread(new Runnable() {
+                @SneakyThrows
+                @Override
+                public void run() {
+                    String input = new String(IOUtils.toCharArray(finalProcess2.getInputStream(), StandardCharsets.UTF_8));
+                    // TODO
+                    log.info("getHLSPlaylist finalProcess2 input: {}", input);
+                }
+            });
+            new Thread(new Runnable() {
+                @SneakyThrows
+                @Override
+                public void run() {
+                    String error = new String(IOUtils.toCharArray(finalProcess2.getErrorStream(), StandardCharsets.UTF_8));
+                    // TODO
+                    log.info("getHLSPlaylist finalProcess2 error: {}", error);
+                }
+            });
             exitCode = process.waitFor();
             process.destroy();
             if (exitCode == 0) {

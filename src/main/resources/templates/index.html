@@ -43,7 +43,7 @@
                     <span th:text="${performance.getComputerName()}"></span>
                     <span>屏幕直播</span>
                 </p>
-                <video class="video-js" controls preload="auto" data-setup='{"fluid": true}'>
+                <video id="myVideo" class="video-js" controls preload="auto" data-setup='{"fluid": true}'>
                     <source src="/api/screenshot/hls.m3u8" type="application/x-mpegURL">
                 </video>
             </div>
@@ -104,6 +104,13 @@
             });
     };
     setInterval(refreshChart, 3000);
+
+    // 屏幕直播
+    const myVideo = document.getElementById('myVideo');
+    myVideo.addEventListener('ended', function() {
+        log.info('video ended');
+        myVideo.src = '/api/screenshot/hls.m3u8';
+    });
 </script>
 </body>
 
