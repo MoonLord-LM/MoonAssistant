@@ -22,12 +22,12 @@ import java.util.List;
 @Slf4j
 public class APIController {
 
+    private static final PerformanceVO performance = new PerformanceVO();
+
     @RequestMapping("/api")
     public String api() {
         return "Hello World";
     }
-
-    private static final PerformanceVO performance = new PerformanceVO();
 
     @SneakyThrows
     @RequestMapping("/api/performance")
