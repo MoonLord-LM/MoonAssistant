@@ -1,6 +1,5 @@
 package cn.moonlord.ai.run;
 
-import lombok.Data;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -11,7 +10,6 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.List;
 
-@Data
 @Slf4j
 @Component
 public class ScreenshotRecorder {
