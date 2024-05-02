@@ -3,7 +3,7 @@ package cn.moonlord.ai.web.controller;
 import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.tomcat.util.http.fileupload.IOUtils;
+import org.apache.commons.io.FileUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,18 +17,19 @@ import oshi.software.os.OperatingSystem;
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStreamReader;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.*;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @Slf4j
 public class APIController {
 
     private static final PerformanceVO performance = new PerformanceVO();
+    private static final Map<String, Object> cache = new ConcurrentHashMap<>();
 
     @RequestMapping("/api")
     public String api() {
@@ -70,7 +71,7 @@ public class APIController {
         // virtualRectangle is the virtual resolution after Windows system scaling, such as 2560 * 1440（x 150%）
         Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
         Rectangle virtualRectangle = new Rectangle(screenSize);
-        log.debug("realRectangle: {}, virtualRectangle{}", realRectangle, virtualRectangle);
+        log.debug("screenshot realRectangle: {}, virtualRectangle: {}", realRectangle, virtualRectangle);
 
         Robot robot = new Robot();
         List<Image> captures = robot.createMultiResolutionScreenCapture(virtualRectangle).getResolutionVariants();
@@ -110,55 +111,64 @@ public class APIController {
     @SneakyThrows
     @RequestMapping("/api/screenshot/hls.m3u8")
     public String getHLSPlaylist() {
-        Long videoTimeSecond = 6L;
-        StringBuilder playlist = new StringBuilder();
-        playlist.append("#EXTM3U\r\n");
-        playlist.append("#EXT-X-VERSION:3\r\n");
-        playlist.append("#EXT-X-TARGETDURATION:").append(videoTimeSecond).append("\r\n");
-        playlist.append("#EXT-X-MEDIA-SEQUENCE:1\r\n");
-        playlist.append("\r\n");
-        for (int i = 1; i <= 100; i++) {
-            playlist.append("#EXTINF:").append(videoTimeSecond).append(",\r\n");
-            playlist.append("segment-").append(i).append(".ts\r\n");
+        String filePath = "video.mp4";
+
+        // cache
+        if (cache.containsKey(filePath)) {
+            return (String) cache.get(filePath);
         }
-        playlist.append("\r\n");
-        playlist.append("#EXT-X-ENDLIST\r\n");
-        return playlist.toString();
+
+        synchronized (filePath.intern()) {
+            // file
+            if (new File("video.m3u8").exists()) {
+                cache.putIfAbsent(filePath, FileUtils.readFileToString(new File("video.m3u8"), StandardCharsets.UTF_8));
+                return (String) cache.get(filePath);
+            }
+
+            // ffmpeg
+            String ffmpegCommand1 = "ffmpeg.exe -loglevel quiet -y -f gdigrab -i desktop -s 1280x720 -r 5 -t 30 -c:v libx264 -c:a aac -pix_fmt yuv420p " + filePath;
+            Process process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", ffmpegCommand1});
+            int exitCode = process.waitFor();
+            process.destroy();
+            if (exitCode == 0) {
+                log.info("getHLSSegment ffmpegCommand1 success");
+            } else {
+                log.error("getHLSSegment ffmpegCommand1 failed");
+            }
+            String ffmpegCommand2 = "ffmpeg.exe -loglevel quiet -y -i " + filePath + " -c:v libx264 -c:a aac -f hls -hls_time 5 -hls_list_size 0 video.m3u8";
+            process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", ffmpegCommand2});
+            exitCode = process.waitFor();
+            process.destroy();
+            if (exitCode == 0) {
+                log.info("getHLSSegment ffmpegCommand2 success");
+            } else {
+                log.error("getHLSSegment ffmpegCommand2 failed");
+            }
+
+            cache.putIfAbsent(filePath, FileUtils.readFileToString(new File("video.m3u8"), StandardCharsets.UTF_8));
+            return FileUtils.readFileToString(new File("video.m3u8"), StandardCharsets.UTF_8);
+        }
     }
 
     @SneakyThrows
-    @RequestMapping("/api/screenshot/segment-{segmentNumber}.ts")
-    public synchronized ResponseEntity<byte[]> getHLSSegment(@PathVariable("segmentNumber") Long segmentNumber) {
-        log.info("getHLSSegment i: {}", segmentNumber);
-        Long videoTimeSecond = 6L;
-        String filePath = segmentNumber + ".ts";
-
-        if(Path.of(filePath).toFile().exists()) {
-            return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body(Files.readAllBytes(Path.of(filePath)));
+    @RequestMapping("/api/screenshot/video{segmentNumber}.ts")
+    public ResponseEntity<byte[]> getHLSSegment(@PathVariable("segmentNumber") Long segmentNumber) {
+        // cache
+        if (cache.containsKey(String.valueOf(segmentNumber))) {
+            return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body((byte[]) cache.get(String.valueOf(segmentNumber)));
         }
 
-        String[] command = {
-                "ffmpeg.exe",
-                "-f", "gdigrab",
-                "-framerate", "30",
-                "-t", String.valueOf(videoTimeSecond),
-                "-video_size", "1920x1080",
-                "-i", "desktop",
-                "-c:v", "libx264",
-                "-pix_fmt", "yuv420p",
-                filePath
-        };
-        ProcessBuilder pb = new ProcessBuilder(command);
-        Process process = pb.start();
-        process.getOutputStream().flush();
-        process.getOutputStream().close();
-        int exitCode = process.waitFor();
-        if (exitCode == 0) {
-            log.info("FFmpeg command executed successfully.");
-        } else {
-            log.info("FFmpeg command failed.");
+        String filePath = "video" + segmentNumber + ".ts";
+        synchronized (filePath.intern()) {
+            log.debug("getHLSSegment segmentNumber: {} filePath: {} exists: {}", segmentNumber, filePath, new File(filePath).exists());
+
+            if (new File(filePath).exists()) {
+                byte[] data = Files.readAllBytes(new File(filePath).toPath());
+                cache.putIfAbsent(String.valueOf(segmentNumber), Arrays.copyOf(data, data.length));
+                return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body(data);
+            }
         }
-        return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body(Files.readAllBytes(Path.of(filePath)));
+        return null;
     }
 
 }
