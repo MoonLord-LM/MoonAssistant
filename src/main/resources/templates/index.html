@@ -108,7 +108,7 @@
     // 屏幕直播
     const myVideo = videojs('myVideo');
     myVideo.on('ended', function() {
-        log.info('video play ended');
+        log.info('video play ended, refreshing');
         myVideo.src('/api/screenshot/hls.m3u8?refresh' + Math.random());
         myVideo.play();
     });
