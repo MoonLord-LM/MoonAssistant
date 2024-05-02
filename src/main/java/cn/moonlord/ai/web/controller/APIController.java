@@ -1,6 +1,7 @@
 package cn.moonlord.ai.web.controller;
 
 import cn.moonlord.ai.run.PerformanceRecorder;
+import cn.moonlord.ai.run.ScreenshotRecorder;
 import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -12,13 +13,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import javax.imageio.ImageIO;
-import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
-import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
@@ -29,6 +28,9 @@ public class APIController {
 
     @Autowired
     private PerformanceRecorder performanceRecorder;
+
+    @Autowired
+    private ScreenshotRecorder screenshotRecorder;
 
     private static final ConcurrentLinkedDeque<String> videoCache = new ConcurrentLinkedDeque<>();
     private static final Map<String, Object> cache = new ConcurrentHashMap<>();
@@ -42,47 +44,13 @@ public class APIController {
     @SneakyThrows
     @RequestMapping("/api/performance")
     public PerformanceVO performance() {
-        performanceRecorder.record();
         return performanceRecorder.getPerformance();
     }
 
     @SneakyThrows
     @RequestMapping("/api/screenshot")
     public ResponseEntity<byte[]> screenshot(@RequestParam(value = "scale", required = false) Double scale, @RequestParam(value = "format", required = false) String format) {
-        // fix: java.awt.AWTException: headless environment
-        System.setProperty("java.awt.headless", "false");
-
-        // realRectangle is the real resolution of display screen, such as 3840 * 2160
-        GraphicsDevice[] gs = GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices();
-        DisplayMode mode = gs[gs.length - 1].getDisplayMode();
-        Rectangle realRectangle = new Rectangle(mode.getWidth(), mode.getHeight());
-
-        // virtualRectangle is the virtual resolution after Windows system scaling, such as 2560 * 1440（x 150%）
-        Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-        Rectangle virtualRectangle = new Rectangle(screenSize);
-        log.debug("screenshot realRectangle: {}, virtualRectangle: {}", realRectangle, virtualRectangle);
-
-        Robot robot = new Robot();
-        List<Image> captures = robot.createMultiResolutionScreenCapture(virtualRectangle).getResolutionVariants();
-        BufferedImage screenCapture = (BufferedImage) captures.get(captures.size() - 1);
-
-        // scale
-        if (scale != null && scale > 0 && scale < 1) {
-            int scaledWidth = (int) (screenCapture.getWidth() * scale);
-            int scaledHeight = (int) (screenCapture.getHeight() * scale);
-            BufferedImage scaledImage = new BufferedImage(scaledWidth, scaledHeight, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = scaledImage.createGraphics();
-            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            g.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
-            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-            g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-            g.drawImage(screenCapture, 0, 0, scaledWidth, scaledHeight, null);
-            g.dispose();
-            screenCapture = scaledImage;
-        }
+        BufferedImage screenCapture = screenshotRecorder.getScaleScreenCapture(scale);
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         if (format != null && format.equals("jpg")) {

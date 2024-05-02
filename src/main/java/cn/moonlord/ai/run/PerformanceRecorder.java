@@ -17,9 +17,13 @@ public class PerformanceRecorder {
 
     private final PerformanceVO performance = new PerformanceVO();
 
+    private volatile Long lastRefreshTime = System.currentTimeMillis();
+
     @SneakyThrows
     @Scheduled(fixedRate = 10 * 60 * 1000)
     public void record() {
+        lastRefreshTime = System.currentTimeMillis();
+
         HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
         OperatingSystem operatingSystem = new SystemInfo().getOperatingSystem();
 
@@ -35,6 +39,14 @@ public class PerformanceRecorder {
         Long disk = Math.round((totalDisk - availableDisk) / totalDisk * 100);
         performance.setComputerName(computerName);
         performance.addRecord(cpu, memory, disk);
+    }
+
+    @SneakyThrows
+    public PerformanceVO getPerformance() {
+        if(performance.getRecords().isEmpty() || System.currentTimeMillis() - lastRefreshTime < 3000){
+            record();
+        }
+        return performance;
     }
 
 }
