@@ -21,7 +21,7 @@ public class ScreenshotRecorder {
 
     @SneakyThrows
     @Scheduled(fixedRate = 10 * 60 * 1000)
-    public void record() {
+    public synchronized void record() {
         lastRefreshTime = System.currentTimeMillis();
 
         // fix: java.awt.AWTException: headless environment
@@ -44,7 +44,7 @@ public class ScreenshotRecorder {
 
     @SneakyThrows
     public BufferedImage getScreenCapture() {
-        if(screenCapture == null || System.currentTimeMillis() - lastRefreshTime >= 2000){
+        if (screenCapture == null || System.currentTimeMillis() - lastRefreshTime >= 2000) {
             record();
         }
         return screenCapture;

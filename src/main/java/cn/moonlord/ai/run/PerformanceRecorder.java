@@ -21,7 +21,7 @@ public class PerformanceRecorder {
 
     @SneakyThrows
     @Scheduled(fixedRate = 10 * 60 * 1000)
-    public void record() {
+    public synchronized void record() {
         lastRefreshTime = System.currentTimeMillis();
 
         HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
