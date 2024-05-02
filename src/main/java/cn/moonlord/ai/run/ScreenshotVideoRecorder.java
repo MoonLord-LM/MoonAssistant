@@ -32,7 +32,7 @@ public class ScreenshotVideoRecorder {
             @Override
             public void run() {
                 String input = new String(IOUtils.toCharArray(process.getInputStream(), StandardCharsets.UTF_8));
-                log.info("record ffmpeg getInputStream: {}", input);
+                log.debug("record ffmpeg getInputStream: {}", input);
             }
         }).start();
         new Thread(new Runnable() {
@@ -40,7 +40,7 @@ public class ScreenshotVideoRecorder {
             @Override
             public void run() {
                 String error = new String(IOUtils.toCharArray(process.getErrorStream(), StandardCharsets.UTF_8));
-                log.info("record ffmpeg getErrorStream: {}", error);
+                log.debug("record ffmpeg getErrorStream: {}", error);
             }
         }).start();
         int exitCode = process.waitFor();
