@@ -1,6 +1,8 @@
 package cn.moonlord.ai.run;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
@@ -20,9 +22,10 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
 
     @JsonIgnore
     private final ConcurrentHashMap<String, byte[]> fileCache = new ConcurrentHashMap<>();
-
     @JsonIgnore
     private final ConcurrentHashMap<String, Long> fileCacheTime = new ConcurrentHashMap<>();
+    @JsonIgnore
+    private volatile Process process;
 
     @SneakyThrows
     @Async
@@ -31,7 +34,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
         String command = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 5 -c:v libx264 -hls_list_size 0 -g 10 -f segment -segment_list playlist.m3u8 -segment_time 10 video-%d.ts";
         log.info("run ffmpeg command: {}", command);
 
-        Process process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
+        process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
         new Thread(new Runnable() {
             @SneakyThrows
             @Override
@@ -62,7 +65,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             public void run() {
                 while (Thread.currentThread().isAlive()) {
                     Thread.sleep(1000);
-                    log.debug("run ffmpeg collect files: {}", fileCache.keySet());
+                    log.debug("run ffmpeg collect files size: {}", fileCache.keySet().size());
                     try {
                         File playlist = new File("playlist.m3u8");
                         if (playlist.canRead()) {
@@ -82,6 +85,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
                                             fileCache.put(tsFileName, data);
                                             fileCacheTime.put(tsFileName, lastModified);
                                             FileUtils.writeByteArrayToFile(new File("video.ts"), data, true);
+                                            FileUtils.deleteQuietly(new File(tsFileName));
                                         }
                                     }
                                 }
@@ -94,6 +98,22 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             }
         }, "run-ffmpeg-collect-files").start();
         process.waitFor();
+    }
+
+    @SneakyThrows
+    @PostConstruct
+    @PreDestroy
+    public void cleanup() {
+        if (process != null) {
+            process.getOutputStream().write("q".getBytes());
+            process.getOutputStream().flush();
+        }
+        File[] files = new File("./").listFiles((dir, name) -> name.endsWith(".ts"));
+        if (files != null) {
+            for (File file : files) {
+                FileUtils.deleteQuietly(file);
+            }
+        }
     }
 
     @SneakyThrows
