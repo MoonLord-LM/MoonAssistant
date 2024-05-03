@@ -62,7 +62,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             public void run() {
                 while (Thread.currentThread().isAlive()) {
                     Thread.sleep(1000);
-                    log.info("run ffmpeg collect files: {}", fileCache.keySet().toArray());
+                    log.debug("run ffmpeg collect files: {}", fileCache.keySet());
                     try {
                         File playlist = new File("playlist.m3u8");
                         if (playlist.canRead()) {
@@ -81,6 +81,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
                                             byte[] data = FileUtils.readFileToByteArray(tsFile);
                                             fileCache.put(tsFileName, data);
                                             fileCacheTime.put(tsFileName, lastModified);
+                                            FileUtils.writeByteArrayToFile(new File("video.ts"), data, true);
                                         }
                                     }
                                 }
