@@ -36,4 +36,5 @@ build/
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
+playlist.m3u8
 *.ts
