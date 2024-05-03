@@ -101,7 +101,11 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
                 }
             }
         }, "run-ffmpeg-collect-files").start();
-        process.waitFor();
+        try {
+            process.waitFor();
+        } catch (InterruptedException e) {
+            // fix: java.lang.InterruptedException
+        }
     }
 
     @SneakyThrows
@@ -112,7 +116,8 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             process.getOutputStream().write("q".getBytes());
             process.getOutputStream().flush();
         }
-        File[] files = new File("./").listFiles((dir, name) -> name.endsWith(".ts") && !name.equals("video.ts"));
+        Thread.sleep(1000);
+        File[] files = new File("./").listFiles((dir, name) -> (name.endsWith(".ts") && !name.equals("video.ts")) || name.equals("playlist.m3u8"));
         if (files != null) {
             for (File file : files) {
                 FileUtils.deleteQuietly(file);
