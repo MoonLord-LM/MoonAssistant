@@ -7,6 +7,7 @@ import cn.moonlord.ai.web.vo.PerformanceVO;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -59,8 +60,9 @@ public class APIController {
 
     @SneakyThrows
     @RequestMapping("/api/screenshot/hls.m3u8")
-    public String getHLSPlaylist() {
-        return screenshotVideoRecorder.getHLSPlaylist();
+    public ResponseEntity<byte[]> getHLSPlaylist() {
+        byte[] list = screenshotVideoRecorder.getHLSPlaylist();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.valueOf(MediaType.TEXT_PLAIN_VALUE)).body(list);
     }
 
     @SneakyThrows

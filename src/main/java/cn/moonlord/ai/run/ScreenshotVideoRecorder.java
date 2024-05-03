@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.context.properties.bind.Name;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
@@ -33,7 +34,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
     @Async
     @Override
     public void run(ApplicationArguments args) {
-        String command = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 5 -c:v libx264 -hls_list_size 0 -g 10 -f segment -segment_list playlist.m3u8 -segment_time 10 video-%d.ts";
+        String command = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 5 -c:v libx264 -hls_list_size 0 -g 5 -f segment -segment_list playlist.m3u8 -segment_time 2 video-%d.ts";
         log.info("run ffmpeg command: {}", command);
 
         process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
@@ -66,11 +67,11 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             @Override
             public void run() {
                 while (Thread.currentThread().isAlive()) {
-                    Thread.sleep(1000);
                     long size = fileCache.values().stream().mapToLong(bytes -> bytes.length).sum() / 1024 / 1024;
                     log.debug("run ffmpeg collect files count: {}, size: {} MB", fileCache.keySet().size(), size);
 
                     try {
+                        Thread.sleep(100);
                         File playlist = new File("playlist.m3u8");
                         if (playlist.canRead()) {
                             Long playlistLastModified = playlist.lastModified();
@@ -126,18 +127,18 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
     }
 
     @SneakyThrows
-    public String getHLSPlaylist() {
+    public byte[] getHLSPlaylist() {
         while (fileCache.isEmpty()) {
-            Thread.sleep(1000);
+            Thread.sleep(100);
         }
-        return new String(fileCache.get("playlist.m3u8"));
+        return fileCache.get("playlist.m3u8");
     }
 
     @SneakyThrows
     public byte[] getData(Long segmentNumber) {
         String fileName = "video-" + segmentNumber + ".ts";
         while (!fileCache.containsKey(fileName)) {
-            Thread.sleep(1000);
+            Thread.sleep(100);
         }
         return fileCache.get(fileName);
     }
