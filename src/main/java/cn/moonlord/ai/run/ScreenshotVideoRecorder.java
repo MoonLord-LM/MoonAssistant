@@ -11,7 +11,9 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.InputStreamReader;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
@@ -65,7 +67,9 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             public void run() {
                 while (Thread.currentThread().isAlive()) {
                     Thread.sleep(1000);
-                    log.debug("run ffmpeg collect files size: {}", fileCache.keySet().size());
+                    long size = fileCache.values().stream().mapToLong(bytes -> bytes.length).sum() / 1024 / 1024;
+                    log.debug("run ffmpeg collect files count: {}, size: {} MB", fileCache.keySet().size(), size);
+
                     try {
                         File playlist = new File("playlist.m3u8");
                         if (playlist.canRead()) {
@@ -108,7 +112,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             process.getOutputStream().write("q".getBytes());
             process.getOutputStream().flush();
         }
-        File[] files = new File("./").listFiles((dir, name) -> name.endsWith(".ts"));
+        File[] files = new File("./").listFiles((dir, name) -> name.endsWith(".ts") && !name.equals("video.ts"));
         if (files != null) {
             for (File file : files) {
                 FileUtils.deleteQuietly(file);
