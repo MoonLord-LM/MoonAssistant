@@ -14,15 +14,12 @@ import org.springframework.web.bind.annotation.*;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @CrossOrigin(origins = "*")
 @RestController
 public class APIController {
 
-    private static final Map<String, Object> cache = new ConcurrentHashMap<>();
     @Autowired
     private PerformanceRecorder performanceRecorder;
     @Autowired
@@ -63,14 +60,13 @@ public class APIController {
     @SneakyThrows
     @RequestMapping("/api/screenshot/hls.m3u8")
     public String getHLSPlaylist() {
-        new Thread(() -> screenshotVideoRecorder.record()).start();
         return screenshotVideoRecorder.getHLSPlaylist();
     }
 
     @SneakyThrows
-    @RequestMapping("/api/screenshot/video{segmentNumber}.ts")
-    public ResponseEntity<byte[]> getHLSSegment(@PathVariable("segmentNumber") Integer segmentNumber) {
-        byte[] data = screenshotVideoRecorder.getData();
+    @RequestMapping("/api/screenshot/video-{segmentNumber}.ts")
+    public ResponseEntity<byte[]> getHLSSegment(@PathVariable("segmentNumber") Long segmentNumber) {
+        byte[] data = screenshotVideoRecorder.getData(segmentNumber);
         return ResponseEntity.ok().contentType(MediaType.valueOf(MediaType.APPLICATION_OCTET_STREAM_VALUE)).body(data);
     }
 

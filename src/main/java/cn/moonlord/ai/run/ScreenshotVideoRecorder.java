@@ -1,86 +1,115 @@
 package cn.moonlord.ai.run;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.FileUtils;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.scheduling.annotation.Async;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.io.FileInputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Properties;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.io.*;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
 @Slf4j
 @Component
-public class ScreenshotVideoRecorder {
+public class ScreenshotVideoRecorder implements ApplicationRunner {
 
-    private static final ConcurrentLinkedDeque<Properties> videoCache = new ConcurrentLinkedDeque<>();
+    @JsonIgnore
+    private final ConcurrentHashMap<String, byte[]> fileCache = new ConcurrentHashMap<>();
+
+    @JsonIgnore
+    private final ConcurrentHashMap<String, Long> fileCacheTime = new ConcurrentHashMap<>();
 
     @SneakyThrows
     @Async
-    @Scheduled(fixedRate = 6 * 1000)
-    public void record() {
-        String fileName = "video-" + System.currentTimeMillis() + ".ts";
-        String command = "ffmpeg.exe -f gdigrab -i desktop -s 1920x1080 -r 5 -t 12.2 -c:v libx264 -c:a aac -pix_fmt yuv420p -y " + fileName;
-        log.info("record command: {}", command);
+    @Override
+    public void run(ApplicationArguments args) {
+        String command = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 5 -c:v libx264 -hls_list_size 0 -g 10 -f segment -segment_list playlist.m3u8 -segment_time 10 video-%d.ts";
+        log.info("run ffmpeg command: {}", command);
 
         Process process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
         new Thread(new Runnable() {
             @SneakyThrows
             @Override
             public void run() {
-                String input = new String(IOUtils.toCharArray(process.getInputStream(), StandardCharsets.UTF_8));
-                log.debug("record ffmpeg getInputStream: {}", input);
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.debug("run ffmpeg getInputStream: {}", line);
+                    }
+                }
             }
-        }).start();
+        }, "run-ffmpeg-getInputStream").start();
         new Thread(new Runnable() {
             @SneakyThrows
             @Override
             public void run() {
-                String error = new String(IOUtils.toCharArray(process.getErrorStream(), StandardCharsets.UTF_8));
-                log.debug("record ffmpeg getErrorStream: {}", error);
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.debug("run ffmpeg getErrorStream: {}", line);
+                    }
+                }
             }
-        }).start();
-        int exitCode = process.waitFor();
-        process.destroy();
-        log.info("record exitCode: {}", exitCode);
+        }, "run-ffmpeg-getErrorStream").start();
+        new Thread(new Runnable() {
+            @SneakyThrows
+            @Override
+            public void run() {
+                while (Thread.currentThread().isAlive()) {
+                    Thread.sleep(1000);
+                    log.info("run ffmpeg collect files: {}", fileCache.keySet().toArray());
+                    try {
+                        File playlist = new File("playlist.m3u8");
+                        if (playlist.canRead()) {
+                            Long playlistLastModified = playlist.lastModified();
+                            if (playlistLastModified > fileCacheTime.getOrDefault("playlist.m3u8", 0L)) {
+                                byte[] playlistData = FileUtils.readFileToByteArray(playlist);
+                                fileCache.put("playlist.m3u8", playlistData);
+                                fileCacheTime.put("playlist.m3u8", playlistLastModified);
 
-        byte[] data = IOUtils.toByteArray(new FileInputStream(fileName));
-        log.info("record data: {}", data.length);
-
-        Properties video = new Properties();
-        video.put("fileName", fileName);
-        video.put("data", data);
-        videoCache.add(video);
-        if (videoCache.size() > 100) {
-            videoCache.removeFirst();
-        }
+                                List<String> tsFileNames = Stream.of(new String(playlistData).split("\n")).filter(line -> !line.isEmpty()).filter(line -> !line.startsWith("#")).toList();
+                                for (String tsFileName : tsFileNames) {
+                                    File tsFile = new File(tsFileName);
+                                    if (tsFile.canRead()) {
+                                        Long lastModified = tsFile.lastModified();
+                                        if (lastModified > fileCacheTime.getOrDefault(tsFileName, 0L)) {
+                                            byte[] data = FileUtils.readFileToByteArray(tsFile);
+                                            fileCache.put(tsFileName, data);
+                                            fileCacheTime.put(tsFileName, lastModified);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.error("run ffmpeg collect files error", e);
+                    }
+                }
+            }
+        }, "run-ffmpeg-collect-files").start();
+        process.waitFor();
     }
 
     @SneakyThrows
     public String getHLSPlaylist() {
-        StringBuilder m3u8 = new StringBuilder();
-        m3u8.append("#EXTM3U\n");
-        m3u8.append("#EXT-X-VERSION:3\n");
-        m3u8.append("#EXT-X-TARGETDURATION:6\n");
-        m3u8.append("#EXT-X-MEDIA-SEQUENCE:0\n");
-        for (int i = 0; i < 1; i++) {
-            m3u8.append("#EXTINF:6.000000,\n");
-            m3u8.append("video").append(i).append(".ts\n");
+        while (fileCache.isEmpty()) {
+            Thread.sleep(1000);
         }
-        m3u8.append("#EXT-X-ENDLIST");
-        return m3u8.toString();
+        return new String(fileCache.get("playlist.m3u8"));
     }
 
     @SneakyThrows
-    public byte[] getData() {
-        if (videoCache.isEmpty()) {
-            // fix: java.lang.NullPointerException
-            record();
+    public byte[] getData(Long segmentNumber) {
+        String fileName = "video-" + segmentNumber + ".ts";
+        while (!fileCache.containsKey(fileName)) {
+            Thread.sleep(1000);
         }
-        return (byte[]) videoCache.getLast().get("data");
+        return fileCache.get(fileName);
     }
 
 }
