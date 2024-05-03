@@ -1,5 +1,6 @@
 package cn.moonlord.ai.run;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +14,7 @@ import java.io.File;
 public class CleanupRunner {
 
     @SneakyThrows
+    @PostConstruct
     @PreDestroy
     public void cleanup() {
         File[] files = new File("./").listFiles((dir, name) -> name.endsWith(".ts"));
