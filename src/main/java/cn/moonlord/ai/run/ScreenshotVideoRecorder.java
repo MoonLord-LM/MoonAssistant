@@ -72,7 +72,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
                     log.info("run ffmpeg collect files count: {}, size: {} MB", fileCache.size(), sum);
 
                     try {
-                        Thread.sleep(100);
+                        Thread.sleep(10);
                         File playlist = new File("playlist.m3u8");
                         if (playlist.canRead()) {
                             Long playlistLastModified = playlist.lastModified();
@@ -137,7 +137,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
     @SneakyThrows
     public byte[] getHLSPlaylist() {
         while (fileCache.isEmpty()) {
-            Thread.sleep(100);
+            Thread.sleep(10);
         }
         return fileCache.get("playlist.m3u8");
     }
@@ -146,7 +146,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
     public byte[] getData(Long segmentNumber) {
         String fileName = "video-" + segmentNumber + ".ts";
         while (!fileCache.containsKey(fileName)) {
-            Thread.sleep(100);
+            Thread.sleep(10);
         }
         return fileCache.get(fileName);
     }
