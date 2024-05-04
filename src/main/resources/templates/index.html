@@ -122,7 +122,7 @@
         myVideo1.src('/api/screenshot/hls.m3u8?refresh=' + Math.random());
         myVideo1.play();
     });
-    var myVideo2 = document.getElementById('myVideo2');
+    const myVideo2 = document.getElementById('myVideo2');
     if (Hls.isSupported()) {
         var hls = new Hls({
             liveSyncDurationCount: 0,
