@@ -2,13 +2,15 @@ package cn.moonlord.ai.run;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import jakarta.annotation.Resource;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.context.properties.bind.Name;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
@@ -106,13 +108,15 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
             process.waitFor();
         } catch (InterruptedException e) {
             // fix: java.lang.InterruptedException
+            log.debug("run ffmpeg exit");
         }
     }
 
     @SneakyThrows
     @PostConstruct
-    @PreDestroy
+    @EventListener(ContextClosedEvent.class)
     public void cleanup() {
+        log.debug("cleanup begin");
         if (process != null) {
             process.getOutputStream().write("q".getBytes());
             process.getOutputStream().flush();
@@ -124,6 +128,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
                 FileUtils.deleteQuietly(file);
             }
         }
+        log.debug("cleanup end");
     }
 
     @SneakyThrows
