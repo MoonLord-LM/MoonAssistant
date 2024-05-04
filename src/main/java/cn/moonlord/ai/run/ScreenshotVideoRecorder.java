@@ -17,7 +17,6 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -35,7 +34,7 @@ public class ScreenshotVideoRecorder implements ApplicationRunner {
     @Async
     @Override
     public void run(ApplicationArguments args) {
-        String command = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 10 -c:v libx264 -hls_list_size 0 -g 1 -f segment -segment_list playlist.m3u8 -segment_time 0.3 -flush_packets 0 video-%d.ts";
+        String command = "ffmpeg.exe -y -f gdigrab -i desktop -s 1280x720 -r 10 -g 1 -c:v libx264 -preset ultrafast -tune zerolatency -hls_list_size 0 -f segment -segment_list playlist.m3u8 -segment_time 0.2 -flush_packets 0 video-%d.ts";
         log.info("run ffmpeg command: {}", command);
 
         process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
