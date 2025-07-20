@@ -58,7 +58,7 @@ public class PageController {
 
         List<Map.Entry<String, Integer>> topWorkActors = actorWorkCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
-                .limit(20)
+                .limit(30)
                 .collect(Collectors.toList());
 
         List<Map.Entry<String, Double>> topRatedActors = actorAvgScores.entrySet().stream()
@@ -69,7 +69,7 @@ public class PageController {
                     }
                     return actorWorkCounts.getOrDefault(e2.getKey(), 0).compareTo(actorWorkCounts.getOrDefault(e1.getKey(), 0));
                 })
-                .limit(20)
+                .limit(30)
                 .collect(Collectors.toList());
         model.addAttribute("videos", videos);
         model.addAttribute("generatedTime", generatedTime);

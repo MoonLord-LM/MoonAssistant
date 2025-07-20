@@ -16,13 +16,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Component
 public class VideoScanService {
 
+    private static final List<Integer> SCORES = List.of(100, 90, 80, 70, 60);
+
     @Autowired
     private DiskScanService diskScanService;
 
-    private static final List<Integer> SCORES = List.of(100, 90, 80, 70, 60);
-
     @SneakyThrows
-    @PostConstruct
     public CopyOnWriteArrayList<VideoFileVO> getAllMarkedVideos() {
         log.info("begin scan");
         CopyOnWriteArrayList<VideoFileVO> result = new CopyOnWriteArrayList<>();
@@ -34,7 +33,7 @@ public class VideoScanService {
                 if (dir.exists() && dir.isDirectory()) {
                     log.info("begin scan dir: {}", dir.getAbsolutePath());
                     System.gc();
-                    File[] files = dir.listFiles((dir1, name) -> name.toLowerCase().endsWith(".mp4"));
+                    File[] files = dir.listFiles(file -> file.isFile() && !file.getName().equals("desktop.ini"));
                     if (files != null) {
                         for (File file : files) {
                             log.debug("file: {}", file.getAbsolutePath());
