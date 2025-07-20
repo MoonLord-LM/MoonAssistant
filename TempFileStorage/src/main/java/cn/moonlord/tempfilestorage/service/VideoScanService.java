@@ -2,7 +2,6 @@ package cn.moonlord.tempfilestorage.service;
 
 import cn.moonlord.tempfilestorage.vo.LogicalVolumeVO;
 import cn.moonlord.tempfilestorage.vo.VideoFileVO;
-import jakarta.annotation.PostConstruct;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
