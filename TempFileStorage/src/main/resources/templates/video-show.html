@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>视频信息统计</title>
+    <style>
+        body {
+            margin: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+            color: #333;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+    </style>
+</head>
+<body>
+<h1>视频文件信息</h1>
+<p>共计 <span th:text="${videos.size()}"></span> 个视频文件</p>
+
+<h2>评分最高的前 <span th:text="${topRatedActors.size()}"></span> 名演员</h2>
+<table>
+    <tr>
+        <th>排名</th>
+        <th>演员</th>
+        <th>平均评分</th>
+        <th>作品数量</th>
+    </tr>
+    <tr th:each="actor, stat : ${topRatedActors}">
+        <td th:text="${stat.count}"></td>
+        <td th:text="${actor.key}"></td>
+        <td th:text="${#numbers.formatDecimal(actor.value, 1, 1)}"></td>
+        <td th:text="${actorWorkCounts.get(actor.key)}"></td>
+    </tr>
+</table>
+
+<h2>作品最多的前 <span th:text="${topWorkActors.size()}"></span> 名演员</h2>
+<table>
+    <tr>
+        <th>排名</th>
+        <th>演员</th>
+        <th>作品数量</th>
+        <th>平均评分</th>
+    </tr>
+    <tr th:each="actor, stat : ${topWorkActors}">
+        <td th:text="${stat.count}"></td>
+        <td th:text="${actor.key}"></td>
+        <td th:text="${actor.value}"></td>
+        <td th:text="${#numbers.formatDecimal(actorAvgScores.getOrDefault(actor.key, 0.0), 1, 1)}"></td>
+    </tr>
+</table>
+
+<p>
+    <small>生成时间: <span th:text="${generatedTime}"></span></small>
+</p>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>磁盘详细信息</title>
+    <style>
+        body {
+            margin: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+            color: #333;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+    </style>
+</head>
+<body>
+<h1>物理磁盘信息</h1>
+<p>共计 <span th:text="${disks.size()}"></span> 个磁盘设备</p>
+<table>
+    <tr>
+        <th>序号</th>
+        <th>名称</th>
+        <th>厂商</th>
+        <th>型号</th>
+        <th>固件版本</th>
+        <th>序列号</th>
+        <th>容量</th>
+        <th>介质类型</th>
+        <th>连接类型</th>
+        <th>接口类型</th>
+        <th>总线类型</th>
+        <th>状态</th>
+    </tr>
+    <tr th:each="disk : ${disks}">
+        <td th:text="${disk.currentIndex != null ? disk.currentIndex : ''}"></td>
+        <td th:text="${disk.caption != null ? disk.caption : ''}"></td>
+        <td th:text="${disk.vendorID != null ? disk.vendorID : ''}"></td>
+        <td th:text="${disk.productID != null ? disk.productID : ''}"></td>
+        <td th:text="${disk.firmwareRevision != null ? disk.firmwareRevision : ''}"></td>
+        <td th:text="${disk.serialNumber != null ? disk.serialNumber : ''}"></td>
+        <td th:text="${disk.totalSpaceString != null ? disk.totalSpaceString : ''}"></td>
+        <td th:text="${disk.mediaType != null ? disk.mediaType : ''}"></td>
+        <td th:text="${disk.currentConnectionType != null ? disk.currentConnectionType : ''}"></td>
+        <td th:text="${disk.currentInterfaceType != null ? disk.currentInterfaceType : ''}"></td>
+        <td th:text="${disk.currentBusType != null ? disk.currentBusType : ''}"></td>
+        <td th:text="${disk.currentStatus != null ? disk.currentStatus : ''}"></td>
+    </tr>
+</table>
+
+<h1>逻辑磁盘信息</h1>
+<p>共计 <span th:text="${volumes.size()}"></span> 个逻辑卷</p>
+<table>
+    <tr>
+        <th>盘符</th>
+        <th>自定义名称</th>
+        <th>序列号</th>
+        <th>硬件序号</th>
+        <th>硬件名称</th>
+        <th>文件系统</th>
+        <th>路径长度限制</th>
+        <th>总空间</th>
+        <th>可用空间</th>
+    </tr>
+    <tr th:each="volume : ${volumes}">
+        <td th:text="${volume.caption != null ? volume.caption : ''}"></td>
+        <td th:text="${volume.name != null ? volume.name : ''}"></td>
+        <td th:text="${volume.serialNumber != null ? volume.serialNumber : ''}"></td>
+        <td th:text="${volume.hardwareIndex != null ? volume.hardwareIndex : ''}"></td>
+        <td th:text="${volume.hardware != null ? ( volume.hardware.caption != null ? volume.hardware.caption : '' ) : ''}"></td>
+        <td th:text="${volume.fileSystem != null ? volume.fileSystem : ''}"></td>
+        <td th:text="${volume.maximumComponentLength != null ? volume.maximumComponentLength : ''}"></td>
+        <td th:text="${volume.totalSpaceString != null ? volume.totalSpaceString : ''}"></td>
+        <td th:text="${volume.freeSpaceString != null ? volume.freeSpaceString : ''}"></td>
+    </tr>
+</table>
+
+<p>
+    <small>生成时间: <span th:text="${generatedTime}"></span></small>
+</p>
+</body>
+</html>
