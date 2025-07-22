@@ -42,7 +42,7 @@
 <h1>视频文件信息</h1>
 <p>共计 <span th:text="${videos.size()}"></span> 个视频文件</p>
 
- <h2>最大的前30个视频文件</h2>
+ <h2>最大的前 <span th:text="${topSizeVideos.size()}"></span> 个视频文件</h2>
 <table>
     <tr>
         <th>序号</th>
