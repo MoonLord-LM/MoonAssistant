@@ -8,7 +8,7 @@
             margin: 20px;
         }
 
-        h1 {
+        h2 {
             color: #333;
         }
 
@@ -39,7 +39,7 @@
     </style>
 </head>
 <body>
-<h1>物理磁盘信息</h1>
+<h2>物理磁盘信息</h2>
 <p>共计 <span th:text="${disks.size()}"></span> 个磁盘设备</p>
 <table>
     <tr>
@@ -72,7 +72,7 @@
     </tr>
 </table>
 
-<h1>逻辑磁盘信息</h1>
+<h2>逻辑磁盘信息</h2>
 <p>共计 <span th:text="${volumes.size()}"></span> 个逻辑卷</p>
 <table>
     <tr>

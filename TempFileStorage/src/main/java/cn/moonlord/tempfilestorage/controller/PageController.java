@@ -40,6 +40,14 @@ public class PageController {
     @GetMapping("/video/show")
     public String showVideoInfo(Model model) {
         CopyOnWriteArrayList<VideoFileVO> videos = videoScanService.getAllMarkedVideos();
+        
+        // 获取最大的前30个文件
+        List<VideoFileVO> topSizeVideos = videos.stream()
+                .sorted((v1, v2) -> Long.compare(v2.getFileSize(), v1.getFileSize()))
+                .limit(30)
+                .collect(Collectors.toList());
+        model.addAttribute("topSizeVideos", topSizeVideos);
+
         String generatedTime = (new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")).format(new Date());
 
         Map<String, Integer> actorWorkCounts = new HashMap<>();

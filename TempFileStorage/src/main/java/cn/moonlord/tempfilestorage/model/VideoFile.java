@@ -43,6 +43,11 @@ public class VideoFile {
     private Long fileSize;
 
     /**
+     * 文件大小说明（2.00 GB）
+     */
+    String fileSizeString;
+
+    /**
      * 文件创建时间
      */
     private Long fileCreationTime;

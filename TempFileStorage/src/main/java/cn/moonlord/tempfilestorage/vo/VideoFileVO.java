@@ -77,6 +77,18 @@ public class VideoFileVO extends VideoFile {
         super.setFileCreationTime(file.lastModified()); // TODO FIX
         super.setFileLastAccessTime(file.lastModified()); // TODO FIX
         super.setFileLastUpdateTime(file.lastModified());
+        
+        // 设置格式化后的文件大小字符串
+        long size = file.length();
+        if (size < 1024) {
+            super.setFileSizeString(size + " B");
+        } else if (size < 1024 * 1024) {
+            super.setFileSizeString(String.format("%.2f KB", size / 1024.0));
+        } else if (size < 1024 * 1024 * 1024) {
+            super.setFileSizeString(String.format("%.2f MB", size / (1024.0 * 1024.0)));
+        } else {
+            super.setFileSizeString(String.format("%.2f GB", size / (1024.0 * 1024.0 * 1024.0)));
+        }
 
         List<FileHash> fileHashes = new ArrayList<>();
         // TODO FIX

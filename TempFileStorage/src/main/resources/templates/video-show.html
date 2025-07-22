@@ -8,7 +8,7 @@
             margin: 20px;
         }
 
-        h1 {
+        h2 {
             color: #333;
         }
 
@@ -41,6 +41,24 @@
 <body>
 <h1>视频文件信息</h1>
 <p>共计 <span th:text="${videos.size()}"></span> 个视频文件</p>
+
+ <h2>最大的前30个视频文件</h2>
+<table>
+    <tr>
+        <th>序号</th>
+        <th>文件名</th>
+        <th>文件大小</th>
+        <th>评分</th>
+        <th>演员</th>
+    </tr>
+    <tr th:each="video, stat : ${topSizeVideos}">
+        <td th:text="${stat.count}"></td>
+        <td th:text="${video.fileName}"></td>
+        <td th:text="${video.fileSizeString}"></td>
+        <td th:text="${video.score}"></td>
+        <td th:text="${#strings.listJoin(video.actorNames, ', ')}"></td>
+    </tr>
+</table>
 
 <h2>评分最高的前 <span th:text="${topRatedActors.size()}"></span> 名演员</h2>
 <table>
