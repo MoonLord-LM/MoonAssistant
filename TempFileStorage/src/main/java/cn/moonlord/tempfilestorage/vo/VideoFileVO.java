@@ -1,5 +1,6 @@
 package cn.moonlord.tempfilestorage.vo;
 
+import cn.moonlord.tempfilestorage.model.FileHash;
 import cn.moonlord.tempfilestorage.model.VideoFile;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -8,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -69,6 +71,16 @@ public class VideoFileVO extends VideoFile {
         } else {
             throw new IllegalArgumentException("invalid file name: " + tmp);
         }
+
+        super.setFileName(file.getName());
+        super.setFileSize(file.length());
+        super.setFileCreationTime(file.lastModified()); // TODO FIX
+        super.setFileLastAccessTime(file.lastModified()); // TODO FIX
+        super.setFileLastUpdateTime(file.lastModified());
+
+        List<FileHash> fileHashes = new ArrayList<>();
+        // TODO FIX
+        super.setFileHashes(fileHashes);
     }
 
 }

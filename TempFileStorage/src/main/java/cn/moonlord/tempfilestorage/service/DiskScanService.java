@@ -26,8 +26,10 @@ public class DiskScanService {
         AtomicReference<CopyOnWriteArrayList<DiskHardwareVO>> disks1 = new AtomicReference<>(new CopyOnWriteArrayList<>());
         CompletableFuture<String> outputFuture1 = CompletableFuture.supplyAsync(() -> {
             try {
-                String temp = IOUtils.toString(p1.getInputStream(), StandardCharsets.UTF_8);
+                String temp = IOUtils.toString(p1.getInputStream(), StandardCharsets.UTF_8).trim();
                 log.debug("out1: {}", temp);
+                temp = temp.startsWith("{") ? "[" + temp : temp;
+                temp = temp.endsWith("}") ? temp + "]" : temp;
                 disks1.set(DiskHardwareVO.mapper.readValue(temp, new TypeReference<>() {}));
                 log.debug("disks1: {}", disks1);
                 return temp;
@@ -37,7 +39,7 @@ public class DiskScanService {
         });
         CompletableFuture<String> errorFuture1 = CompletableFuture.supplyAsync(() -> {
             try {
-                String temp = IOUtils.toString(p1.getErrorStream(), StandardCharsets.UTF_8);
+                String temp = IOUtils.toString(p1.getErrorStream(), StandardCharsets.UTF_8).trim();
                 if (StringUtils.hasText(temp)) {
                     log.error("error1: {}", temp);
                     throw new RuntimeException(temp);
@@ -54,8 +56,10 @@ public class DiskScanService {
         AtomicReference<CopyOnWriteArrayList<DiskHardwareVO>> disks2 = new AtomicReference<>(new CopyOnWriteArrayList<>());
         CompletableFuture<String> outputFuture2 = CompletableFuture.supplyAsync(() -> {
             try {
-                String temp = IOUtils.toString(p2.getInputStream(), StandardCharsets.UTF_8);
+                String temp = IOUtils.toString(p2.getInputStream(), StandardCharsets.UTF_8).trim();
                 log.debug("out2: {}", temp);
+                temp = temp.startsWith("{") ? "[" + temp : temp;
+                temp = temp.endsWith("}") ? temp + "]" : temp;
                 disks2.set(DiskHardwareVO.mapper.readValue(temp, new TypeReference<>() {}));
                 log.debug("disks2: {}", disks2);
                 return temp;
@@ -65,7 +69,7 @@ public class DiskScanService {
         });
         CompletableFuture<String> errorFuture2 = CompletableFuture.supplyAsync(() -> {
             try {
-                String temp = IOUtils.toString(p2.getErrorStream(), StandardCharsets.UTF_8);
+                String temp = IOUtils.toString(p2.getErrorStream(), StandardCharsets.UTF_8).trim();
                 if (StringUtils.hasText(temp)) {
                     log.error("error2: {}", temp);
                     throw new RuntimeException(temp);
@@ -98,8 +102,10 @@ public class DiskScanService {
         AtomicReference<CopyOnWriteArrayList<LogicalVolumeVO>> disks1 = new AtomicReference<>(new CopyOnWriteArrayList<>());
         CompletableFuture<String> outputFuture1 = CompletableFuture.supplyAsync(() -> {
             try {
-                String temp = IOUtils.toString(p1.getInputStream(), StandardCharsets.UTF_8);
+                String temp = IOUtils.toString(p1.getInputStream(), StandardCharsets.UTF_8).trim();
                 log.debug("out1: {}", temp);
+                temp = temp.startsWith("{") ? "[" + temp : temp;
+                temp = temp.endsWith("}") ? temp + "]" : temp;
                 disks1.set(LogicalVolumeVO.mapper.readValue(temp, new TypeReference<>() {}));
                 log.debug("disks1: {}", disks1);
                 return temp;
@@ -109,7 +115,7 @@ public class DiskScanService {
         });
         CompletableFuture<String> errorFuture1 = CompletableFuture.supplyAsync(() -> {
             try {
-                String temp = IOUtils.toString(p1.getErrorStream(), StandardCharsets.UTF_8);
+                String temp = IOUtils.toString(p1.getErrorStream(), StandardCharsets.UTF_8).trim();
                 if (StringUtils.hasText(temp)) {
                     log.error("error1: {}", temp);
                     throw new RuntimeException(temp);
