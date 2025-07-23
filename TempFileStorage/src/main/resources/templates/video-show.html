@@ -48,6 +48,11 @@
         <th>序号</th>
         <th>文件名</th>
         <th>文件大小</th>
+        <th>分辨率</th>
+        <th>时长</th>
+        <th>帧率</th>
+        <th>视频编码</th>
+        <th>音频编码</th>
         <th>评分</th>
         <th>演员</th>
     </tr>
@@ -55,6 +60,11 @@
         <td th:text="${stat.count}"></td>
         <td th:text="${video.fileName}"></td>
         <td th:text="${video.fileSizeString}"></td>
+        <td th:text="${video.resolution}"></td>
+        <td th:text="${video.formattedDuration}"></td>
+        <td th:text="${video.formattedFrameRate}"></td>
+        <td th:text="${video.videoCodec}"></td>
+        <td th:text="${video.audioCodec}"></td>
         <td th:text="${video.score}"></td>
         <td th:text="${#strings.listJoin(video.actorNames, ', ')}"></td>
     </tr>

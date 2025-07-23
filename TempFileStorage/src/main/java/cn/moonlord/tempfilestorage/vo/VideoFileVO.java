@@ -10,6 +10,8 @@ import org.apache.commons.io.FileUtils;
 import org.bouncycastle.util.encoders.Hex;
 import org.bouncycastle.crypto.digests.MD5Digest;
 import org.bouncycastle.crypto.digests.SHA256Digest;
+import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.FrameGrabber;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -42,6 +44,70 @@ public class VideoFileVO extends VideoFile {
                 unitIndex++;
             }
             super.setFileSizeString(String.format("%.2f %s", size, units[unitIndex]));
+        }
+    }
+    
+    /**
+     * 获取格式化的视频时长（小时:分钟:秒）
+     * @return 格式化的视频时长
+     */
+    public String getFormattedDuration() {
+        if (super.getDuration() == null) {
+            return null;
+        }
+        
+        int totalSeconds = (int) Math.round(super.getDuration());
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+        
+        if (hours > 0) {
+            return String.format("%d:%02d:%02d", hours, minutes, seconds);
+        } else {
+            return String.format("%02d:%02d", minutes, seconds);
+        }
+    }
+    
+    /**
+     * 获取格式化的视频帧率
+     * @return 格式化的视频帧率
+     */
+    public String getFormattedFrameRate() {
+        if (super.getFrameRate() == null) {
+            return null;
+        }
+        return String.format("%.2f fps", super.getFrameRate());
+    }
+    
+    /**
+     * 获取格式化的视频比特率
+     * @return 格式化的视频比特率
+     */
+    public String getFormattedVideoBitrate() {
+        if (super.getVideoBitrate() == null) {
+            return null;
+        }
+        
+        if (super.getVideoBitrate() >= 1000) {
+            return String.format("%.2f Mbps", super.getVideoBitrate() / 1000.0);
+        } else {
+            return String.format("%d kbps", super.getVideoBitrate());
+        }
+    }
+    
+    /**
+     * 获取格式化的音频比特率
+     * @return 格式化的音频比特率
+     */
+    public String getFormattedAudioBitrate() {
+        if (super.getAudioBitrate() == null) {
+            return null;
+        }
+        
+        if (super.getAudioBitrate() >= 1000) {
+            return String.format("%.2f Mbps", super.getAudioBitrate() / 1000.0);
+        } else {
+            return String.format("%d kbps", super.getAudioBitrate());
         }
     }
 
@@ -104,6 +170,9 @@ public class VideoFileVO extends VideoFile {
         super.setFileLastAccessTime(attrs.lastAccessTime().toMillis());
         super.setFileLastUpdateTime(attrs.lastModifiedTime().toMillis());
 
+        // 提取视频元数据
+        extractVideoMetadata(file);
+
         List<FileHash> fileHashes = new ArrayList<>();
         // TODO
         // fileHashes.add(new FileHash("MD5", calculateMD5(file)));
@@ -140,4 +209,62 @@ public class VideoFileVO extends VideoFile {
         }
     }
 
+    /**
+     * 提取视频文件的元数据
+     * @param file 视频文件
+     */
+    @SneakyThrows
+    private void extractVideoMetadata(File file) {
+        try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(file)) {
+            grabber.start();
+            
+            // 获取视频分辨率
+            int width = grabber.getImageWidth();
+            int height = grabber.getImageHeight();
+            if (width > 0 && height > 0) {
+                super.setResolution(width + "x" + height);
+            }
+            
+            // 获取视频帧率
+            double frameRate = grabber.getVideoFrameRate();
+            if (frameRate > 0) {
+                super.setFrameRate(frameRate);
+            }
+            
+            // 获取视频时长（微秒转换为秒）
+            long duration = grabber.getLengthInTime();
+            if (duration > 0) {
+                super.setDuration(duration / 1000000.0);
+            }
+            
+            // 获取视频编码格式
+            String videoCodec = grabber.getVideoCodecName();
+            if (videoCodec != null && !videoCodec.isEmpty()) {
+                super.setVideoCodec(videoCodec);
+            }
+            
+            // 获取音频编码格式
+            String audioCodec = grabber.getAudioCodecName();
+            if (audioCodec != null && !audioCodec.isEmpty()) {
+                super.setAudioCodec(audioCodec);
+            }
+            
+            // 获取视频比特率（bps 转换为 kbps）
+            int videoBitrate = grabber.getVideoBitrate();
+            if (videoBitrate > 0) {
+                super.setVideoBitrate(videoBitrate / 1000);
+            }
+            
+            // 获取音频比特率（bps 转换为 kbps）
+            int audioBitrate = grabber.getAudioBitrate();
+            if (audioBitrate > 0) {
+                super.setAudioBitrate(audioBitrate / 1000);
+            }
+            
+            grabber.stop();
+        } catch (FrameGrabber.Exception e) {
+            log.error("提取视频元数据失败: {}", e.getMessage(), e);
+            // 出错时不抛出异常，只记录日志，避免影响正常流程
+        }
+    }
 }

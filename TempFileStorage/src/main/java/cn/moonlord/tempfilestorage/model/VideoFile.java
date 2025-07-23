@@ -72,5 +72,40 @@ public class VideoFile extends BaseData {
      * 文件哈希值列表
      */
     List<FileHash> fileHashes;
+    
+    /**
+     * 视频分辨率（如 1920x1080）
+     */
+    private String resolution;
+    
+    /**
+     * 视频帧率（如 30 fps）
+     */
+    private Double frameRate;
+    
+    /**
+     * 视频时长（秒）
+     */
+    private Double duration;
+    
+    /**
+     * 视频编码格式（如 H.264, HEVC 等）
+     */
+    private String videoCodec;
+    
+    /**
+     * 音频编码格式（如 AAC, MP3 等）
+     */
+    private String audioCodec;
+    
+    /**
+     * 视频比特率（kbps）
+     */
+    private Integer videoBitrate;
+    
+    /**
+     * 音频比特率（kbps）
+     */
+    private Integer audioBitrate;
 
 }
