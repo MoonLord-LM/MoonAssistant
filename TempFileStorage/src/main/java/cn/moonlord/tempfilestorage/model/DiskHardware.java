@@ -2,6 +2,7 @@ package cn.moonlord.tempfilestorage.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -12,7 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class DiskHardware {
+@EqualsAndHashCode(callSuper = true)
+public class DiskHardware extends BaseData {
 
     /**
      * 型号（Seagate XXX SCSI Disk Device、WD XXX USB Device）
@@ -103,15 +105,5 @@ public class DiskHardware {
      * 磁盘在当前系统内的 Status（OK）
      */
     String currentStatus;
-
-    /**
-     * 创建时间
-     */
-    Long creationTime = System.currentTimeMillis();
-
-    /**
-     * 最后更新时间
-     */
-    Long lastUpdateTime = System.currentTimeMillis();
 
 }

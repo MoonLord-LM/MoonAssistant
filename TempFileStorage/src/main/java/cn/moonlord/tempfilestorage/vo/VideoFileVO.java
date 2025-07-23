@@ -10,17 +10,15 @@ import org.apache.commons.io.FileUtils;
 import org.bouncycastle.util.encoders.Hex;
 import org.bouncycastle.crypto.digests.MD5Digest;
 import org.bouncycastle.crypto.digests.SHA256Digest;
-import org.bouncycastle.crypto.io.DigestInputStream;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.DosFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.nio.file.attribute.UserDefinedFileAttributeView;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -107,31 +105,13 @@ public class VideoFileVO extends VideoFile {
         super.setFileLastUpdateTime(attrs.lastModifiedTime().toMillis());
 
         List<FileHash> fileHashes = new ArrayList<>();
-        try {
-            // 计算MD5哈希值
-            FileHash md5Hash = new FileHash();
-            md5Hash.setHashAlgorithm("MD5");
-            md5Hash.setHashValue(calculateMD5(file));
-            fileHashes.add(md5Hash);
-            
-            // 计算SHA-256哈希值
-            FileHash sha256Hash = new FileHash();
-            sha256Hash.setHashAlgorithm("SHA-256");
-            sha256Hash.setHashValue(calculateSHA256(file));
-            fileHashes.add(sha256Hash);
-        } catch (IOException e) {
-            log.warn("Failed to calculate file hash: {}", e.getMessage());
-        }
+        // TODO
+        // fileHashes.add(new FileHash("MD5", calculateMD5(file)));
+        // fileHashes.add(new FileHash("SHA-256", calculateSHA256(file)));
+
         super.setFileHashes(fileHashes);
     }
 
-    /**
-     * 计算文件的MD5哈希值
-     * 
-     * @param file 要计算哈希值的文件
-     * @return MD5哈希值的十六进制字符串
-     * @throws IOException 如果文件读取失败
-     */
     private String calculateMD5(File file) throws IOException {
         try (FileInputStream fis = new FileInputStream(file)) {
             MD5Digest digest = new MD5Digest();
@@ -146,13 +126,6 @@ public class VideoFileVO extends VideoFile {
         }
     }
 
-    /**
-     * 计算文件的SHA-256哈希值
-     * 
-     * @param file 要计算哈希值的文件
-     * @return SHA-256哈希值的十六进制字符串
-     * @throws IOException 如果文件读取失败
-     */
     private String calculateSHA256(File file) throws IOException {
         try (FileInputStream fis = new FileInputStream(file)) {
             SHA256Digest digest = new SHA256Digest();
@@ -166,4 +139,5 @@ public class VideoFileVO extends VideoFile {
             return new String(Hex.encode(result));
         }
     }
+
 }

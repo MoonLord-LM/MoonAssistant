@@ -2,6 +2,7 @@ package cn.moonlord.tempfilestorage.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -12,7 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class FileHash {
+@EqualsAndHashCode(callSuper = true)
+public class FileHash extends BaseData {
 
     /**
      * 哈希算法

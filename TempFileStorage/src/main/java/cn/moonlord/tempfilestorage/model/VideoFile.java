@@ -15,7 +15,8 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class VideoFile {
+@EqualsAndHashCode(callSuper = true)
+public class VideoFile extends BaseData {
 
     /**
      * 序列号
@@ -71,15 +72,5 @@ public class VideoFile {
      * 文件哈希值列表
      */
     List<FileHash> fileHashes;
-
-    /**
-     * 创建时间
-     */
-    Long creationTime = System.currentTimeMillis();
-
-    /**
-     * 最后更新时间
-     */
-    Long lastUpdateTime = System.currentTimeMillis();
 
 }

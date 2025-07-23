@@ -2,6 +2,7 @@ package cn.moonlord.tempfilestorage.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -12,7 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class LogicalVolume {
+@EqualsAndHashCode(callSuper = true)
+public class LogicalVolume extends BaseData {
 
     /**
      * 物理设备
@@ -73,15 +75,5 @@ public class LogicalVolume {
      * 总容量说明（3.64 TB、16.37 TB）
      */
     String freeSpaceString;
-
-    /**
-     * 创建时间
-     */
-    Long creationTime = System.currentTimeMillis();
-
-    /**
-     * 最后更新时间
-     */
-    Long lastUpdateTime = System.currentTimeMillis();
 
 }
