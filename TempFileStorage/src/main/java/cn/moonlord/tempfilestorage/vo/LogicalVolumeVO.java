@@ -11,8 +11,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.deser.std.StringDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -22,6 +24,8 @@ import java.io.IOException;
  */
 @Slf4j
 @Data
+@AllArgsConstructor
+@NoArgsConstructor
 @EqualsAndHashCode(callSuper = true)
 public class LogicalVolumeVO extends LogicalVolume {
 
@@ -61,7 +65,7 @@ public class LogicalVolumeVO extends LogicalVolume {
         this.totalSpace = totalSpace;
         if (totalSpace != null) {
             double size = totalSpace;
-            String[] units = {"B", "KB", "MB", "GB", "TB", "PB"};
+            String[] units = {"B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB", "RB", "QB"};
             int unitIndex = 0;
             while (size >= 1024 && unitIndex < units.length - 1) {
                 size /= 1024;
@@ -76,7 +80,7 @@ public class LogicalVolumeVO extends LogicalVolume {
         super.setFreeSpace(freeSpace);
         if (freeSpace != null) {
             double size = freeSpace;
-            String[] units = {"B", "KB", "MB", "GB", "TB", "PB"};
+            String[] units = {"B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB", "RB", "QB"};
             int unitIndex = 0;
             while (size >= 1024 && unitIndex < units.length - 1) {
                 size /= 1024;
