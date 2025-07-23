@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.DosFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -100,20 +101,10 @@ public class VideoFileVO extends VideoFile {
 
         super.setFileName(file.getName());
         this.setFileSize(file.length());
-        
-        try {
-            // 获取文件的基本属性，包括创建时间和最后访问时间
-            BasicFileAttributes attrs = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
-            super.setFileCreationTime(attrs.creationTime().toMillis());
-            super.setFileLastAccessTime(attrs.lastAccessTime().toMillis());
-            super.setFileLastUpdateTime(attrs.lastModifiedTime().toMillis());
-        } catch (IOException e) {
-            log.warn("Failed to read file attributes: {}", e.getMessage());
-            // 如果获取失败，则使用lastModified作为备选
-            super.setFileCreationTime(file.lastModified());
-            super.setFileLastAccessTime(file.lastModified());
-            super.setFileLastUpdateTime(file.lastModified());
-        }
+        DosFileAttributes attrs = Files.readAttributes(file.toPath(), DosFileAttributes.class);
+        super.setFileCreationTime(attrs.creationTime().toMillis());
+        super.setFileLastAccessTime(attrs.lastAccessTime().toMillis());
+        super.setFileLastUpdateTime(attrs.lastModifiedTime().toMillis());
 
         List<FileHash> fileHashes = new ArrayList<>();
         try {
