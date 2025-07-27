@@ -97,36 +97,13 @@ public class V2exAutoLogin {
         log.info("执行完成");
         SeleniumUtil.cleanAndQuit(driver);
 
-        // 清理多余 Cookie 和 LocalStorage
+        // 清理多余文件
         SeleniumUtil.printCookie(userData);
         SeleniumUtil.cleanCookie(userData, List.of("v2ex.com"));
         SeleniumUtil.printLocalStorage(userData);
         SeleniumUtil.cleanLocalStorage(userData, List.of("v2ex.com"));
         SeleniumUtil.resetLocalStorage(userData);
-
-        // 清理临时文件
-        List<String> keepPaths = List.of(
-                userData.getCanonicalPath() + "\\Default\\Network\\Cookies",
-                userData.getCanonicalPath() + "\\Default\\Local Storage",
-                userData.getCanonicalPath() + "\\Local State"
-        );
-        List<File> allFiles = new ArrayList<>();
-        Files.walk(userData.toPath()).forEach(path -> allFiles.add(path.toFile()));
-        Collections.reverse(allFiles);
-        for (File file : allFiles) {
-            if (!file.getCanonicalPath().equals(userData.getCanonicalPath())) {
-                boolean keep = false;
-                for (String keepPath : keepPaths) {
-                    if (file.getCanonicalPath().equals(keepPath) || file.getCanonicalPath().startsWith(keepPath) || keepPath.startsWith(file.getCanonicalPath())) {
-                        keep = true;
-                        break;
-                    }
-                }
-                if (!keep) {
-                    FileUtils.deleteQuietly(file);
-                }
-            }
-        }
+        SeleniumUtil.cleanFile(userData, true, true);
     }
 
 }

@@ -14,15 +14,17 @@ import org.openqa.selenium.devtools.v138.network.Network;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Slf4j
 public class SeleniumUtil {
@@ -229,7 +231,7 @@ public class SeleniumUtil {
     public static void resetLocalStorage(File userData) throws IOException {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
-            log.error("cleanLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
+            log.error("resetLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
             throw new RuntimeException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
         }
         Options options = new Options();
@@ -256,6 +258,38 @@ public class SeleniumUtil {
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOCK"));
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG"));
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG.old"));
+    }
+
+    public static void cleanFile(File userData, Boolean keepCookie, Boolean keepLocalStorage) throws IOException {
+        List<String> keepPaths = new ArrayList<>();
+        if (keepCookie) {
+            keepPaths.add(userData.getCanonicalPath() + "\\Default\\Network\\Cookies");
+        }
+        if (keepLocalStorage) {
+            keepPaths.add(userData.getCanonicalPath() + "\\Default\\Local Storage");
+        }
+        if (keepCookie || keepLocalStorage) {
+            keepPaths.add(userData.getCanonicalPath() + "\\Local State");
+        }
+        List<File> allFiles;
+        try (Stream<Path> stream = Files.walk(userData.toPath())) {
+            allFiles = stream.map(Path::toFile).collect(Collectors.toList());
+        }
+        Collections.reverse(allFiles);
+        for (File file : allFiles) {
+            if (!file.getCanonicalPath().equals(userData.getCanonicalPath())) {
+                boolean keep = false;
+                for (String keepPath : keepPaths) {
+                    if (file.getCanonicalPath().equals(keepPath) || file.getCanonicalPath().startsWith(keepPath) || keepPath.startsWith(file.getCanonicalPath())) {
+                        keep = true;
+                        break;
+                    }
+                }
+                if (!keep) {
+                    FileUtils.deleteQuietly(file);
+                }
+            }
+        }
     }
 
 }
