@@ -33,7 +33,7 @@ public class V2exAutoLogin {
         // 检查并完成登录
         if (driver.getTitle() == null || driver.getTitle().contains("登录")) {
             log.info("当前未登录，进入登录流程");
-            SeleniumUtil.cleanCacheAndQuit(driver);
+            SeleniumUtil.cleanCacheAndQuit(driver); // TODO 不需要
             driver = SeleniumUtil.getVisibleChrome(userData);
             driver.get("https://www.v2ex.com/mission/daily");
             while (true) {
@@ -50,7 +50,7 @@ public class V2exAutoLogin {
                     driver.get("https://www.v2ex.com/mission/daily");
                 }
             }
-            SeleniumUtil.cleanCacheAndQuit(driver);
+            SeleniumUtil.cleanCacheAndQuit(driver); // TODO 不需要
             driver = SeleniumUtil.getInvisibleChrome(userData);
             driver.get("https://www.v2ex.com/mission/daily");
             SeleniumUtil.printPage(driver);
