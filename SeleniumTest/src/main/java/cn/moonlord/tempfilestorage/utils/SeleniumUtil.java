@@ -223,8 +223,9 @@ public class SeleniumUtil {
         iterator.close();
         db.compactRange(null, null);
         db.close();
-        FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG.old"));
+        FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOCK"));
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG"));
+        FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG.old"));
     }
 
 }
