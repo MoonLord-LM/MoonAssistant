@@ -130,7 +130,7 @@ public class SeleniumUtil {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
             log.error("printLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new RuntimeException("printLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+            throw new IOException("printLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
         }
         log.info("Current LocalStorage Files");
         log.info("————————————————————————————————————————————————————————————");
@@ -186,7 +186,7 @@ public class SeleniumUtil {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
             log.error("cleanLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new RuntimeException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+            throw new IOException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
         }
         Options options = new Options();
         options.createIfMissing(false);
@@ -232,7 +232,7 @@ public class SeleniumUtil {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
             log.error("resetLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new RuntimeException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+            throw new IOException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
         }
         Options options = new Options();
         options.createIfMissing(true);
@@ -266,7 +266,7 @@ public class SeleniumUtil {
         }
         if (!userData.canRead() || !userData.canWrite()) {
             log.error("Can not read or write: {}", userData.getCanonicalPath());
-            throw new RuntimeException("Can not read or write: " + userData.getCanonicalPath());
+            throw new IOException("Can not read or write: " + userData.getCanonicalPath());
         }
     }
 
