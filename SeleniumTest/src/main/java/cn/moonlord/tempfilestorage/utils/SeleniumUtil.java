@@ -228,7 +228,7 @@ public class SeleniumUtil {
         db.close();
     }
 
-    public static void resetLocalStorage(File userData) throws IOException {
+    public static void compactLocalStorage(File userData) throws IOException {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
             log.error("resetLocalStorage failed, leveldbDir path does not exist: {}", leveldbDir.getCanonicalPath());
