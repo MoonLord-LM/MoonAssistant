@@ -4,7 +4,6 @@ import cn.moonlord.tempfilestorage.utils.SeleniumUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import org.jsoup.Jsoup;
 import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchSessionException;
 import org.openqa.selenium.NoSuchWindowException;
@@ -25,17 +24,11 @@ public class V2exAutoLogin {
         // 用户数据存储目录
         File userData = new File("www.v2ex.com");
         SeleniumUtil.prepareUserData(userData);
-        log.info("Current userData: {}", userData.getCanonicalPath());
-
-        // 关闭已运行的 Selenium Chrome 程序
-        Process p = Runtime.getRuntime().exec("taskkill.exe /f /im chromedriver.exe");
-        p.waitFor();
-        log.info("Task kill result: {}", p.exitValue());
 
         // 打开签到页面
         ChromeDriver driver = SeleniumUtil.getInvisibleChrome(userData);
         driver.get("https://www.v2ex.com/mission/daily");
-        log.info("Current URL: {} title:{} source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
+        SeleniumUtil.printPage(driver);
 
         // 检查并完成登录
         if (driver.getTitle() == null || driver.getTitle().contains("登录")) {
@@ -45,7 +38,7 @@ public class V2exAutoLogin {
             driver.get("https://www.v2ex.com/mission/daily");
             while (true) {
                 try {
-                    log.info("Current URL: {} title:{} source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
+                    SeleniumUtil.printPage(driver);
                     if (driver.getCurrentUrl() != null && driver.getTitle() != null) {
                         if (driver.getCurrentUrl().startsWith("https://www.v2ex.com/") && !driver.getTitle().contains("登录")) {
                             break;
@@ -60,7 +53,7 @@ public class V2exAutoLogin {
             SeleniumUtil.cleanCacheAndQuit(driver);
             driver = SeleniumUtil.getInvisibleChrome(userData);
             driver.get("https://www.v2ex.com/mission/daily");
-            log.info("Current URL: {} title:{} source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
+            SeleniumUtil.printPage(driver);
         }
 
         // 执行签到
@@ -70,14 +63,14 @@ public class V2exAutoLogin {
             log.info("点击领取铜币");
             collectButtons.get(0).click();
             Thread.sleep(3000);
-            log.info("Current URL: {} title:{} source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
+            SeleniumUtil.printPage(driver);
         }
         List<WebElement> showButtons = driver.findElements(By.cssSelector("input[value*='查看'][value*='余额']"));
         if (!showButtons.isEmpty()) {
             log.info("点击查看余额");
             showButtons.get(0).click();
             Thread.sleep(3000);
-            log.info("Current URL: {} title:{} source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
+            SeleniumUtil.printPage(driver);
         }
         List<WebElement> coinsButtons = driver.findElements(By.cssSelector("div.balance_area"));
         if (!coinsButtons.isEmpty()) {

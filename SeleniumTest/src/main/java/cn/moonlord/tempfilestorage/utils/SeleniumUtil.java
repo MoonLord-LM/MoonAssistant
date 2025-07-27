@@ -7,6 +7,7 @@ import org.fusesource.leveldbjni.JniDBFactory;
 import org.iq80.leveldb.DB;
 import org.iq80.leveldb.DBIterator;
 import org.iq80.leveldb.Options;
+import org.jsoup.Jsoup;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.devtools.v138.network.Network;
@@ -22,14 +23,21 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Slf4j
 public class SeleniumUtil {
 
-    public static ChromeDriver getVisibleChrome(File userData) throws IOException {
+    public static ChromeDriver getVisibleChrome(File userData) throws IOException, InterruptedException {
+        Process p = Runtime.getRuntime().exec("taskkill.exe /f /im chromedriver.exe");
+        p.waitFor();
+        log.info("getVisibleChrome, stop current ChromeDriver result: {}", p.exitValue());
         ChromeOptions options = new ChromeOptions();
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
@@ -49,7 +57,10 @@ public class SeleniumUtil {
         return new ChromeDriver(options);
     }
 
-    public static ChromeDriver getInvisibleChrome(File userData) throws IOException {
+    public static ChromeDriver getInvisibleChrome(File userData) throws IOException, InterruptedException {
+        Process p = Runtime.getRuntime().exec("taskkill.exe /f /im chromedriver.exe");
+        p.waitFor();
+        log.info("getInvisibleChrome, stop current ChromeDriver result: {}", p.exitValue());
         ChromeOptions options = new ChromeOptions();
         options.addArguments("--headless=new");
         options.addArguments("--no-sandbox");
@@ -68,6 +79,10 @@ public class SeleniumUtil {
         options.setExperimentalOption("excludeSwitches", List.of("enable-automation"));
         options.setExperimentalOption("useAutomationExtension", false);
         return new ChromeDriver(options);
+    }
+
+    public static void printPage(ChromeDriver driver) {
+        log.info("Current URL: {},        title:{},        source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
     }
 
     public static void cleanCacheAndQuit(ChromeDriver driver) {
@@ -268,6 +283,7 @@ public class SeleniumUtil {
             log.error("Can not read or write: {}", userData.getCanonicalPath());
             throw new IOException("Can not read or write: " + userData.getCanonicalPath());
         }
+        log.info("Current userData: {}", userData.getCanonicalPath());
     }
 
     public static void cleanUserData(File userData, Boolean keepCookie, Boolean keepLocalStorage) throws IOException {
