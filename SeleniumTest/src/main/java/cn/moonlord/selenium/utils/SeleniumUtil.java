@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Slf4j
-public class SeleniumUtil {
+public class SeleniumUtil { // TODO 按功能拆分，并设置默认 userData 以简化传参
 
     public static ChromeDriver getVisibleChrome(File userData) throws IOException, InterruptedException {
         Process p = Runtime.getRuntime().exec("taskkill.exe /f /im chromedriver.exe");
