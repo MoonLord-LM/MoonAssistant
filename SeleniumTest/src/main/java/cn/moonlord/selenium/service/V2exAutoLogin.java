@@ -1,6 +1,6 @@
-package cn.moonlord.tempfilestorage.service;
+package cn.moonlord.selenium.service;
 
-import cn.moonlord.tempfilestorage.utils.SeleniumUtil;
+import cn.moonlord.selenium.utils.SeleniumUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
