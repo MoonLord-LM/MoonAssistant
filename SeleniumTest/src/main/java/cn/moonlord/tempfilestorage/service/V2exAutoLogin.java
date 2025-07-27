@@ -46,7 +46,7 @@ public class V2exAutoLogin {
         // 检查并完成登录
         if (driver.getTitle() == null || driver.getTitle().contains("登录")) {
             log.info("当前未登录，进入登录流程");
-            SeleniumUtil.cleanAndQuit(driver);
+            SeleniumUtil.cleanCacheAndQuit(driver);
             driver = SeleniumUtil.getVisibleChrome(userData);
             driver.get("https://www.v2ex.com/mission/daily");
             while (true) {
@@ -63,7 +63,7 @@ public class V2exAutoLogin {
                     driver.get("https://www.v2ex.com/mission/daily");
                 }
             }
-            SeleniumUtil.cleanAndQuit(driver);
+            SeleniumUtil.cleanCacheAndQuit(driver);
             driver = SeleniumUtil.getInvisibleChrome(userData);
             driver.get("https://www.v2ex.com/mission/daily");
             log.info("Current URL: {} title:{} source:{}", driver.getCurrentUrl(), driver.getTitle(), (driver.getPageSource() == null ? "" : Jsoup.parse(driver.getPageSource()).text().trim()));
@@ -91,7 +91,7 @@ public class V2exAutoLogin {
             log.info("当前余额: " + value);
         }
         log.info("执行完成");
-        SeleniumUtil.cleanAndQuit(driver);
+        SeleniumUtil.cleanCacheAndQuit(driver);
 
         // 清理多余文件
         SeleniumUtil.printCookie(userData);
@@ -99,7 +99,7 @@ public class V2exAutoLogin {
         SeleniumUtil.printLocalStorage(userData);
         SeleniumUtil.cleanLocalStorage(userData, List.of("v2ex.com"));
         SeleniumUtil.resetLocalStorage(userData);
-        SeleniumUtil.cleanFile(userData, true, true);
+        SeleniumUtil.cleanUserDataFile(userData, true, true);
     }
 
 }

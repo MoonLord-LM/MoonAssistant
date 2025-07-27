@@ -70,7 +70,7 @@ public class SeleniumUtil {
         return new ChromeDriver(options);
     }
 
-    public static void cleanAndQuit(ChromeDriver driver) {
+    public static void cleanCacheAndQuit(ChromeDriver driver) {
         driver.getDevTools().createSessionIfThereIsNotOne();
         driver.getDevTools().send(Network.clearBrowserCache());
         driver.close();
@@ -260,7 +260,7 @@ public class SeleniumUtil {
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG.old"));
     }
 
-    public static void cleanFile(File userData, Boolean keepCookie, Boolean keepLocalStorage) throws IOException {
+    public static void cleanUserDataFile(File userData, Boolean keepCookie, Boolean keepLocalStorage) throws IOException {
         List<String> keepPaths = new ArrayList<>();
         if (keepCookie) {
             keepPaths.add(userData.getCanonicalPath() + "\\Default\\Network\\Cookies");
