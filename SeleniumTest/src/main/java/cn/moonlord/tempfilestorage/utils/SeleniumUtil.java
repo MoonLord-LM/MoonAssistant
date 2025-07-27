@@ -135,7 +135,7 @@ public class SeleniumUtil {
         File[] files = leveldbDir.listFiles();
         if (files != null) {
             for (File file : files) {
-                log.info("file: {}        length: {}", file.getName(), file.length());
+                log.info("file: {},        length: {}", file.getName(), file.length());
             }
         }
         log.info("————————————————————————————————————————————————————————————");
@@ -173,7 +173,7 @@ public class SeleniumUtil {
             }
             String keyHex = "[0x" + Hex.toHexString(next.getKey()) + "]";
             String valueHex = "[0x" + Hex.toHexString(next.getValue()) + "]";
-            log.info("key: {}        value: {}        keyHex: {}        valueHex: {}", key, value, keyHex, valueHex);
+            log.info("key: {},        value: {},        keyHex: {},        valueHex: {}", key, value, keyHex, valueHex);
         }
         iterator.close();
         db.close();
