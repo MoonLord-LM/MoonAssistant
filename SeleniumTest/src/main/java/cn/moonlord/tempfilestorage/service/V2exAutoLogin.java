@@ -4,7 +4,6 @@ import cn.moonlord.tempfilestorage.utils.SeleniumUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.io.FileUtils;
 import org.jsoup.Jsoup;
 import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchSessionException;
@@ -14,9 +13,6 @@ import org.openqa.selenium.chrome.ChromeDriver;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
-import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 @Slf4j
