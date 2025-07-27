@@ -129,8 +129,8 @@ public class SeleniumUtil {
     public static void printLocalStorage(File userData) throws IOException {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
-            log.error("printLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new IOException("printLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+            log.error("printLocalStorage failed, leveldbDir path does not exist: {}", leveldbDir.getCanonicalPath());
+            throw new IOException("printLocalStorage failed, leveldbDir does not exist: " + leveldbDir.getCanonicalPath());
         }
         log.info("Current LocalStorage Files");
         log.info("————————————————————————————————————————————————————————————");
@@ -185,8 +185,8 @@ public class SeleniumUtil {
     public static void cleanLocalStorage(File userData, List<String> keepDomains) throws IOException {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
-            log.error("cleanLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new IOException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+            log.error("cleanLocalStorage failed, leveldbDir path does not exist: {}", leveldbDir.getCanonicalPath());
+            throw new IOException("cleanLocalStorage leveldbDir path does not exist: " + leveldbDir.getCanonicalPath());
         }
         Options options = new Options();
         options.createIfMissing(false);
@@ -231,8 +231,8 @@ public class SeleniumUtil {
     public static void resetLocalStorage(File userData) throws IOException {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
-            log.error("resetLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new IOException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+            log.error("resetLocalStorage failed, leveldbDir path does not exist: {}", leveldbDir.getCanonicalPath());
+            throw new IOException("cleanLocalStorage failed, leveldbDir path does not exist: " + leveldbDir.getCanonicalPath());
         }
         Options options = new Options();
         options.createIfMissing(true);
