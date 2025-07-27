@@ -260,7 +260,17 @@ public class SeleniumUtil {
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG.old"));
     }
 
-    public static void cleanUserDataFile(File userData, Boolean keepCookie, Boolean keepLocalStorage) throws IOException {
+    public static void prepareUserData(File userData) throws IOException {
+        if (!userData.exists() || !userData.isDirectory()) {
+            log.info("Create userData directory: {}", userData.mkdirs());
+        }
+        if (!userData.canRead() || !userData.canWrite()) {
+            log.error("Can not read or write: {}", userData.getCanonicalPath());
+            throw new RuntimeException("Can not read or write: " + userData.getCanonicalPath());
+        }
+    }
+
+    public static void cleanUserData(File userData, Boolean keepCookie, Boolean keepLocalStorage) throws IOException {
         List<String> keepPaths = new ArrayList<>();
         if (keepCookie) {
             keepPaths.add(userData.getCanonicalPath() + "\\Default\\Network\\Cookies");

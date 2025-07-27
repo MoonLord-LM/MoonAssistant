@@ -24,13 +24,7 @@ public class V2exAutoLogin {
     public void run() {
         // 用户数据存储目录
         File userData = new File("www.v2ex.com");
-        if (!userData.exists() || !userData.isDirectory()) {
-            log.error("Create userData: {}", userData.mkdirs());
-        }
-        if (!userData.canRead() || !userData.canWrite()) {
-            log.error("Can not read or write: {}", userData.getCanonicalPath());
-            throw new RuntimeException("Can not read or write: " + userData.getCanonicalPath());
-        }
+        SeleniumUtil.prepareUserData(userData);
         log.info("Current userData: {}", userData.getCanonicalPath());
 
         // 关闭已运行的 Selenium Chrome 程序
@@ -99,7 +93,7 @@ public class V2exAutoLogin {
         SeleniumUtil.printLocalStorage(userData);
         SeleniumUtil.cleanLocalStorage(userData, List.of("v2ex.com"));
         SeleniumUtil.resetLocalStorage(userData);
-        SeleniumUtil.cleanUserDataFile(userData, true, true);
+        SeleniumUtil.cleanUserData(userData, true, true);
     }
 
 }
