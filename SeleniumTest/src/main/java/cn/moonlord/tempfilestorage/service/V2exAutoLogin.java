@@ -102,6 +102,7 @@ public class V2exAutoLogin {
         SeleniumUtil.cleanCookie(userData, List.of("v2ex.com"));
         SeleniumUtil.printLocalStorage(userData);
         SeleniumUtil.cleanLocalStorage(userData, List.of("v2ex.com"));
+        SeleniumUtil.resetLocalStorage(userData);
 
         // 清理临时文件
         List<String> keepPaths = List.of(

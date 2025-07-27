@@ -20,6 +20,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -221,6 +222,35 @@ public class SeleniumUtil {
             }
         }
         iterator.close();
+        db.compactRange(null, null);
+        db.close();
+    }
+
+    public static void resetLocalStorage(File userData) throws IOException {
+        File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
+        if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
+            log.error("cleanLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
+            throw new RuntimeException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+        }
+        Options options = new Options();
+        options.createIfMissing(true);
+        DB db = JniDBFactory.factory.open(leveldbDir, options);
+        DBIterator iterator = db.iterator();
+        Map<byte[], byte[]> data = new HashMap<>();
+        for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
+            Map.Entry<byte[], byte[]> next = iterator.peekNext();
+            data.put(next.getKey(), next.getValue());
+        }
+        iterator.close();
+        db.close();
+        FileUtils.deleteQuietly(leveldbDir);
+        Boolean ignored = leveldbDir.mkdir();
+        options = new Options();
+        options.createIfMissing(true);
+        db = JniDBFactory.factory.open(leveldbDir, options);
+        for (Map.Entry<byte[], byte[]> entry : data.entrySet()) {
+            db.put(entry.getKey(), entry.getValue());
+        }
         db.compactRange(null, null);
         db.close();
         FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOCK"));
