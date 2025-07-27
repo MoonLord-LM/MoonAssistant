@@ -5,7 +5,6 @@ import jakarta.annotation.PostConstruct;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
-import org.bouncycastle.util.encoders.Hex;
 import org.jsoup.Jsoup;
 import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchSessionException;
@@ -13,20 +12,10 @@ import org.openqa.selenium.NoSuchWindowException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.springframework.stereotype.Component;
-import org.iq80.leveldb.DB;
-import org.iq80.leveldb.DBIterator;
-import org.iq80.leveldb.Options;
-
-import static org.iq80.leveldb.impl.Iq80DBFactory.factory;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.*;
 
 @Slf4j
@@ -107,11 +96,11 @@ public class V2exAutoLogin {
         log.info("执行完成");
         SeleniumUtil.cleanAndQuit(driver);
 
-        // 清理多余 Cookie
-        SeleniumUtil.cleanCookie(userData, List.of("v2ex.com"));
+        // 清理多余 Cookie 和 LocalStorage
         SeleniumUtil.printCookie(userData);
-        SeleniumUtil.cleanLocalStorage(userData, List.of("v2ex.com"));
+        SeleniumUtil.cleanCookie(userData, List.of("v2ex.com"));
         SeleniumUtil.printLocalStorage(userData);
+        SeleniumUtil.cleanLocalStorage(userData, List.of("v2ex.com"));
 
         // 清理临时文件
         List<String> keepPaths = List.of(
@@ -132,14 +121,10 @@ public class V2exAutoLogin {
                     }
                 }
                 if (!keep) {
-                    FileUtils.forceDelete(file);
+                    FileUtils.deleteQuietly(file);
                 }
             }
         }
-    }
-
-    public static void main(String[] args) throws IOException {
-        SeleniumUtil.printLocalStorage(new File("C:\\Users\\MoonLord-LM\\AppData\\Local\\Google\\Chrome\\User Data"));
     }
 
 }

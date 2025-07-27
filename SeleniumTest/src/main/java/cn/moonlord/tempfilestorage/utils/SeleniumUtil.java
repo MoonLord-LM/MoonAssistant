@@ -3,6 +3,7 @@ package cn.moonlord.tempfilestorage.utils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.bouncycastle.util.encoders.Hex;
+import org.fusesource.leveldbjni.JniDBFactory;
 import org.iq80.leveldb.DB;
 import org.iq80.leveldb.DBIterator;
 import org.iq80.leveldb.Options;
@@ -21,8 +22,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
-
-import static org.iq80.leveldb.impl.Iq80DBFactory.factory;
 
 @Slf4j
 public class SeleniumUtil {
@@ -106,7 +105,7 @@ public class SeleniumUtil {
             }
             sql = sql + " where not (" + where + ")";
         }
-        log.info("clean cookie sql: {}", sql);
+        log.info("cleanCookie sql: {}", sql);
         PreparedStatement cleanStatement = conn.prepareStatement(sql);
         int index = 1;
         if (keepDomains != null && !keepDomains.isEmpty()) {
@@ -116,7 +115,7 @@ public class SeleniumUtil {
             }
         }
         int result = cleanStatement.executeUpdate();
-        log.info("clean cookie result: {}", result);
+        log.info("cleanCookie result: {}", result);
         cleanStatement.close();
         Statement vacuumStatement = conn.createStatement();
         vacuumStatement.execute("vacuum");
@@ -127,8 +126,8 @@ public class SeleniumUtil {
     public static void printLocalStorage(File userData) throws IOException {
         File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
         if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
-            log.error("LevelDB path does not exist: {}", leveldbDir.getCanonicalPath());
-            throw new RuntimeException("LevelDB path does not exist: " + leveldbDir.getCanonicalPath());
+            log.error("printLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
+            throw new RuntimeException("printLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
         }
         log.info("Current LocalStorage Files");
         log.info("————————————————————————————————————————————————————————————");
@@ -151,7 +150,7 @@ public class SeleniumUtil {
         }
         Options options = new Options();
         options.createIfMissing(false);
-        DB db = factory.open(leveldbDir, options);
+        DB db = JniDBFactory.factory.open(leveldbDir, options);
         log.info("Current LocalStorage Value");
         log.info("————————————————————————————————————————————————————————————");
         DBIterator iterator = db.iterator();
@@ -181,7 +180,51 @@ public class SeleniumUtil {
     }
 
     public static void cleanLocalStorage(File userData, List<String> keepDomains) throws IOException {
-
+        File leveldbDir = new File(userData.getCanonicalPath() + "/Default/Local Storage/leveldb");
+        if (!leveldbDir.exists() || !leveldbDir.isDirectory()) {
+            log.error("cleanLocalStorage failed, userData path does not exist: {}", leveldbDir.getCanonicalPath());
+            throw new RuntimeException("cleanLocalStorage failed, path does not exist: " + leveldbDir.getCanonicalPath());
+        }
+        Options options = new Options();
+        options.createIfMissing(false);
+        DB db = JniDBFactory.factory.open(leveldbDir, options);
+        DBIterator iterator = db.iterator();
+        for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
+            Map.Entry<byte[], byte[]> next = iterator.peekNext();
+            String key = new String(next.getKey(), StandardCharsets.UTF_8);
+            boolean shouldKeep = key.equals("VERSION");
+            String domains = key;
+            if (domains.startsWith("META:")) {
+                domains = domains.substring("META:".length());
+            } else if (domains.startsWith("METAACCESS:")) {
+                domains = domains.substring("METAACCESS:".length());
+            } else if (domains.startsWith("_")) {
+                domains = domains.substring("_".length());
+            }
+            if (domains.contains("\u0000\u0001")) {
+                domains = domains.substring(0, domains.indexOf("\u0000\u0001"));
+            }
+            String[] lsDomains = domains.split("/\\^0");
+            for (String lsDomain : lsDomains) {
+                if (!shouldKeep && keepDomains != null && !keepDomains.isEmpty()) {
+                    for (String keepDomain : keepDomains) {
+                        if (lsDomain.endsWith(keepDomain)) {
+                            shouldKeep = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!shouldKeep) {
+                db.delete(next.getKey());
+                log.info("cleanLocalStorage deleted key: {},        value length: {}", key, next.getValue().length);
+            }
+        }
+        iterator.close();
+        db.compactRange(null, null);
+        db.close();
+        FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG.old"));
+        FileUtils.deleteQuietly(new File(leveldbDir.getCanonicalPath() + "/LOG"));
     }
 
 }
