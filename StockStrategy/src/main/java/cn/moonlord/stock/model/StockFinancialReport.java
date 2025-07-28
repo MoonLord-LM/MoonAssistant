@@ -35,12 +35,7 @@ public class StockFinancialReport {
     Long netProfit;
 
     /**
-     * 非经常性损益（万元）
-     */
-    Long nonRecurringProfitAndLoss;
-
-    /**
-     * 扣非净利润（万元） = 净利润 - 非经常性损益
+     * 扣非净利润（万元）
      */
     Long adjustedNetProfit;
 
@@ -55,8 +50,63 @@ public class StockFinancialReport {
     Long totalLiabilities;
 
     /**
+     * 营业收入净利润率（NPM, Net Profit Margin） = 净利润 / 营业收入
+     */
+    public Double getNetProfitMargin(){
+        if (operatingRevenue == null || netProfit == null) {
+            return null;
+        }
+        return (double) netProfit / (double) operatingRevenue;
+    }
+
+    /**
+     * 非经常性损益（万元）= 净利润 - 扣非净利润
+     */
+    public Long getNonRecurringProfitAndLoss() {
+        if (netProfit == null || adjustedNetProfit == null) {
+            return null;
+        }
+        return netProfit - adjustedNetProfit;
+    }
+
+    /**
+     * 资产收益率（ROA, Return on Assets） = 净利润 / 总资产
+     */
+    public Double getReturnOnAssets(){
+        if (netProfit == null || totalAssets == null) {
+            return null;
+        }
+        return (double) netProfit / (double) totalAssets;
+    }
+
+    /**
+     * 资产负债率（DAR, Debt to Asset Ratio） = 总负债 / 总资产
+     */
+    public Double getDebtRatio() {
+        if (totalAssets == null || totalLiabilities == null) {
+            return null;
+        }
+        return (double) totalLiabilities / (double) totalAssets;
+    }
+
+    /**
      * 净资产（万元） = 总资产 - 总负债
      */
-    Long netAssets;
+    public Long getNetAssets() {
+        if (totalAssets == null || totalLiabilities == null) {
+            return null;
+        }
+        return totalAssets - totalLiabilities;
+    }
+
+    /**
+     * 净资产收益率（ROE, Return on Equity） = 净利润 / 净资产
+     */
+    public Double getReturnOnEquity() {
+        if (netProfit == null || getNetAssets() == null) {
+            return null;
+        }
+        return (double) netProfit / (double) getNetAssets();
+    }
 
 }
