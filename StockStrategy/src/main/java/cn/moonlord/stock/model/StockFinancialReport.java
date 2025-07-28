@@ -70,6 +70,16 @@ public class StockFinancialReport {
     }
 
     /**
+     * 资产周转率（ATR, Asset Turnover Ratio） = 营业收入 / 总资产
+     */
+    public Double getAssetTurnoverRatio() {
+        if (operatingRevenue == null || totalAssets == null) {
+            return null;
+        }
+        return (double) operatingRevenue / (double) totalAssets;
+    }
+
+    /**
      * 资产收益率（ROA, Return on Assets） = 净利润 / 总资产
      */
     public Double getReturnOnAssets(){
@@ -107,6 +117,16 @@ public class StockFinancialReport {
             return null;
         }
         return (double) netProfit / (double) getNetAssets();
+    }
+
+    /**
+     * 负债权益比率（DER, Debt to Equity Ratio） = 总负债 / 净资产
+     */
+    public Double getDebtToEquityRatio() {
+        if (totalLiabilities == null || getNetAssets() == null) {
+            return null;
+        }
+        return (double) totalLiabilities / (double) getNetAssets();
     }
 
 }
