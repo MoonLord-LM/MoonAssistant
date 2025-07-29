@@ -12,57 +12,57 @@ import lombok.extern.slf4j.Slf4j;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class StockFinancialReport {
+public class FinancialReport {
 
     /**
      * 年份（2025）
      */
-    Long year;
+    Integer year;
 
     /**
      * 季度（1、2、3、4）
      */
-    Long season;
+    Integer season;
 
     /**
      * 营业收入（万元）
      */
-    Long operatingRevenue;
+    Double operatingRevenue;
 
     /**
      * 净利润（万元）
      */
-    Long netProfit;
+    Double netProfit;
 
     /**
      * 扣非净利润（万元）
      */
-    Long adjustedNetProfit;
+    Double adjustedNetProfit;
 
     /**
      * 总资产（万元）
      */
-    Long totalAssets;
+    Double totalAssets;
 
     /**
      * 总负债（万元）
      */
-    Long totalLiabilities;
+    Double totalLiabilities;
 
     /**
      * 营业收入净利润率（NPM, Net Profit Margin） = 净利润 / 营业收入
      */
-    public Double getNetProfitMargin(){
+    public Double getNetProfitMargin() {
         if (operatingRevenue == null || netProfit == null) {
             return null;
         }
-        return (double) netProfit / (double) operatingRevenue;
+        return (double) netProfit / operatingRevenue;
     }
 
     /**
      * 非经常性损益（万元）= 净利润 - 扣非净利润
      */
-    public Long getNonRecurringProfitAndLoss() {
+    public Double getNonRecurringProfitAndLoss() {
         if (netProfit == null || adjustedNetProfit == null) {
             return null;
         }
@@ -76,17 +76,17 @@ public class StockFinancialReport {
         if (operatingRevenue == null || totalAssets == null) {
             return null;
         }
-        return (double) operatingRevenue / (double) totalAssets;
+        return (double) operatingRevenue / totalAssets;
     }
 
     /**
      * 资产收益率（ROA, Return on Assets） = 净利润 / 总资产
      */
-    public Double getReturnOnAssets(){
+    public Double getReturnOnAssets() {
         if (netProfit == null || totalAssets == null) {
             return null;
         }
-        return (double) netProfit / (double) totalAssets;
+        return (double) netProfit / totalAssets;
     }
 
     /**
@@ -96,13 +96,13 @@ public class StockFinancialReport {
         if (totalAssets == null || totalLiabilities == null) {
             return null;
         }
-        return (double) totalLiabilities / (double) totalAssets;
+        return (double) totalLiabilities / totalAssets;
     }
 
     /**
      * 净资产（万元） = 总资产 - 总负债
      */
-    public Long getNetAssets() {
+    public Double getNetAssets() {
         if (totalAssets == null || totalLiabilities == null) {
             return null;
         }
@@ -116,7 +116,7 @@ public class StockFinancialReport {
         if (netProfit == null || getNetAssets() == null) {
             return null;
         }
-        return (double) netProfit / (double) getNetAssets();
+        return (double) netProfit / getNetAssets();
     }
 
     /**
@@ -126,7 +126,7 @@ public class StockFinancialReport {
         if (totalLiabilities == null || getNetAssets() == null) {
             return null;
         }
-        return (double) totalLiabilities / (double) getNetAssets();
+        return (double) totalLiabilities / getNetAssets();
     }
 
 }

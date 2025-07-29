@@ -29,6 +29,6 @@ public class Stock {
     /**
      * 财报
      */
-    List<StockFinancialReport> financialReport;
+    List<FinancialReport> financialReport;
 
 }
