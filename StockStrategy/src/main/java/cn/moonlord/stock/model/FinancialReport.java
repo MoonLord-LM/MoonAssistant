@@ -25,68 +25,83 @@ public class FinancialReport {
     Integer season;
 
     /**
-     * 营业收入（万元）
+     * 合计营业收入
      */
-    Double operatingRevenue;
+    Double totalOperatingRevenue;
 
     /**
-     * 净利润（万元）
+     * 归母净利润
      */
-    Double netProfit;
+    Double parentNetProfit;
 
     /**
-     * 扣非净利润（万元）
+     * 扣非归母净利润
      */
-    Double adjustedNetProfit;
+    Double adjustedParentNetProfit;
 
     /**
-     * 总资产（万元）
+     * 合计总资产
      */
     Double totalAssets;
 
     /**
-     * 总负债（万元）
+     * 合计总负债
      */
     Double totalLiabilities;
 
     /**
-     * 营业收入净利润率（NPM, Net Profit Margin） = 净利润 / 营业收入
+     * 子公司少数股东权益
      */
-    public Double getNetProfitMargin() {
-        if (operatingRevenue == null || netProfit == null) {
+    Double nonControllingInterest;
+
+    /**
+     * 营业收入归母净利润率 = 归母净利润 / 营业收入
+     */
+    public Double getParentNetProfitMargin() {
+        if (totalOperatingRevenue == null || parentNetProfit == null) {
             return null;
         }
-        return (double) netProfit / operatingRevenue;
+        return (double) parentNetProfit / totalOperatingRevenue;
     }
 
     /**
-     * 非经常性损益（万元）= 净利润 - 扣非净利润
+     * 营业收入扣非归母净利润率 = 扣非归母净利润 / 营业收入
      */
-    public Double getNonRecurringProfitAndLoss() {
-        if (netProfit == null || adjustedNetProfit == null) {
+    public Double getAdjustedParentNetProfitMargin() {
+        if (totalOperatingRevenue == null || adjustedParentNetProfit == null) {
             return null;
         }
-        return netProfit - adjustedNetProfit;
+        return (double) adjustedParentNetProfit / totalOperatingRevenue;
+    }
+
+    /**
+     * 归母非经常性损益（万元）= 归母净利润 - 扣非归母净利润
+     */
+    public Double getNonRecurringProfitAndLoss() {
+        if (parentNetProfit == null || adjustedParentNetProfit == null) {
+            return null;
+        }
+        return parentNetProfit - adjustedParentNetProfit;
     }
 
     /**
      * 资产周转率（ATR, Asset Turnover Ratio） = 营业收入 / 总资产
      */
     public Double getAssetTurnoverRatio() {
-        if (operatingRevenue == null || totalAssets == null) {
+        if (totalOperatingRevenue == null || totalAssets == null) {
             return null;
         }
-        return (double) operatingRevenue / totalAssets;
+        return (double) totalOperatingRevenue / totalAssets;
     }
 
     /**
-     * 资产收益率（ROA, Return on Assets） = 净利润 / 总资产
+     * 资产收益率（ROA, Return on Assets） = 归母净利润 / 总资产
      */
     public Double getReturnOnAssets() {
-        if (netProfit == null || totalAssets == null) {
+        if (parentNetProfit == null || totalAssets == null) {
             return null;
         }
-        return (double) netProfit / totalAssets;
+        return (double) parentNetProfit / totalAssets;
     }
 
     /**
@@ -100,27 +115,27 @@ public class FinancialReport {
     }
 
     /**
-     * 净资产（万元） = 总资产 - 总负债
+     * 归母净资产（万元） = 总资产 - 总负债 - 少数股东权益
      */
     public Double getNetAssets() {
-        if (totalAssets == null || totalLiabilities == null) {
+        if (totalAssets == null || totalLiabilities == null || nonControllingInterest == null) {
             return null;
         }
-        return totalAssets - totalLiabilities;
+        return totalAssets - totalLiabilities - nonControllingInterest;
     }
 
     /**
-     * 净资产收益率（ROE, Return on Equity） = 净利润 / 净资产
+     * 归母净资产收益率（ROE, Return on Equity） = 归母净利润 / 归母净资产
      */
     public Double getReturnOnEquity() {
-        if (netProfit == null || getNetAssets() == null) {
+        if (parentNetProfit == null || getNetAssets() == null) {
             return null;
         }
-        return (double) netProfit / getNetAssets();
+        return (double) parentNetProfit / getNetAssets();
     }
 
     /**
-     * 负债权益比率（DER, Debt to Equity Ratio） = 总负债 / 净资产
+     * 负债权益比率（DER, Debt to Equity Ratio） = 总负债 / 归母净资产
      */
     public Double getDebtToEquityRatio() {
         if (totalLiabilities == null || getNetAssets() == null) {
