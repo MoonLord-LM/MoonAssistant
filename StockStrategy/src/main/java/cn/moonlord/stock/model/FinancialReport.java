@@ -6,7 +6,7 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 财务报表信息
+ * 财务报表信息 // TODO 补充现金流信息，分红信息
  */
 @Slf4j
 @Data
