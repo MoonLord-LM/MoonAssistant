@@ -8,7 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 @Slf4j
@@ -36,12 +38,29 @@ public class VideoScanService {
                     if (files != null) {
                         for (File file : files) {
                             log.debug("file: {}", file.getAbsolutePath());
-                            VideoFileVO videoFile = new VideoFileVO(file,false,false);
+                            VideoFileVO videoFile = new VideoFileVO(file, false, false);
                             result.add(videoFile);
                         }
                     }
                 }
             }
+        }
+        // 检查
+        Set<String> serialNumbers = new HashSet<>();
+        Set<String> duplicated = new HashSet<>();
+        for (VideoFileVO video : result) {
+            if (serialNumbers.contains(video.getSerialNumber())) {
+                duplicated.add(video.getSerialNumber());
+                log.error("发现重复的 serialNumber: {}", video.getSerialNumber() + ", 文件: " + video.getFile().getAbsolutePath());
+            }
+            if (video.getSerialNumber().isEmpty()) {
+                duplicated.add(video.getSerialNumber());
+                log.error("发现错误的 serialNumber: {}", video.getSerialNumber() + ", 文件: " + video.getFile().getAbsolutePath());
+            }
+            serialNumbers.add(video.getSerialNumber());
+        }
+        if (!duplicated.isEmpty()) {
+            log.error("scan duplicated: {}", duplicated);
         }
         log.info("scan result size: {}", result.size());
         return result;

@@ -2,6 +2,7 @@ package cn.moonlord.tempfilestorage.vo;
 
 import cn.moonlord.tempfilestorage.model.FileHash;
 import cn.moonlord.tempfilestorage.model.VideoFile;
+import cn.moonlord.tempfilestorage.utils.Ed2kUtil;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -9,15 +10,12 @@ import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.bouncycastle.util.encoders.Hex;
-import org.bouncycastle.crypto.digests.MD5Digest;
-import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.attribute.DosFileAttributes;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -146,41 +144,20 @@ public class VideoFileVO extends VideoFile {
 
     @SneakyThrows
     public void addHashInfo(File file) {
-
         List<FileHash> fileHashes = new ArrayList<>();
-        // TODO
-        // fileHashes.add(new FileHash("MD5", calculateMD5(file)));
-        // fileHashes.add(new FileHash("SHA-256", calculateSHA256(file)));
-
+        byte[] fileBytes = Files.readAllBytes(file.toPath());
+        fileHashes.add(new FileHash("ED2K", Ed2kUtil.generateLink(fileBytes, file.getName())));
+        fileHashes.add(new FileHash("MD5", calculateHash(fileBytes, "MD5")));
+        fileHashes.add(new FileHash("SHA-1", calculateHash(fileBytes, "SHA-1")));
+        fileHashes.add(new FileHash("SHA-256", calculateHash(fileBytes, "SHA-256")));
+        fileHashes.add(new FileHash("SHA-512", calculateHash(fileBytes, "SHA-512")));
         super.setFileHashes(fileHashes);
     }
 
-    private String calculateMD5(File file) throws IOException {
-        try (FileInputStream fis = new FileInputStream(file)) {
-            MD5Digest digest = new MD5Digest();
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                digest.update(buffer, 0, bytesRead);
-            }
-            byte[] result = new byte[digest.getDigestSize()];
-            digest.doFinal(result, 0);
-            return new String(Hex.encode(result));
-        }
-    }
-
-    private String calculateSHA256(File file) throws IOException {
-        try (FileInputStream fis = new FileInputStream(file)) {
-            SHA256Digest digest = new SHA256Digest();
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                digest.update(buffer, 0, bytesRead);
-            }
-            byte[] result = new byte[digest.getDigestSize()];
-            digest.doFinal(result, 0);
-            return new String(Hex.encode(result));
-        }
+    private String calculateHash(byte[] data, String algorithm) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance(algorithm);
+        byte[] result = digest.digest(data);
+        return Hex.toHexString(result);
     }
 
 }
