@@ -11,7 +11,6 @@ import org.apache.commons.io.FileUtils;
 import org.bouncycastle.util.encoders.Hex;
 import org.bouncycastle.crypto.digests.MD5Digest;
 import org.bouncycastle.crypto.digests.SHA256Digest;
-import org.bytedeco.ffmpeg.avformat.AVFormatContext;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 
 import java.io.File;
