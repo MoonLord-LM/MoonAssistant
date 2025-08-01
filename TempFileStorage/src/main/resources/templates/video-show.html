@@ -40,35 +40,7 @@
 </head>
 <body>
 <h2>视频文件信息</h2>
-<p>共计 <span th:text="${videos.size()}"></span> 个视频文件</p>
-
- <h2>最大的前 <span th:text="${topSizeVideos.size()}"></span> 个视频文件</h2>
-<table>
-    <tr>
-        <th>序号</th>
-        <th>文件名</th>
-        <th>文件大小</th>
-        <th>分辨率</th>
-        <th>时长</th>
-        <th>帧率</th>
-        <th>视频编码</th>
-        <th>音频编码</th>
-        <th>评分</th>
-        <th>演员</th>
-    </tr>
-    <tr th:each="video, stat : ${topSizeVideos}">
-        <td th:text="${stat.count}"></td>
-        <td th:text="${video.fileName}"></td>
-        <td th:text="${video.fileSizeString}"></td>
-        <td th:text="${video.resolution}"></td>
-        <td th:text="${video.formattedDuration}"></td>
-        <td th:text="${video.formattedFrameRate}"></td>
-        <td th:text="${video.videoCodec}"></td>
-        <td th:text="${video.audioCodec}"></td>
-        <td th:text="${video.score}"></td>
-        <td th:text="${#strings.listJoin(video.actorNames, ', ')}"></td>
-    </tr>
-</table>
+<p>共计 <span th:text="${videos.size()}"></span> 个视频文件，文件大小合计 <span th:text="${totalSize}"></span></p>
 
 <h2>评分最高的前 <span th:text="${topRatedActors.size()}"></span> 名演员</h2>
 <table>
@@ -99,6 +71,38 @@
         <td th:text="${actor.key}"></td>
         <td th:text="${actor.value}"></td>
         <td th:text="${#numbers.formatDecimal(actorAvgScores.getOrDefault(actor.key, 0.0), 1, 1)}"></td>
+    </tr>
+</table>
+
+<h2>最大的前 <span th:text="${topSizeVideos.size()}"></span> 个视频文件</h2>
+<table>
+    <tr>
+        <th>序号</th>
+        <th>文件名</th>
+        <th>文件大小</th>
+        <th>分辨率</th>
+        <th>时长</th>
+        <th>帧率</th>
+        <th>视频编码</th>
+        <th>音频编码</th>
+        <th>视频比特率</th>
+        <th>音频比特率</th>
+        <th>评分</th>
+        <th>演员</th>
+    </tr>
+    <tr th:each="video, stat : ${topSizeVideos}">
+        <td th:text="${stat.count}"></td>
+        <td th:text="${video.fileName}"></td>
+        <td th:text="${video.fileSizeString}"></td>
+        <td th:text="${video.resolution}"></td>
+        <td th:text="${video.durationString}"></td>
+        <td th:text="${video.frameRateString}"></td>
+        <td th:text="${video.videoCodec}"></td>
+        <td th:text="${video.audioCodec}"></td>
+        <td th:text="${video.videoBitrateString}"></td>
+        <td th:text="${video.audioBitrateString}"></td>
+        <td th:text="${video.score}"></td>
+        <td th:text="${#strings.listJoin(video.actorNames, ', ')}"></td>
     </tr>
 </table>
 

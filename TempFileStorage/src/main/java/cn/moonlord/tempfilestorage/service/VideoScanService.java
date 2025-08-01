@@ -36,7 +36,7 @@ public class VideoScanService {
                     if (files != null) {
                         for (File file : files) {
                             log.debug("file: {}", file.getAbsolutePath());
-                            VideoFileVO videoFile = new VideoFileVO(file);
+                            VideoFileVO videoFile = new VideoFileVO(file,false,false);
                             result.add(videoFile);
                         }
                     }
