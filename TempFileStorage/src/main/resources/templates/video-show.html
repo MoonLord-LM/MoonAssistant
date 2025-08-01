@@ -74,6 +74,22 @@
     </tr>
 </table>
 
+<h2>作品最少的前 <span th:text="${leastWorkActors.size()}"></span> 名演员</h2>
+<table>
+    <tr>
+        <th>排名</th>
+        <th>演员</th>
+        <th>作品数量</th>
+        <th>平均评分</th>
+    </tr>
+    <tr th:each="actor, stat : ${leastWorkActors}">
+        <td th:text="${stat.count}"></td>
+        <td th:text="${actor.key}"></td>
+        <td th:text="${actor.value}"></td>
+        <td th:text="${#numbers.formatDecimal(actorAvgScores.getOrDefault(actor.key, 0.0), 1, 1)}"></td>
+    </tr>
+</table>
+
 <h2>最大的前 <span th:text="${topSizeVideos.size()}"></span> 个视频文件</h2>
 <table>
     <tr>

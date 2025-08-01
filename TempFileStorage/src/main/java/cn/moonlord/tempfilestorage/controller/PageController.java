@@ -67,6 +67,11 @@ public class PageController {
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .limit(30)
                 .collect(Collectors.toList());
+                
+        List<Map.Entry<String, Integer>> leastWorkActors = actorWorkCounts.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue())
+                .limit(30)
+                .collect(Collectors.toList());
 
         List<Map.Entry<String, Double>> topRatedActors = actorAvgScores.entrySet().stream()
                 .sorted((e1, e2) -> {
@@ -89,6 +94,7 @@ public class PageController {
         model.addAttribute("totalSize", totalSize);
         model.addAttribute("generatedTime", generatedTime);
         model.addAttribute("topWorkActors", topWorkActors);
+        model.addAttribute("leastWorkActors", leastWorkActors);
         model.addAttribute("topRatedActors", topRatedActors);
         model.addAttribute("actorWorkCounts", actorWorkCounts);
         model.addAttribute("actorAvgScores", actorAvgScores);
