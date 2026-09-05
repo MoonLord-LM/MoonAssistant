@@ -262,7 +262,7 @@ public class ThinkService {
         public final String file;
         public volatile String status = "running";   // running / done / error
         public volatile String message = "";
-        /** 候选组，与执行模式同口径：按 7 图平均「不匹配点占比」（差异度）升序；每条含 diffPercent/recognized 等字段 */
+        /** 候选组，与执行模式同口径：按 7 图「不匹配点占比」的均方根 RMS（差异度）升序；每条含 diffPercent/recognized 等字段 */
         public volatile List<Map<String, Object>> candidates = List.of();
 
         SuggestTask(String taskId, String file) {
@@ -377,7 +377,8 @@ public class ThinkService {
     /**
      * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
      * 每个分类的 7 张对照图分别同尺度逐像素比对（单像素 RGB 三维距离 ≥ execute.rgb-dist-threshold 判为
-     * 不匹配点），分类得分 = 各图「不匹配点占比」的算术平均（差异度，越小越像），并按 execute
+     * 不匹配点），分类得分 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/图数)（差异度，越小越像，
+     * 7 维差值向量的欧氏长度按维数归一，任一张图差得远都会抬高总分），并按 execute
      * 识别阈值（match-threshold-percent）判定是否「已识别」。不再维护“像素一致率 / 平均色差”的平行口径，
      * 避免标注模式的建议与执行模式的真实判定不一致。
      */
@@ -393,7 +394,7 @@ public class ThinkService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("state", c.state());
             m.put("dir", c.matchedFile());
-            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 7 图平均不匹配点占比（%）
+            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 7 图不匹配点占比的均方根 RMS（%）
             if (i == 0) {
                 m.put("action", oc.action);    // 建议分类的动作只在最佳候选上读取（来自该分类 info.json）
             }

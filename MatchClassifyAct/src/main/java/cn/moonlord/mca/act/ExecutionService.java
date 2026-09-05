@@ -489,9 +489,10 @@ public class ExecutionService {
      * 精确标注 / 修正点击坐标时，先把它放进截图区，再到「标注模式」的「未标注」列表按正常流程
      * 标注即可。执行画面本身不落盘，因此这里以「另存」方式与截图循环产物同目录、同命名风格。
      *
-     * <p>保存前执行与截图循环完全相同的去重判定（{@link ScreenCaptureService#duplicateReference}）：
-     * 画面须与 capture/ + classify/ 全部同尺寸 PNG 的平均像素差异都 ≥ {@code capture.diff-threshold-percent}
-     * （默认 5%）才算「新画面」才允许另存；只要与任意一张差异低于阈值（几乎同一画面）即拒绝保存，
+     * <p>保存前执行与自动截图循环同一套去重判定（{@link ScreenCaptureService#duplicateReference}），
+     * 但套用「手动另存」阈值 {@code capture.diff-threshold-manual-percent}（默认 1%，比自动截图
+     * 的 3% 更宽松）：画面须与 capture/ + classify/ 全部同尺寸 PNG 的平均像素差异都 ≥ 该阈值
+     * 才算「新画面」才允许另存；只要与任意一张差异低于阈值（几乎同一画面）即拒绝保存，
      * 避免手工存到待标注又落盘一张与历史几乎相同的截图。阈值 ≤ 0（关闭去重）时不检查、直接保存。</p>
      *
      * @return ok=true + 新文件名；ok=false + kind=dup（差异不达标被拦截）/ message（HTTP 200，便于前端直接提示）
@@ -504,11 +505,12 @@ public class ExecutionService {
             res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
             return res;
         }
-        double threshold = captureProperties.getDiffThresholdPercent();
+        double threshold = captureProperties.getDiffThresholdManualPercent();
         if (threshold > 0) {
-            ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame());
+            ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame(), threshold);
             if (dup != null) {
-                // 与截图循环的「判重丢弃」同口径：画面与已保存截图差异不足阈值，禁止另存，避免堆积重复待标注图
+                // 手动另存去重：与自动截图用同一判定方法、但套手动阈值（默认 1%，更宽松），
+                // 只拦与历史画面几乎完全相同的另存，避免堆积重复待标注图
                 log.info("执行模式「存到待标注」被去重拦截：画面与 {} 差异 {}% < 阈值 {}%，未另存",
                         dup.name(), pctText(dup.diffPercent()), pctText(threshold));
                 res.put("ok", false);
@@ -517,8 +519,7 @@ public class ExecutionService {
                 res.put("diffPercent", dup.diffPercent());   // 画面与该重复参考图的实际平均像素差异（%），前端/日志提示用
                 res.put("threshold", threshold);
                 res.put("message", "当前画面与截图「" + dup.name() + "」差异为 " + pctText(dup.diffPercent())
-                        + "%（低于 " + pctText(threshold) + "% 阈值），本次未保存。"
-                        + "确为新画面可稍后重试；或调低 capture.diff-threshold-percent 后重试。");
+                        + "%（低于 " + pctText(threshold) + "% 阈值），本次未保存。");
                 return res;
             }
         }

@@ -74,6 +74,9 @@
   .exec-ops .btn{flex:1;padding:9px 10px;font-size:13px;font-weight:600;border-radius:8px;white-space:nowrap;text-align:center}
   /* 自动识别（红色测试按钮）：整行独立 + 脉冲提示运行中；下方状态行显示当前循环阶段/倒计时 */
   #execAutoBtn{display:block;width:100%;margin-top:10px;border:1px solid rgba(255,92,108,.5);background:rgba(255,92,108,.1);color:var(--danger);font-weight:700}
+  /* 把当前画面存到待标注：与自动识别同级整行独立，蓝色描边（保存样本入口，非破坏性操作） */
+  #execSaveCap{display:block;width:100%;margin-top:8px;border:1px solid rgba(79,140,255,.55);background:rgba(79,140,255,.1);color:var(--accent);font-weight:700}
+  #execSaveCap:hover{background:rgba(79,140,255,.2)}
   #execAutoBtn:hover:not(:disabled){background:var(--danger);color:#fff}
   #execAutoBtn.running{background:var(--danger);color:#fff;animation:execAutoPulse 1.5s ease-in-out infinite}
   #execAutoBtn:disabled{opacity:.5;cursor:wait}
@@ -570,7 +573,7 @@
       <button type="button" class="btn auto" id="execAutoBtn"
         title="自动循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选前台/后台方式动作 → 再等 3 秒游戏响应 → 下一轮。运行中再次点击即停止">开启自动识别</button>
       <button type="button" class="btn" id="execSaveCap"
-        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存到 capture/ 待标注</button>
+        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存到待标注</button>
       <div class="execAutoState" id="execAutoState" aria-live="polite"></div>
     </div>
 
@@ -2345,7 +2348,7 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类 7 张对照图平均「不匹配点占比」（越小越像） */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类 7 张对照图「不匹配点占比」的均方根 RMS √(Σ占比²/7)（越小越像） */
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
@@ -2370,7 +2373,7 @@ function renderSuggest(list){
       (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 7 张对照图（交集 / 多数 / 均值 / 1/8、1/32 多尺度）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的算术平均（越小越像）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 7 张对照图（交集 / 多数 / 均值 / 1/8、1/32 多尺度）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/7)，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2566,18 +2569,18 @@ async function checkAppVersion(){
       }else if(shot.kind === "dup"){
         let pct = (shot.pct != null ? shot.pct : (capDiffThreshold || 0));
         if(Number.isInteger(pct)){ pct = String(pct); }
-        else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 5.0% → 显示“5%”，一位小数足够
+        else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 3.0% → 显示“3%”，一位小数足够
         showShotTip("当前画面与截图「" + (shot.name || "参考图") + "」差异小于 " + pct + "%，本次不保存", "skip");
       }
     }
-    // 启动历史重复清理结果：后端每次启动按差异阈值（默认 5%）重扫 capture/ + classify/ 全部截图、
+    // 启动历史重复清理结果：后端每次启动按差异阈值（默认 3%）重扫 capture/ + classify/ 全部截图、
     // 删除差异低于阈值的重复图（只保留最早一张）。不论是否删除了图片都右下角提示一次清理完成
     const dedup = j && j.startupDedupNotice;
     if(dedup && dedup.at && Number(dedup.at) !== lastDedupNoticeAt){
       lastDedupNoticeAt = Number(dedup.at);
       let pct = (dedup.threshold != null ? dedup.threshold : (capDiffThreshold || 0));
       if(Number.isInteger(pct)){ pct = String(pct); }
-      else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 5.0% → 显示“5%”
+      else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 3.0% → 显示“3%”
       const msg = (dedup.removed > 0)
         ? "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，删除重复 " + dedup.removed + " 张"
         : "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，检查完成，未发现重复图片";
@@ -2850,7 +2853,7 @@ function renderExecActBtn(j, clickable){
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
-/* 「把当前画面存到 capture/ 待标注」可用态：有画面且不在自动识别循环中
+/* 「把当前画面存到待标注」可用态：有画面且不在自动识别循环中
    （自动循环每秒都在换帧，此时保存可能存的不是当前看到的那张） */
 function renderExecSaveCap(j){
   const b = $("execSaveCap"); if(!b) return;

@@ -33,9 +33,11 @@ import java.util.stream.Stream;
  * <p>匹配口径：把每个对应像素当作 (R,G,B) 三维空间中的一点，两点欧氏距离
  * √(ΔR²+ΔG²+ΔB²) ≥ {@code execute.rgb-dist-threshold}（默认 256）即判该点为「不匹配」；
  * 7 张图分别与当前画面按同一缩放口径逐点判定并统计各自的「不匹配点占比」（0~100，
- * 交集图的透明非公共像素不参与统计），再取 7 张图的算术平均作为该分类的差异度；
- * 不同分类按各自的平均占比比较，最小者即为最近似分类。
- * 仅当最近似平均占比 ≤ {@code execute.match-threshold-percent}（默认 25%）时才判定为「已识别」，
+ * 交集图的透明非公共像素不参与统计）。把 7 张图的占比当作该分类在 7 个比对维度上的分值，
+ * 按欧氏距离思路聚合为差异度 = √(各图占比² 的平均)（即均方根 RMS，等价于把 7 维差值向量
+ * 的欧氏长度按维数归一：任一张图差得远都会显著抬高总分，不会被其余 6 张接近的图稀释）；
+ * 不同分类按各自的 RMS 比较，最小者即为最近似分类。
+ * 仅当最近似 RMS ≤ {@code execute.match-threshold-percent}（默认 25%）时才判定为「已识别」，
  * 否则视为未识别画面（最近似分类仅作参考展示）。
  *
  * <p>坐标可靠性：整个工程靠 resize 把窗口/截图尺寸强制对齐到与标注样本一致，summary 产物
@@ -110,11 +112,11 @@ public class FrameClassifier {
 
     /** 识别输出（内部使用，ExecutionService 负责把它转成对外 Snapshot）。 */
     public static final class Outcome {
-        /** 是否「已识别」：最近似分类的平均差异 ≤ 阈值。 */
+        /** 是否「已识别」：最近似分类的差异度（RMS）≤ 阈值。 */
         public boolean recognized;
         /** 最近似分类标注（未识别时也填最近似结果，便于界面展示参考）。 */
         public String bestState;
-        /** 最近似分类的「7 图平均不匹配点占比」百分比（0~100，越低越像）。 */
+        /** 最近似分类的「7 图不匹配点占比均方根（RMS）」百分比（0~100，越低越像）。 */
         public double bestDiffPercent = Double.NaN;
         /** 命中分类的汇总产物目录名（summary/<dir>），未命中时 null。 */
         public String bestFile;
@@ -124,21 +126,21 @@ public class FrameClassifier {
         public Integer clickLeft;
         /** 命中分类定义的点击坐标（无点击动作时 null）。 */
         public Integer clickTop;
-        /** 实际参与比较（7 图齐全且算出有效平均差异）的分类数。 */
+        /** 实际参与比较（7 图齐全且算出有效差异度 RMS）的分类数。 */
         public int scannedSamples;
         /** summary/ 下存在有效分类标注的产物目录数（含 7 图不全被跳过的）。 */
         public int totalSamples;
-        /** 各分类的最近似结果，按平均差异升序排列（前几个即“候选分类”）。 */
+        /** 各分类的最近似结果，按差异度（RMS）升序排列（前几个即“候选分类”）。 */
         public List<Candidate> candidates = new ArrayList<>();
         /** 识别耗时（毫秒）。 */
         public long elapsedMs;
     }
 
-    /** 一张对照图（某个 kind 产物）与该次识别画面的比对明细。score < 0 表示该图未参与平均（缺失或公共区过少）。 */
+    /** 一张对照图（某个 kind 产物）与该次识别画面的比对明细。score < 0 表示该图未参与差异度聚合（缺失或公共区过少）。 */
     public record KindScore(String kind, String file, int w, int h, double score) {
     }
 
-    /** 一个候选：某分类 7 张对照图的平均差异 + 各图各自的分值明细（matchedFile 目录下的产物）。 */
+    /** 一个候选：某分类 7 张对照图占比的 RMS 差异度 + 各图各自的分值明细（matchedFile 目录下的产物）。 */
     public record Candidate(String state, double diffPercent, String matchedFile, List<KindScore> kinds) {
     }
 
@@ -207,7 +209,7 @@ public class FrameClassifier {
             int w = wObj.intValue();
             int h = hObj.intValue();
 
-            double sumDiff = 0;
+            double sumSq = 0;
             int kindCount = 0;
             Map<String, KindScore> scores = new LinkedHashMap<>();   // 该目录 7 张图各自的分值（缺失/不可比 = -1）
             for (String kind : KIND_ORDER) {
@@ -219,7 +221,7 @@ public class FrameClassifier {
                         compareKind(framePxFull, fw, fh, w, h, ref, kind, scaledPx));
                 scores.put(kind, ks);
                 if (ks.score() >= 0) {
-                    sumDiff += ks.score();
+                    sumSq += ks.score() * ks.score();
                     kindCount++;
                 }
             }
@@ -227,11 +229,13 @@ public class FrameClassifier {
                 continue;   // 7 张图都无法有效比较
             }
             scanned++;
-            double avg = sumDiff / kindCount;
+            // 差异度 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/图数)：7 维差值向量的欧氏长度按维数归一，
+            // 任一张图差得远都会显著抬高总分，不会被其余接近的图平均掉（RMS ≥ 算术平均）
+            double diff = Math.sqrt(sumSq / kindCount);
             GroupBest g = perState.computeIfAbsent(state, s -> new GroupBest());
             g.state = state;
-            if (avg < g.diff) {
-                g.diff = avg;
+            if (diff < g.diff) {
+                g.diff = diff;
                 g.dir = dir.getFileName().toString();
                 g.kindScores = scores;   // 只保留该分类“最优产物目录”那一轮的 7 图分值
                 g.action = info.get("action") == null ? null : String.valueOf(info.get("action"));
@@ -259,7 +263,7 @@ public class FrameClassifier {
         }
         out.elapsedMs = System.currentTimeMillis() - t0;
         if (log.isDebugEnabled()) {
-            log.debug("画面识别完成：recognized={}, best={} ({}) avgDiff={}%, compared={}/{}",
+            log.debug("画面识别完成：recognized={}, best={} ({}) rmsDiff={}%, compared={}/{}",
                     out.recognized, out.bestState, out.bestFile, String.format("%.2f", out.bestDiffPercent),
                     out.scannedSamples, out.totalSamples);
         }
