@@ -8,7 +8,8 @@ rem                           (rebuild skipped; use existing jar)
 rem     restart.cmd build     stop -> mvn package -> start
 rem
 rem  If no jar exists yet, it auto-builds once even without "build".
-rem  Runtime logs: log\std.log / log\error.log  (under log\ folder)
+rem  The service runs in the foreground of this console window and
+rem  streams its log live; close the window or press Ctrl+C to stop.
 rem ============================================================
 setlocal EnableExtensions
 cd /d "%~dp0"
@@ -43,23 +44,8 @@ call "%~dp0stop.cmd" quiet
 rem ---------- pick a java (17+) ----------
 set "JAVA_BIN=%JDK17%\bin\java.exe"
 if not exist "%JAVA_BIN%" set "JAVA_BIN=java"
-if "%JAVA_BIN%"=="java" (
-    java -version >nul 2>nul || ( echo [restart] no usable java found, set JDK17 path in this script. & exit /b 1 )
-)
 
-echo [restart] starting service (hidden console, logs in log\std.log and log\error.log) ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$base='%~dp0'; New-Item -ItemType Directory -Force -Path ($base+'log') | Out-Null; Start-Process -FilePath '%JAVA_BIN%' -ArgumentList '-Dfile.encoding=UTF-8','-jar','target\MatchClassifyAct-0.0.1-SNAPSHOT.jar' -WorkingDirectory $base -WindowStyle Hidden -RedirectStandardOutput ($base+'log\std.log') -RedirectStandardError ($base+'log\error.log')"
-
-rem ---------- wait until http is ready (max ~25s) ----------
-set "READY="
-for /l %%i in (1,1,25) do (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8080/annotate' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { Write-Output 'READY' } } catch { }" 2>nul | findstr /C:"READY" >nul && set "READY=1" && goto :ready
-    timeout /t 1 /nobreak >nul 2>nul
-)
-:ready
-if defined READY (
-    echo [restart] service is up: http://127.0.0.1:8080/annotate
-) else (
-    echo [restart] process started but HTTP check not confirmed yet, see log\std.log and log\error.log.
-)
-exit /b 0
+rem ---------- run in foreground: logs stream live into this window ----------
+rem (close this window or press Ctrl+C to stop the service)
+title MCA service : close window / Ctrl+C to stop
+"%JAVA_BIN%" -Dfile.encoding=UTF-8 -jar "%JAR%"

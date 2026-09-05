@@ -1,5 +1,8 @@
 package cn.moonlord.mca.ui;
 
+import cn.moonlord.mca.capture.WindowFinder;
+import cn.moonlord.mca.capture.WindowInfo;
+import cn.moonlord.mca.capture.WindowResizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -25,12 +28,23 @@ import java.util.List;
  * （普通标签页受浏览器策略限制无法脚本自关，页面会显示手动关闭按钮兜底）。</p>
  *
  * <p>应用窗口的初始尺寸与位置由 {@code ui.window-size} / {@code ui.center}
- * 控制（默认 1600×900 并居中展示），通过 Chromium 的
+ * 控制（默认 1760×990 并居中展示），通过 Chromium 的
  * {@code --window-size} / {@code --window-position} 参数实现。</p>
  */
 @Slf4j
 @Component
 public class BrowserLauncher implements ApplicationListener<ApplicationReadyEvent> {
+
+    private final WindowFinder windowFinder;
+    private final WindowResizer windowResizer;
+
+    public BrowserLauncher(WindowFinder windowFinder, WindowResizer windowResizer) {
+        this.windowFinder = windowFinder;
+        this.windowResizer = windowResizer;
+    }
+
+    /** 控制台页面标题：Chromium 应用窗口的标题栏与页面 <title> 一致，用于启动后定位窗口 */
+    private static final List<String> CONSOLE_WINDOW_KEYWORDS = List.of("MCA 控制台");
 
     /** 常见安装路径的 Edge / Chrome 可执行文件（应用窗口启动优先） */
     private static final String[] CHROMIUM_CANDIDATES = {
@@ -48,8 +62,8 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
     @Value("${ui.path:/annotate}")
     private String path;
 
-    /** 控制台窗口尺寸，形如 {@code 宽x高}，例如 {@code 1600x900}；{@code 0x0} 表示不指定交给系统 */
-    @Value("${ui.window-size:1600x900}")
+    /** 控制台窗口尺寸，形如 {@code 宽x高}，例如 {@code 1760x990}；{@code 0x0} 表示不指定交给系统 */
+    @Value("${ui.window-size:1760x990}")
     private String windowSize;
 
     /** 控制台窗口是否在屏幕可用区域居中展示 */
@@ -69,10 +83,59 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
         String url = "http://127.0.0.1:" + port + path();
         if (openChromiumAppWindow(url)) {
             log.info("已用浏览器应用窗口打开控制台：{}", url);
+            enforceConsoleWindowPlacement();   // 窗口出现后再次强制尺寸与居中（Chromium 会记忆上次位置）
             return;
         }
         log.warn("未找到 Edge/Chrome，改用系统默认浏览器打开控制台：{}", url);
         openViaDesktop(url);
+    }
+
+    /**
+     * 每次启动后强制程序窗口按 ui.window-size / ui.center 摆放一次：
+     * 新窗口的出生位置已由 --window-size / --window-position 参数决定（创建即居中）；
+     * 这里只作为兜底——Chromium 应用窗口偶尔会沿用上次记忆的尺寸/位置，
+     * 窗口出现后直接做一次 SetWindowPos 搬正（最长等待约 12 秒）。
+     * 不做「先隐藏再显示」：保持窗口始终可见，避免任务栏图标消失/整窗闪烁。
+     */
+    private void enforceConsoleWindowPlacement() {
+        int[] size = parseWindowSize();
+        if (size == null) {
+            return; // 0x0：不干预窗口尺寸
+        }
+        int w = size[0];
+        int h = size[1];
+        Rectangle work = workArea();
+        if (work != null) {
+            w = Math.min(w, work.width);
+            h = Math.min(h, work.height);
+        }
+        final int targetW = w;
+        final int targetH = h;
+        Thread t = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + 12_000;
+            long delayMs = 10;   // 定位等待递增退避：10 → 20 → 40 → 80 … 封顶 1000ms（窗口未出现时尽快多试几次，之后放宽）
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    WindowInfo win = windowFinder.findTarget(CONSOLE_WINDOW_KEYWORDS);
+                    if (win != null && win.getHwnd() != null) {
+                        windowResizer.placeWindow(win.getHwnd(), win.getTitle(), targetW, targetH, center);
+                        return;
+                    }
+                } catch (Throwable e) {
+                    log.debug("定位控制台窗口失败：{}", e.toString());
+                }
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                delayMs = Math.min(delayMs * 2, 1000);
+            }
+            log.warn("启动后未在 12 秒内定位到控制台窗口「{}」，本次未强制调整尺寸与位置", CONSOLE_WINDOW_KEYWORDS);
+        }, "console-window-place");
+        t.setDaemon(true);
+        t.start();
     }
 
     private String path() {

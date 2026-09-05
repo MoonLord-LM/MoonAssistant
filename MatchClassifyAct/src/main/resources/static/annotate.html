@@ -200,19 +200,23 @@
   .miniDot.g{background:var(--green)}
   .miniDot.d{background:var(--danger)}
   @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
-  #exitScreen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:24px}
-  #exitScreen .xt{font-size:24px;font-weight:700;color:var(--green)}
-  #exitScreen .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:8px}
+  #exitScreen,#exitingScreen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:24px}
+  #exitScreen .xt,#exitingScreen .xt{font-size:24px;font-weight:700;color:var(--green)}
+  #exitScreen .msg,#exitingScreen .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:8px}
   #exitConfirm,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
-  #exitConfirm .xcard,#capStopModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
-  #exitConfirm .xt2,#capStopModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
-  #exitConfirm .msg,#capStopModal .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
+  #exitConfirm .xcard,#capStopModal .xcard,#xCloseAsk .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #exitConfirm .xt2,#capStopModal .xt2,#xCloseAsk .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #exitConfirm .msg,#capStopModal .msg,#xCloseAsk .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
   /* 自动暂停弹窗：正文长，按后端 \n 分段、靠左 + 宽松行高排版便于阅读 */
   #capStopModal .xcard{text-align:left}
   #capStopModal .msg{white-space:pre-line;text-align:left;font-size:12.5px;line-height:1.9}
+  /* 关闭程序窗口弹窗：右上角小 X = 取消（继续使用） */
+  #xCloseAsk .xcard{position:relative}
+  #xCloseAsk .modalX{position:absolute;top:8px;right:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:rgba(13,16,23,.45);color:var(--muted);font-size:13px;line-height:1;cursor:pointer;z-index:2}
+  #xCloseAsk .modalX:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
   .xrow{display:flex;gap:10px;justify-content:center;margin-top:6px}
   .xrow .btn{min-width:96px}
-  #exitScreen .xrow{margin-top:10px}
+  #exitScreen .xrow,#exitingScreen .xrow{margin-top:10px}
   @media (max-width:1150px){
     .layout{flex-direction:column;height:auto;overflow:auto}
     .sidebar,.editor{width:100%;max-height:280px}
@@ -239,7 +243,7 @@
   </div>
   <div class="spacer"></div>
   <button class="btn cap mark-only" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
-  <button class="btn exit" id="btnExit" title="退出程序：停止控制台服务与后台截图（录屏）任务">退出程序</button>
+  <button class="btn exit" id="btnExit" title="完全退出：停止控制台服务与后台截图（录屏）任务">完全退出</button>
 </header>
 
 <main class="layout mark-only">
@@ -1048,16 +1052,28 @@ function updateNavButtons(){}
 /* ---------------- 开启/暂停截图（截图默认不开启，需在页面手动开启） ---------------- */
 let capPaused = true;    // 截图任务是否未开启/已暂停（程序启动后默认关闭）
 let capBusy = false;
+let capIntervalMs = null;            // 后端真实截图间隔（毫秒），由 /api/capture/status 下发
+let capDiffThreshold = null;         // 后端像素去重阈值（%），0 = 关闭去重
 let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
+
+/* 毫秒间隔 → 人类可读文案（整千显示整秒，否则保留一位小数秒） */
+function fmtCapInterval(ms){
+  if(!ms || ms <= 0) return null;
+  if(ms < 1000) return ms + " 毫秒";
+  return (ms % 1000 === 0) ? (ms / 1000) + " 秒" : (ms / 1000).toFixed(1) + " 秒";
+}
 
 function renderCapBtn(){
   const b = $("btnCap"); if(!b) return;
   b.classList.toggle("on", !capPaused);        // 截图运行时按钮高亮为绿色
   b.textContent = capPaused ? "开启截图" : "暂停截图";
   b.disabled = capBusy;
+  const per = fmtCapInterval(capIntervalMs);
   b.title = capPaused
     ? "截图未开启：点击后开始后台周期截图（原始截图保存到 capture/）"
-    : "截图运行中：点击暂停（不再保存新截图，控制台其余功能不受影响）";
+    : "截图运行中（每 " + (per || "按配置间隔") + " 截取一帧" +
+      (capDiffThreshold > 0 ? "，与每张已保存画面差异均 ≥ " + capDiffThreshold + "% 才保存" : "") +
+      "）：点击暂停（不再截图保存，控制台其余功能不受影响）";
 }
 
 /* 进入页面先向后端取一次真实状态（可能别的页面/进程已改过） */
@@ -1067,6 +1083,8 @@ async function syncCapStatus(){
     if(!r.ok) return;
     const j = await r.json();
     capPaused = !!j.paused;
+    if(j.intervalMs) capIntervalMs = j.intervalMs;
+    if(j.diffThresholdPercent !== undefined) capDiffThreshold = j.diffThresholdPercent;
   }catch(e){ /* 服务未就绪时保持默认关闭态 */ }
   renderCapBtn();
 }
@@ -1081,7 +1099,19 @@ async function toggleCap(){
     const j = await r.json();
     capPaused = !!j.paused;
     if(!goPause) lastStopReasonShown = null;   // 重新开启成功：允许下次 resize 持续失败再次弹窗
-    toast(goPause ? "已暂停截图：后台不再保存新截图，控制台仍可正常使用" : "已开启截图：后台按原间隔继续保存新截图", "ok");
+    let msg;
+    if(goPause){
+      msg = "已暂停截图：后台不再截取保存新图，控制台仍可正常使用";
+    }else{
+      const per = fmtCapInterval(capIntervalMs);
+      if(capDiffThreshold > 0){
+        msg = "已开启截图：每 " + (per || "按配置间隔") + " 截取一帧，" +
+              "画面与每张已保存图差异均 ≥ " + capDiffThreshold + "% 才会保存为新图";
+      }else{
+        msg = "已开启截图：每 " + (per || "按配置间隔") + " 截取一帧并保存";
+      }
+    }
+    toast(msg, "ok");
   }catch(e){
     toast("切换失败：" + e.message, "err");
   }
@@ -1146,9 +1176,26 @@ function probeAlive(){
   return fetch("/api/app/meta", { cache:"no-store" }).then(()=> true).catch(()=> false);
 }
 
+/* 移除退出相关全屏覆盖（正在退出 / 已退出 / 退出失败），保证各阶段界面正确切换 */
+function clearExitScreens(){
+  const a = document.getElementById("exitScreen");    if(a) a.remove();
+  const b = document.getElementById("exitingScreen"); if(b) b.remove();
+}
+
+/* 停服进行中：立即整屏切换到“正在退出”画面（风格与“已退出”一致），用户不再能操作界面 */
+function showExitingScreen(){
+  clearExitScreens();
+  const ov = document.createElement("div");
+  ov.id = "exitingScreen";
+  ov.innerHTML =
+    '<div class="xt" style="color:var(--amber)">正在退出程序…</div>' +
+    '<div class="msg">正在停止控制台服务与后台截图（录屏）任务。<br>此过程约需数秒，完成后页面会自动关闭。</div>';
+  document.body.appendChild(ov);
+}
+
 /* 后端确认已停止：覆盖层提示 + 兜底按钮 */
 function showExitScreen(){
-  if(document.getElementById("exitScreen")) return;
+  clearExitScreens();
   const ov = document.createElement("div");
   ov.id = "exitScreen";
   ov.innerHTML =
@@ -1161,7 +1208,7 @@ function showExitScreen(){
 
 /* 多次尝试后后端仍存活：如实提示并提供重试 */
 function showExitFailed(msg){
-  if(document.getElementById("exitScreen")) return;
+  clearExitScreens();
   const ov = document.createElement("div");
   ov.id = "exitScreen";
   ov.innerHTML =
@@ -1179,13 +1226,18 @@ function showExitFailed(msg){
 async function requestExit(){
   if(exiting) return;
   if(!await askExitConfirm()) return;
+  startExit();
+}
+
+/* 停服主流程：从“确定退出”之后开始执行（页面右上角「完全退出」与关闭窗口时“退出整个程序”共用） */
+async function startExit(){
+  if(exiting) return;
   exiting = true;
   const btn = $("btnExit");
   btn.disabled = true; btn.textContent = "正在退出…";
-  toast("正在退出程序…", "");
+  showExitingScreen();                  // 立即整屏切到“正在退出”画面，风格同“已退出”，期间用户不可再操作
   const deadline = Date.now() + 10000;   // 等待后端停止的最长时间
   let deadCount = 0;                     // 连续探测“不可达”次数（>=2 才判定退出，防网络抖动误判）
-  let lastToast = 0;
   while(Date.now() < deadline){
     try{
       await fetch("/api/system/shutdown", { method:"POST", keepalive:true, cache:"no-store" });
@@ -1194,21 +1246,16 @@ async function requestExit(){
     const alive = await probeAlive();
     if(!alive){
       if(++deadCount >= 2){
-        showExitScreen();               // 后端确实已停：先亮出“已退出”覆盖层提示
+        showExitScreen();               // 后端确实已停：从“正在退出”切到“已退出”，随后自动关页
         armPageClose(1600);             // 延迟约 1.6s 再尝试自动关页，确保提示可见（失败时留手动按钮）
         return;
       }
     } else {
       deadCount = 0;
     }
-    const now = Date.now();
-    if(now - lastToast > 3000){
-      toast("正在退出程序…（若长时间未停止会提示失败）", "");
-      lastToast = now;
-    }
   }
   exiting = false;
-  btn.disabled = false; btn.textContent = "退出程序";
+  btn.disabled = false; btn.textContent = "完全退出";
   showExitFailed("服务进程未能在 10 秒内停止。可再试一次；若持续失败，请在任务管理器中手动结束 java 进程。");
 }
 
@@ -1224,6 +1271,55 @@ function armPageClose(delayMs){
       if(++n >= 15){ clearInterval(timer); }
     }, 400);
   }, delayMs || 0);
+}
+
+/* ---------------- 关闭程序窗口（右上角 × / Alt+F4）：仅关前端 or 连同后台一起退出 ---------------- */
+let allowReloadClose = false;  // 代码触发的页面刷新（如检测到服务端更新）直接放行，不弹关闭确认
+
+/* Chromium 应用窗口点关闭时浏览器会先弹原生“离开”确认（应用页面无法绕过原生框）：
+   - 选“离开” = 仅关闭前端窗口，后台服务与截图任务继续运行；
+   - 选“取消” = 停留在页面，此时露出下方自绘选择框（覆盖层在事件触发时已先就位）。
+   本页主动退出 / 服务已停自动关页 / 代码触发的刷新 都直接放行，不拦截。 */
+window.addEventListener("beforeunload", e => {
+  if(exiting || closeArmed || allowReloadClose) return;  // 放行
+  e.preventDefault();
+  e.returnValue = "";
+  showXCloseAsk();
+});
+
+function showXCloseAsk(){
+  if(document.getElementById("xCloseAsk")) return;
+  const ov = document.createElement("div");
+  ov.className = "modal-ov";
+  ov.id = "xCloseAsk";
+  const dirtyNote = dirty
+    ? '<div style="background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.4);color:#ffd2c9;padding:7px 10px;border-radius:8px;font-size:12px;margin-bottom:10px;text-align:left">当前标注尚未保存，关闭窗口会丢弃这些修改。</div>'
+    : "";
+  const pageUrl = location.origin + location.pathname;   // 后端服务地址即当前页面地址，用作“以后重开网页”的入口
+  ov.innerHTML =
+    '<div class="xcard" style="max-width:560px">' +
+      '<button type="button" id="xCloseX" class="modalX" title="取消（继续使用）" aria-label="取消（继续使用）">✕</button>' +
+      '<div class="xt2">关闭程序窗口</div>' +
+      '<div class="msg" style="text-align:left">' + dirtyNote +
+        '关闭<b>窗口</b>，默认只退出前端界面，后台服务会<b style="color:#9ad8a8">继续运行</b>。<br>' +
+        '页面也可以用网址打开：<a href="' + pageUrl + '" target="_blank" rel="noopener" style="color:#7cc4ff;word-break:break-all">' + pageUrl + '</a>' +
+      '</div>' +
+      '<div class="xrow" style="flex-wrap:wrap">' +
+        '<button class="btn danger" id="xExitAll" type="button">退出整个程序</button>' +
+        '<button class="btn" id="xOnlyUI" type="button">仅关闭窗口</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  $("xCloseX").addEventListener("click", ()=>{ ov.remove(); });   // 右上角 ✕ = 取消（继续使用）
+  $("xOnlyUI").addEventListener("click", ()=>{
+    ov.remove();
+    toast("仅关闭前端窗口，后台服务继续运行；如需彻底退出请重开页面后点右上角「退出程序」。", "");
+    try{ window.close(); }catch(e){ /* 普通标签页可能禁止脚本自关：上面的 toast 已说明，用户可手动关闭本页 */ }
+  });
+  $("xExitAll").addEventListener("click", ()=>{
+    ov.remove();     // 已在本选择框确认过“退出整个程序”，直接执行停服，不再二次询问
+    startExit();
+  });
 }
 
 /* ---------------- 汇总分析 · 组合分析工作台 ---------------- */
@@ -1272,7 +1368,7 @@ function enterThink(){
   showZoomCtl(false);      // 汇总分析七图用各自的 lightbox 放大，隐藏主图缩放控件
   resetZoom();
   hideSmartTip();          // 汇总分析模式下不显示智能分析提示条
-  $("lstTitle").textContent = "汇总分析 · 分类标注";
+  $("lstTitle").textContent = "分类标注列表（按匹配度）";
   selKey = null;
   openGroup(null);
   refreshThink(true, false);
@@ -1801,6 +1897,7 @@ async function checkAppVersion(){
       toast("检测到服务端代码已更新。当前标注尚未保存：保存并下一张、清除标记或删除后，会自动刷新加载新版页面。", "ok");
     } else {
       toast("检测到服务端代码已更新，正在刷新页面…", "");
+      allowReloadClose = true;               // 放行 beforeunload，避免代码刷新被关闭确认拦截
       setTimeout(()=> location.reload(), 500);
     }
   }catch(e){
@@ -1820,6 +1917,7 @@ function maybeAutoReload(){
   if(pendingReload){
     pendingReload = false;
     toast("已保存，正在刷新加载新版页面…", "ok");
+    allowReloadClose = true;               // 放行 beforeunload，避免代码刷新被关闭确认拦截
     setTimeout(()=> location.reload(), 400);
   }
 }
