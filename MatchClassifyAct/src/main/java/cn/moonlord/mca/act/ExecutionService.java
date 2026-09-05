@@ -6,6 +6,7 @@ import cn.moonlord.mca.capture.WindowInfo;
 import cn.moonlord.mca.capture.WindowResizer;
 import cn.moonlord.mca.config.CaptureProperties;
 import cn.moonlord.mca.config.ExecuteProperties;
+import cn.moonlord.mca.config.StoragePaths;
 import cn.moonlord.mca.mark.CaptureMark;
 import cn.moonlord.mca.mark.ClassifyStore;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -23,6 +24,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -55,8 +62,9 @@ public class ExecutionService {
     private final ClassifyStore classifyStore;
     private final CaptureProperties captureProperties;
     private final ExecuteProperties executeProperties;
+    private final StoragePaths storage;
 
-    /** 执行循环开关：true = 周期自动截图识别；false = 停止（可随时「立即识别一次」）。 */
+    /** 执行循环开关：true = 周期自动截图识别；false = 停止（页面始终可「立即识别」一次）。 */
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     /** 防重入：定时轮与手动触发可能重叠，只允许一个真正执行截图/识别。 */
@@ -89,7 +97,7 @@ public class ExecutionService {
     }
 
     /**
-     * 立即触发一轮「截图 + 识别」（等后台忙完后再执行）。供「立即识别一次」/ 执行动作前复核使用。
+     * 立即触发一轮「截图 + 识别」（等后台忙完后再执行）。供页面「立即识别」/ 执行动作前复核使用。
      *
      * @return 本轮产生的最新快照（若后台正忙且等待超时，则返回当前已有快照）
      */
@@ -242,7 +250,7 @@ public class ExecutionService {
     }
 
     private Snapshot placeholderSnapshot() {
-        return new Snapshot(System.currentTimeMillis(), "尚未产生识别结果：请点击「开始执行循环」，或「立即识别一次」。",
+        return new Snapshot(System.currentTimeMillis(), "尚未产生识别结果：请先点「立即识别」。",
                 false, null, 0, 0, 0, 0,
                 false, null, null, null, null, -1, executeProperties.getMatchThresholdPercent(),
                 null, 0, 0, new ArrayList<>(), 0, 0, 0, 0, null);
@@ -392,6 +400,80 @@ public class ExecutionService {
         res.put("screenX", r.screenX());
         res.put("screenY", r.screenY());
         return res;
+    }
+
+    /* ================================================================ 快速标记 ========== */
+
+    /** classify/ 下唯一样本名的时间戳格式（到毫秒，极端同毫秒冲突追加序号）。 */
+    private static final DateTimeFormatter SAMPLE_TS = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
+
+    /**
+     * 快速标记（识别纠错）：把最近一次识别画面另存为所选分类的新样本，
+     * 让后续识别把该画面也归入此分类，减少“同一画面反复认错”。
+     *
+     * @return ok=true + 新样本文件名；失败时 ok=false + message（HTTP 200，便于前端直接提示）
+     */
+    public Map<String, Object> markFrameAsSample(String state) {
+        Map<String, Object> res = new LinkedHashMap<>();
+        String st = state == null ? "" : state.trim();
+        if (st.isEmpty()) {
+            res.put("ok", false);
+            res.put("message", "未指定要存入的分类（state 为空）");
+            return res;
+        }
+        if (st.matches(".*[\\\\/:*?\"<>|\\p{Cntrl}].*") || st.endsWith(".")) {
+            res.put("ok", false);
+            res.put("message", "分类名包含非法字符，无法作为样本目录");
+            return res;
+        }
+        Snapshot s = latestSnapshot();
+        if (s.frame() == null) {
+            res.put("ok", false);
+            res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
+            return res;
+        }
+        try {
+            Path dir = storage.classify();
+            Files.createDirectories(dir);
+            String name = uniqueSampleName(dir);
+            Path png = dir.resolve(name);
+            Path tmp = dir.resolve(name + ".tmp");
+            boolean wrote = ImageIO.write(s.frame(), "png", tmp.toFile());
+            if (!wrote) {
+                Files.deleteIfExists(tmp);
+                res.put("ok", false);
+                res.put("message", "画面编码为 PNG 失败，未保存");
+                return res;
+            }
+            try {
+                Files.move(tmp, png, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, png, StandardCopyOption.REPLACE_EXISTING);
+            }
+            classifyStore.saveSample(name, st);
+            log.info("执行模式快速标记：画面 {}x{} 另存为分类「{}」的样本 {}", s.imageWidth(), s.imageHeight(), st, name);
+            res.put("ok", true);
+            res.put("name", name);
+            res.put("state", st);
+            res.put("imageWidth", s.imageWidth());
+            res.put("imageHeight", s.imageHeight());
+            return res;
+        } catch (Exception e) {
+            log.error("执行模式快速标记保存失败：{}", e.toString());
+            res.put("ok", false);
+            res.put("message", "保存样本失败：" + e.getMessage());
+            return res;
+        }
+    }
+
+    /** 在 classify/ 下生成一个不冲突的样本文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒时追加 _2、_3…）。 */
+    private String uniqueSampleName(Path dir) {
+        String base = "IMG_" + SAMPLE_TS.format(LocalDateTime.now());
+        String name = base + ".png";
+        for (int i = 2; Files.exists(dir.resolve(name)); i++) {
+            name = base + "_" + i + ".png";
+        }
+        return name;
     }
 
     /* ================================================================ 杂项 ============== */

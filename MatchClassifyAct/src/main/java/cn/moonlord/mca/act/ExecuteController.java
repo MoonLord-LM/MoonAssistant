@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -91,5 +92,11 @@ public class ExecuteController {
     @PostMapping("/act")
     public Map<String, Object> act() {
         return executionService.act();
+    }
+
+    /** 快速标记：把最近一次识别画面另存为指定分类的新样本（识别错了 → 立即纠正，减少后续误判）。 */
+    @PostMapping("/mark")
+    public Map<String, Object> mark(@RequestBody(required = false) Map<String, String> body) {
+        return executionService.markFrameAsSample(body == null ? null : body.get("state"));
     }
 }
