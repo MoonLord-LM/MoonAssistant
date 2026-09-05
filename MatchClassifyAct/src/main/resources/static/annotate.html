@@ -15,10 +15,30 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  /* 统一深色滚动条（图片列表 / 预览区 / 编辑区等），避免 Windows 默认浅色与深色界面不搭 */
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2c3550;border-radius:6px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:#3a4560}
+  ::-webkit-scrollbar-corner{background:transparent}
+  *{scrollbar-width:thin;scrollbar-color:#2c3550 transparent}
   button{font:inherit;cursor:pointer}
   .topbar{height:54px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--border)}
-  .brand{font-weight:600;font-size:15px;letter-spacing:.3px;white-space:nowrap}
-  .brand .dot{color:var(--accent)}
+  /* 左上角：工作模式切换（标注模式为默认；执行模式建设中）。下拉未展开时本身即显示当前模式 */
+  .modeCtl{flex:none}
+  .modeCtl select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:14px;font-weight:600;line-height:1.2;outline:none;cursor:pointer;letter-spacing:.3px;transition:border-color .15s}
+  .modeCtl select:hover{border-color:#3a4560}
+  .modeCtl select option{background:#121a2a;color:var(--text)}
+  /* 标注 / 执行 模式显隐：标注界面整体（顶栏筛选、主体、截图开关）在执行模式隐藏 */
+  body[data-appmode="exec"] .mark-only{display:none!important}
+  body[data-appmode="exec"] .layout{display:none!important}
+  body[data-appmode="mark"] #execPane{display:none!important}
+  #execPane{display:flex;align-items:center;justify-content:center;height:calc(100vh - 54px);padding:12px;min-height:0}
+  .exec-inner{max-width:520px;width:100%;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:44px 28px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
+  .exec-ico{width:58px;height:58px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px dashed rgba(79,140,255,.55);color:var(--accent);font-size:18px;line-height:1;margin-bottom:2px}
+  .exec-inner h2{margin:0;font-size:17px;color:var(--text);letter-spacing:.5px}
+  .exec-inner p{margin:0;color:var(--muted);font-size:13px;line-height:1.9}
+  .exec-inner .tag{display:inline-block;margin-top:6px;font-size:11px;color:#9db4ff;border:1px solid rgba(79,140,255,.4);border-radius:20px;padding:2px 12px;background:rgba(79,140,255,.08)}
   .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px}
   .seg button{border:0;background:transparent;color:var(--muted);padding:4px 16px;border-radius:6px;min-width:64px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
   .seg button.on{background:var(--accent);color:#fff}
@@ -60,6 +80,9 @@
   .stagebar{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)}
   .stagebar .fname{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
   .stagebar .sub{color:var(--muted);font-size:12px}
+  /* 图片分辨率提示（窗口相对坐标空间）：紧随图片文件名显示 */
+  .stagebar .dims{flex:none;color:var(--muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums;border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;margin-left:2px}
+  .stagebar .dims b{color:var(--accent);font-weight:600}
   .imgarea{flex:1;display:flex;overflow:auto;padding:12px;position:relative;min-height:0}
   .imgwrap{position:relative;display:inline-block;line-height:0;margin:auto}
   /* 主图缩放（全部/未标注/已标注 共用的预览大图）：实际显示尺寸统一由 JS 按显示区实时计算 */
@@ -115,6 +138,12 @@
   .coord b{color:#ff8fa0}
   .btnrow{display:flex;gap:8px;margin-top:14px}
   .btnrow .btn{flex:1}
+  /* 右侧编辑区：按功能分区并各自用一个圆角卡片框包裹（标注信息 / 保存 / 清除与删除） */
+  .editor .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:12px}
+  .editor .edsec+.edsec{margin-top:12px}
+  .editor .edsec .field:last-child{margin-bottom:0}
+  .editor .edsec .btnrow{margin-top:0}
+  .editor .edsec.danger{border-color:rgba(255,92,108,.28)}
   .tip{color:var(--muted);font-size:11px;line-height:1.6;border-top:1px solid var(--border);margin-top:16px;padding-top:10px}
   .hint{display:none;margin:-2px 0 12px;font-size:12px;line-height:1.5;color:var(--muted)}
   .hint.show{display:block}
@@ -174,10 +203,13 @@
   #exitScreen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:24px}
   #exitScreen .xt{font-size:24px;font-weight:700;color:var(--green)}
   #exitScreen .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:8px}
-  #exitConfirm{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
-  #exitConfirm .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:420px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
-  #exitConfirm .xt2{font-size:16px;font-weight:700;margin-bottom:6px}
-  #exitConfirm .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
+  #exitConfirm,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
+  #exitConfirm .xcard,#capStopModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #exitConfirm .xt2,#capStopModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #exitConfirm .msg,#capStopModal .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
+  /* 自动暂停弹窗：正文长，按后端 \n 分段、靠左 + 宽松行高排版便于阅读 */
+  #capStopModal .xcard{text-align:left}
+  #capStopModal .msg{white-space:pre-line;text-align:left;font-size:12.5px;line-height:1.9}
   .xrow{display:flex;gap:10px;justify-content:center;margin-top:6px}
   .xrow .btn{min-width:96px}
   #exitScreen .xrow{margin-top:10px}
@@ -189,22 +221,28 @@
   }
 </style>
 </head>
-<body data-mode="none">
+<body data-mode="none" data-appmode="mark">
 
 <header class="topbar">
-  <div class="brand">MCA<span class="dot">·</span>控制台</div>
-  <div class="seg" id="filterSeg">
+  <!-- 左上角：工作模式选择（标注模式为默认；执行模式建设中）。合拢时下拉本身即显示当前模式 -->
+  <div class="modeCtl" title="控制台工作模式：标注模式=截图标注/汇总分析；执行模式=自动化执行界面（建设中）">
+    <select id="modeSel" aria-label="控制台模式">
+      <option value="mark">标注模式</option>
+      <option value="exec">执行模式</option>
+    </select>
+  </div>
+  <div class="seg mark-only" id="filterSeg">
     <button data-f="all">全部</button>
     <button data-f="unmarked" class="on">未标注</button>
     <button data-f="marked">已标注</button>
     <button data-f="think">汇总分析</button>
   </div>
   <div class="spacer"></div>
-  <button class="btn cap" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
+  <button class="btn cap mark-only" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
   <button class="btn exit" id="btnExit" title="退出程序：停止控制台服务与后台截图（录屏）任务">退出程序</button>
 </header>
 
-<main class="layout">
+<main class="layout mark-only">
   <aside class="sidebar">
     <div class="listhead"><span id="lstTitle">截图列表（按时间）</span><span id="listCount"></span></div>
     <ul id="imgList"></ul>
@@ -212,15 +250,16 @@
 
   <section class="stage">
     <div class="stagebar">
-      <span class="fname" id="fname">—</span>
+      <span class="fname" id="fname"></span>
       <span class="sub" id="fsub"></span>
+      <span class="dims" id="imgDims"></span>
       <div class="spacer"></div>
       <div class="zoomCtl" id="zoomCtl" title="显示模式：原始分辨率=100% 原像素（空间不足时可滚动）；自适应缩放=整幅可见并尽量占满：空间不足等比缩小、空间充足等比放大（如 140%），四周留少量空白且不产生滚动条。也可直接点按图片在「自适应缩放 ↔ 原始分辨率」间切换">
         <button id="zmOrig" type="button" title="按实际像素 1:1 显示（空间不足时产生滚动条）">原始分辨率</button>
         <button id="zmFit" type="button" title="整幅可见并尽量占满：不足等比缩小、充足等比放大，四周留少量空白，不产生滚动条">自适应缩放</button>
         <span class="zpct" id="zoomPct">—</span>
       </div>
-      <span class="status-tag u" id="statusTag">未标记</span>
+      <span class="status-tag" id="statusTag" style="display:none"></span>
     </div>
     <div class="imgarea" id="imgarea">
       <span class="imgplaceholder" id="placeholder">没有图片。启动截图任务后，原始截图会保存到 capture/ 目录并自动出现在本列表。</span>
@@ -267,42 +306,45 @@
   <aside class="editor">
   <div id="edNorm">
     <h3>标注编辑</h3>
-    <div class="esub" id="natSize"></div>
 
-    <div class="field">
-      <label for="stateInput">分类标注</label>
-      <div class="tags" id="stateTags"></div>
-      <input type="text" id="stateInput" maxlength="40" placeholder="例：登录页 / 主界面 / 弹窗 / 无响应…" title='将作为汇总分析产物目录名（summary/&lt;分类标注&gt;/）：不可包含 \ / : * ? " < > |，且不能以 . 结尾'>
-    </div>
-
-    <div class="field">
-      <label>匹配动作</label>
-      <div class="actions">
-        <label class="act" data-a="none">
-          <input type="radio" name="action" value="none" checked><span class="at">无动作</span>
-        </label>
-        <label class="act" data-a="click">
-          <input type="radio" name="action" value="click"><span class="at">鼠标点击</span>
-        </label>
+    <div class="edsec">
+      <div class="field">
+        <label for="stateInput">分类标注</label>
+        <div class="tags" id="stateTags"></div>
+        <input type="text" id="stateInput" maxlength="40" placeholder="例：登录页 / 主界面 / 弹窗 / 无响应…" title='将作为汇总分析产物目录名（summary/&lt;分类标注&gt;/）：不可包含 \ / : * ? " < > |，且不能以 . 结尾'>
       </div>
-      <div class="hint" id="actHint" role="status"></div>
+
+      <div class="field">
+        <label>匹配动作</label>
+        <div class="actions">
+          <label class="act" data-a="none">
+            <input type="radio" name="action" value="none" checked><span class="at">无动作</span>
+          </label>
+          <label class="act" data-a="click">
+            <input type="radio" name="action" value="click"><span class="at">鼠标点击</span>
+          </label>
+        </div>
+        <div class="hint" id="actHint" role="status"></div>
+      </div>
+
+      <div class="coord" id="coordBox">
+        <span>点击坐标 <b id="coordText">—</b>（窗口相对坐标）</span><br>
+        <span style="color:var(--muted)">再点图片可改</span>
+      </div>
     </div>
 
-    <div class="coord" id="coordBox">
-      <span>点击坐标 <b id="coordText">—</b>（窗口相对坐标）</span><br>
-      <span style="color:var(--muted)">再点图片可改</span>
+    <div class="edsec">
+      <div class="btnrow">
+        <button class="btn green" id="btnSaveNext">保存并下一张</button>
+        <button class="btn" id="btnLast">使用上次标记</button>
+      </div>
     </div>
 
-    <div class="btnrow">
-      <button class="btn green" id="btnSaveNext">保存并下一张</button>
-      <button class="btn" id="btnLast">使用上次标记</button>
-    </div>
-    <div class="btnrow">
-      <button class="btn danger" id="btnClear">清除标记</button>
-      <button class="btn ghost" id="btnRevert">重新加载</button>
-    </div>
-    <div class="btnrow">
-      <button class="btn del" id="btnDelete" title="把当前截图连同它的标注一起移入系统回收站：误删仍可到回收站还原，但将不再出现在控制台列表">删除此图片</button>
+    <div class="edsec danger">
+      <div class="btnrow">
+        <button class="btn danger" id="btnClear">清除标记</button>
+        <button class="btn del" id="btnDelete" title="点击后立即把当前截图（连同标注）移入系统回收站，不会再弹确认框；误删可到系统回收站还原">删除此图片</button>
+      </div>
     </div>
 
     <div class="tip">
@@ -321,6 +363,16 @@
   </div>
   </aside>
 </main>
+
+<!-- 执行模式占位页（后续版本设计执行元素；标注模式主体 .layout 带 .mark-only，切换时整体隐藏） -->
+<section id="execPane" aria-label="执行模式（建设中）">
+  <div class="exec-inner">
+    <div class="exec-ico">▶</div>
+    <h2>执行模式</h2>
+    <p>执行（自动运行匹配动作）界面正在设计中，将在后续版本开放。<br>当前请切换到「标注模式」使用截图标注与汇总分析功能。</p>
+    <span class="tag">建设中 · Coming Soon</span>
+  </div>
+</section>
 
 <div id="toasts"></div>
 
@@ -612,8 +664,8 @@ function showEmpty(){
   showZoomCtl(false);
   resetZoom();
   $("placeholder").textContent = "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。";
-  $("fname").textContent = "—"; $("fsub").textContent = ""; $("natSize").textContent = "";
-  $("statusTag").className = "status-tag u"; $("statusTag").textContent = "无图片";
+  $("fname").textContent = ""; $("fsub").textContent = ""; $("imgDims").textContent = "";
+  const st = $("statusTag"); st.className = "status-tag"; st.textContent = ""; st.style.display = "none";
   $("stateInput").value = ""; setAction("none"); px=null; renderDot();
   updateTagActive();
   updateNavButtons();
@@ -641,11 +693,12 @@ async function showImage(item, opts){
   // 重置编辑器
   $("fname").textContent = SHORT(item.name);
   $("fsub").textContent = item.name;
-  $("natSize").textContent = "";
+  $("statusTag").style.display = "";                       // 无图时徽标被隐藏，选中后恢复
   $("statusTag").className = "status-tag " + (item.marked ? "m" : "u");
   $("statusTag").textContent = item.marked ? "已标记" : "未标记";
   $("imgwrap").style.display = "";
   $("placeholder").style.display = "none";
+  $("imgDims").textContent = "";   // 待图片加载完成后按实际分辨率填充
   naturalW = naturalH = 0;
   px = null;
   resetZoom();                 // 切换图片回到「自适应缩放」，并从顶栏显示缩放控件
@@ -679,8 +732,8 @@ $("mainImg").addEventListener("load", ()=>{
   const img = $("mainImg");
   naturalW = img.naturalWidth || 0;
   naturalH = img.naturalHeight || 0;
-  $("natSize").textContent = naturalW && naturalH
-    ? `尺寸 ${naturalW} × ${naturalH} 像素（即窗口相对坐标空间）`
+  $("imgDims").innerHTML = naturalW && naturalH
+    ? `尺寸 <b>${naturalW} × ${naturalH}</b> 像素`
     : "";
   mainMode = "fit";        // 每张图默认进入「自适应缩放」
   resetZoom();
@@ -901,26 +954,35 @@ async function saveCurrent(goNext){
 async function clearCurrent(){
   const item = cur(); if(!item) return;
   if(!confirm("清除 " + SHORT(item.name) + " 的标记？")) return;
+  const pos = curIndex();        // 清除前在当前筛选列表中的位置，供“已标注”筛选下顺延用
   try{
     const resp = await fetch(markUrl(item.name), { method:"DELETE" });
     if(!resp.ok) throw new Error("HTTP " + resp.status);
+    // 后端已把该图从 classify/ 移回 capture/（位置还原为“未标注”），此处同步视图状态
     item.marked = false; item.state=null; item.action=null; item.left=null; item.top=null;
     dirty = false;
     $("stateInput").value=""; setAction("none", false); px=null; renderDot();
     $("statusTag").className="status-tag u"; $("statusTag").textContent="未标记";
-    toast("已清除标记", "ok");
-    renderList();
     rebuildStates();            // 同步 chip 计数（该标签使用数 -1）
-    refreshSmartTip();          // 当前图变回未标注 → 重新发起智能分析建议
+    toast("已清除标记", "ok");
+    // 清除后仍属于当前筛选（全部 / 未标注）→ 停在原图刷新并给出智能建议；
+    // 已不属于（如“已标注”筛选）→ 顺延到同位置下一张，列表空了回到空态。
+    if(listNow().some(i => i.name === item.name)){
+      renderList();
+      refreshSmartTip();        // 当前图变回未标注 → 重新发起智能分析建议
+    }else{
+      const L = listNow();
+      if(!L.length){ renderList(); showEmpty(); }
+      else{ selectTarget(L[Math.max(0, Math.min(pos, L.length - 1))].name); }
+    }
     await refreshSilent();          // 同步列表（新增截图与其它变化）
     maybeAutoReload();              // 若此前检测到服务端更新且已挂起，现在刷新
   }catch(e){ toast("清除失败：" + e.message, "err"); }
 }
 
-/* 删除当前图片（PNG + 同名标注）到系统回收站，删除后自动顺延到下一张 */
+/* 删除当前图片（PNG + 同名标注）到系统回收站，无需确认，删除后自动顺延到下一张并用 toast 提示 */
 async function deleteCurrent(){
   const item = cur(); if(!item){ toast("没有可操作的图片", "err"); return; }
-  if(!confirm("把截图「" + SHORT(item.name) + "」移入回收站？\n\n若已标注，对应的标注文件也会一并移入。删除后该图不再出现在控制台，误删可到系统回收站还原。")) return;
   const pos = listNow().findIndex(i => i.name === item.name);
   try{
     const r = await fetch("/api/annotate/delete", {
@@ -933,7 +995,7 @@ async function deleteCurrent(){
   $("stateInput").value = ""; setAction("none", false); renderDot();
   rebuildStates();
   const L = listNow();
-  toast("已移入回收站：" + SHORT(item.name), "ok");
+  toast("已移入回收站：" + SHORT(item.name) + (item.marked ? "（含标注）" : ""), "ok");
   if(!L.length){
     renderList();
     showEmpty();
@@ -941,14 +1003,6 @@ async function deleteCurrent(){
     selectTarget(L[Math.max(0, Math.min(pos, L.length - 1))].name);
   }
   await refreshSilent();   // 与后端同步（新截图等）
-  maybeAutoReload();       // 若此前检测到服务端更新且已挂起，现在刷新
-}
-
-async function revertCurrent(){
-  const item = cur(); if(!item) return;
-  dirty = false;
-  await showImage(item, { prefill:false });   // 严格还原：不自动带入上次标记
-  toast("已重新加载该图标注");
   maybeAutoReload();       // 若此前检测到服务端更新且已挂起，现在刷新
 }
 
@@ -994,6 +1048,7 @@ function updateNavButtons(){}
 /* ---------------- 开启/暂停截图（截图默认不开启，需在页面手动开启） ---------------- */
 let capPaused = true;    // 截图任务是否未开启/已暂停（程序启动后默认关闭）
 let capBusy = false;
+let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
 
 function renderCapBtn(){
   const b = $("btnCap"); if(!b) return;
@@ -1025,11 +1080,37 @@ async function toggleCap(){
     if(!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json();
     capPaused = !!j.paused;
+    if(!goPause) lastStopReasonShown = null;   // 重新开启成功：允许下次 resize 持续失败再次弹窗
     toast(goPause ? "已暂停截图：后台不再保存新截图，控制台仍可正常使用" : "已开启截图：后台按原间隔继续保存新截图", "ok");
   }catch(e){
     toast("切换失败：" + e.message, "err");
   }
   capBusy = false; renderCapBtn();
+}
+
+/* 后端自动暂停事件（截图 resize 持续无法达标）：弹窗错误提示，同步按钮态为「开启截图」 */
+function showCapStopModal(msg){
+  if(document.getElementById("capStopModal")) return;
+  const ov = document.createElement("div");
+  ov.id = "capStopModal";
+  ov.className = "modal-ov";
+  ov.innerHTML =
+    '<div class="xcard">' +
+      '<div class="xt2">截图已自动暂停</div>' +
+      '<div class="msg"></div>' +
+      '<div class="xrow">' +
+        '<button class="btn green" id="capStopOK" type="button">知道了</button>' +
+        '<button class="btn" id="capStopRetry" type="button">重新开启截图</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  ov.querySelector(".msg").textContent = msg;   // textContent：后端原因含窗口标题等，避免注入
+  const close = ()=>{ ov.remove(); };
+  $("capStopOK").addEventListener("click", close);
+  $("capStopRetry").addEventListener("click", async ()=>{
+    ov.remove();
+    await toggleCap();    // 此时任务已自动暂停 → 点击即 resume
+  });
 }
 
 /* ---------------- 退出程序：确认 → 停后端 → 校验“真的停止”后才自关本页 ---------------- */
@@ -1175,7 +1256,7 @@ function statusOf(g){
   if(g.stale)     return { txt: "样本有变", c:"u" };
   return { txt: "", c:"m" };   // 对照图已在面前，不再标「已生成」
 }
-const THINK_EMPTY = "还没有分类标注。把 ≥2 张同一画面的截图标成同一分类标注（动作一致）后回到本栏，将自动生成七张对照图。";
+const THINK_EMPTY = "没有分类标注";
 /* 汇总分析七张对照图（顺序：交集 / 多数 / 均值 / 1-16多数 / 1-64多数 / 1-16均值 / 1-64均值） */
 const IMG_IDS = ["imgSame","imgMax","imgAvg","imgM16","imgM64","imgA16","imgA64"];
 const TCS_IDS = ["tcsSame","tcsMax","tcsAvg","tcsM16","tcsM64","tcsA16","tcsA64"];
@@ -1316,6 +1397,7 @@ function openGroup(g){
     tp.style.display = "none";
     $("fname").textContent = "汇总分析";
     $("fsub").textContent = "";
+    $("imgDims").textContent = "";
     showTag("—", "u");
     $("tkInfo").innerHTML = "左侧选择分类标注查看对照图。";
     $("tkExplain").innerHTML = "";
@@ -1325,6 +1407,7 @@ function openGroup(g){
   tp.style.display = "grid";                   // 恢复为 CSS 网格
   $("fname").textContent = g.state + " ｜ " + (ACT_LABEL[g.action] || g.action);
   $("fsub").textContent = g.sampleCount + " 张";
+  $("imgDims").textContent = "";
   showTag(st.txt, st.c);
   let info = '【分类标注】<b class="kv">' + escHtml(g.state) + '</b><br>'
            + '【匹配动作】<b class="kv">' + (ACT_LABEL[g.action] || g.action) + '</b><br>'
@@ -1631,7 +1714,6 @@ $("btnExit").addEventListener("click", requestExit);
 $("btnSaveNext").addEventListener("click", ()=> saveCurrent(true));
 $("btnLast").addEventListener("click", useLastMark);
 $("btnClear").addEventListener("click", clearCurrent);
-$("btnRevert").addEventListener("click", revertCurrent);
 $("btnDelete").addEventListener("click", deleteCurrent);
 $("zmOrig").addEventListener("click", ()=> setMainMode("orig"));
 $("zmFit").addEventListener("click", ()=> setMainMode("fit"));
@@ -1645,6 +1727,7 @@ document.querySelectorAll('input[name=action]').forEach(r=>{
 });
 
 document.addEventListener("keydown", (e)=>{
+  if(appMode !== "mark") return;                // 执行模式下不响应标注类快捷键
   const tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
   const typing = tag==="input" || tag==="textarea" || tag==="select";
   if(e.key==="ArrowUp" && !typing){ e.preventDefault(); navStep(-1); }
@@ -1676,6 +1759,7 @@ async function refreshSilent(){
 }
 async function pollTick(){
   if(document.hidden) return;
+  if(appMode !== "mark") return;                // 执行模式：暂停后台列表静默同步
   if(FILTER === "think"){                       // 汇总分析模式：静默刷新组合状态
     if(!thinkBusy && !dirty) await refreshThink(false, true);
     return;
@@ -1700,6 +1784,13 @@ async function checkAppVersion(){
     if(!r.ok) return;
     const j = await r.json();
     metaDown = 0;                        // 探测成功：清零连续失败计数
+    // 截图 resize 持续不达标 → 后端已自动暂停：弹窗提示并同步按钮态（仅提示一次，用户 resume 后可再次提示）
+    const stopReason = j && j.captureStopReason;
+    if(stopReason && stopReason !== lastStopReasonShown){
+      lastStopReasonShown = stopReason;
+      if(!capPaused){ capPaused = true; renderCapBtn(); }   // 后端已暂停：按钮恢复为「开启截图」
+      showCapStopModal(stopReason);
+    }
     const ts = Number(j && j.codeTs) || 0;
     if(!ts) return;
     if(baseCodeTs === null){ baseCodeTs = ts; return; }   // 首次：只记基线，不做比对
@@ -1707,7 +1798,7 @@ async function checkAppVersion(){
     baseCodeTs = ts;                                       // 已变化：去重，避免反复提示
     if(dirty){
       pendingReload = true;
-      toast("检测到服务端代码已更新。当前标注尚未保存，保存或重新加载后会自动刷新加载新版页面。", "ok");
+      toast("检测到服务端代码已更新。当前标注尚未保存：保存并下一张、清除标记或删除后，会自动刷新加载新版页面。", "ok");
     } else {
       toast("检测到服务端代码已更新，正在刷新页面…", "");
       setTimeout(()=> location.reload(), 500);
@@ -1724,7 +1815,7 @@ async function checkAppVersion(){
   }
 }
 
-/* dirty 被清除（保存/清除/重新加载成功）后调用：若之前挂起了刷新则现在执行 */
+/* dirty 被清除（保存/清除/删除成功）后调用：若之前挂起了刷新则现在执行 */
 function maybeAutoReload(){
   if(pendingReload){
     pendingReload = false;
@@ -1742,6 +1833,35 @@ document.addEventListener("visibilitychange", ()=>{
     return;
   }
   if(baseCodeTs !== null) checkAppVersion();   // 切回页面立刻复核一次
+});
+
+/* ---------------- 标注 / 执行 模式切换（执行界面后续版本设计） ---------------- */
+let appMode = "mark";                       // 当前工作模式：mark=默认标注模式 / exec=执行模式（占位）
+
+function setAppMode(m){
+  appMode = m;
+  document.body.setAttribute("data-appmode", m);
+  if(m === "exec"){
+    toast("已切换到「执行模式」——界面建设中，标注界面已隐藏。", "ok");
+  } else {
+    toast("已回到「标注模式」。", "ok");
+    refreshSilent();     // 隐藏期间可能新增了截图：切回时同步一次列表
+    syncCapStatus();     // 同步截图运行状态（开启/暂停按钮的文案与高亮）
+  }
+}
+
+// 下拉框选中即切换（合拢时下拉本身显示当前模式）
+$("modeSel").addEventListener("change", ()=>{
+  const sel = $("modeSel");
+  if(!sel) return;
+  const want = sel.value === "exec" ? "exec" : "mark";
+  if(want === appMode) return;
+  if(want === "exec" && dirty && curName){   // 有未保存标注：提示先处理，避免编辑内容丢失
+    toast("当前标注尚未保存：请先「保存并下一张」或「清除标记」，再切换到执行模式。", "err");
+    sel.value = appMode;                     // 回滚下拉选择
+    return;
+  }
+  setAppMode(want);
 });
 
 /* ---------------- 启动 ---------------- */

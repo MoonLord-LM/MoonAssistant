@@ -220,7 +220,9 @@ public class AnnotateController {
     }
 
     /**
-     * 清除标注：删除同名 .json；若截图在 classify/ 下则移回 capture/（重新成为“未标注”）。
+     * 清除标注：若截图在 classify/ 下先把 PNG 移回 capture/（位置还原为“未标注”数据集），
+     * 再删除同名 .json。先移后删，移动失败时标注文件原样保留、整体保持原状，
+     * 避免出现“标注已删、截图却仍留在 classify/”的半清除态。
      */
     @DeleteMapping("/mark/{name:.+}")
     public ResponseEntity<?> deleteMark(@PathVariable String name) {
@@ -229,15 +231,30 @@ public class AnnotateController {
             return ResponseEntity.notFound().build();
         }
         Path mark = companionJson(png);
+        Path movedBack = null;
         try {
-            if (mark != null && Files.exists(mark)) {
-                Files.delete(mark);
-            }
             if (png.startsWith(storage.classify())) {
                 Path capture = storage.capture();
                 Files.createDirectories(capture);
-                Files.move(png, capture.resolve(png.getFileName()));
-                log.debug("清除标注，截图 {}/ → {}/", storage.classify(), capture);
+                movedBack = capture.resolve(png.getFileName());
+                Files.move(png, movedBack);
+            }
+            try {
+                if (mark != null && Files.exists(mark)) {
+                    Files.delete(mark);
+                }
+            } catch (IOException e) {
+                // 标注文件删除失败：把已移走的截图挪回 classify/，与标注重新成对，保持清除前原状
+                if (movedBack != null) {
+                    try {
+                        Files.move(movedBack, png);
+                    } catch (IOException ignore) {
+                    }
+                }
+                throw e;
+            }
+            if (movedBack != null) {
+                log.debug("清除标注，截图 {}/ → {}/", storage.classify(), storage.capture());
             }
             return ResponseEntity.ok().build();
         } catch (IOException e) {

@@ -1,5 +1,7 @@
 package cn.moonlord.mca.mark;
 
+import cn.moonlord.mca.capture.WindowCaptureTask;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,10 +20,16 @@ import java.util.Map;
  * <p>codeTs 取「最能代表代码构建时间」的文件修改时间：
  * ① 以单个 jar / 目录运行时取其 mtime；② 否则取 classpath 中
  * static/annotate.html 所在部署根（可执行 jar 取其外层 jar 的 mtime）；</p>
+ *
+ * <p>除版本探针外，meta 还携带截图任务的「自动暂停原因」：
+ * 截图 resize 持续无法达标自动停止时，前端据此弹出错误提示。</p>
  */
 @Slf4j
 @RestController
+@RequiredArgsConstructor
 public class AppMetaController {
+
+    private final WindowCaptureTask windowCaptureTask;
 
     private final long startedAt = System.currentTimeMillis();
     private final long codeTs = detectCodeTimestamp();
@@ -31,6 +39,10 @@ public class AppMetaController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("codeTs", codeTs);
         m.put("startedAt", startedAt);
+        String reason = windowCaptureTask.getAutoStopReason();
+        if (reason != null) {
+            m.put("captureStopReason", reason);   // 非空 = 截图任务刚因 resize 持续不成功而自动暂停
+        }
         return m;
     }
 
