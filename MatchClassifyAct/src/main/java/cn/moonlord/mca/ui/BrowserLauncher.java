@@ -62,8 +62,8 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
     @Value("${ui.path:/annotate}")
     private String path;
 
-    /** 控制台窗口尺寸，形如 {@code 宽x高}，例如 {@code 1760x990}；{@code 0x0} 表示不指定交给系统 */
-    @Value("${ui.window-size:1760x990}")
+    /** 控制台窗口尺寸，形如 {@code 宽x高}，例如 {@code 1776x999}；{@code 0x0} 表示不指定交给系统 */
+    @Value("${ui.window-size:1776x999}")
     private String windowSize;
 
     /** 控制台窗口是否在屏幕可用区域居中展示 */
@@ -113,7 +113,7 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
         final int targetH = h;
         Thread t = new Thread(() -> {
             long deadline = System.currentTimeMillis() + 12_000;
-            long delayMs = 10;   // 定位等待递增退避：10 → 20 → 40 → 80 … 封顶 1000ms（窗口未出现时尽快多试几次，之后放宽）
+            long delayMs = 10;
             while (System.currentTimeMillis() < deadline) {
                 try {
                     WindowInfo win = windowFinder.findTarget(CONSOLE_WINDOW_KEYWORDS);
@@ -130,9 +130,8 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
                     Thread.currentThread().interrupt();
                     return;
                 }
-                delayMs = Math.min(delayMs * 2, 1000);
             }
-            log.warn("启动后未在 12 秒内定位到控制台窗口「{}」，本次未强制调整尺寸与位置", CONSOLE_WINDOW_KEYWORDS);
+            log.warn("启动后未在 10 秒内定位到控制台窗口「{}」，本次未强制调整尺寸与位置", CONSOLE_WINDOW_KEYWORDS);
         }, "console-window-place");
         t.setDaemon(true);
         t.start();

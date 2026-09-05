@@ -353,8 +353,7 @@
 
     <div class="tip">
       <kbd>↑</kbd>/<kbd>↓</kbd> 切换；<kbd>Enter</kbd> 保存并跳到随机未标注图。<br>
-      点按大图在「自适应缩放 ↔ 原始分辨率」间切换；顶栏同样两档可选（「鼠标点击」模式下单击用于取坐标，请用顶栏按钮切换显示）。<br>
-      同一分类标注只对应一种匹配动作；点击坐标 = 窗口相对坐标，可直接执行鼠标动作。
+      同一分类标注只对应一种匹配动作。点击图片，可标记鼠标动作的位置。
     </div>
   </div><!-- /edNorm -->
 
@@ -1046,7 +1045,7 @@ function navThinkStep(d){
   const li = $("imgList").children[np]; if(li) li.scrollIntoView({block:"nearest"});
 }
 
-/* 顶部上一张/下一张/刷新等按钮已移除（顶栏右上角保留「开启/暂停截图」与「退出程序」），保留空实现兼容既有调用点 */
+/* 顶部上一张/下一张/刷新等按钮已移除（顶栏右上角保留「开启/暂停截图」与「完全退出」），保留空实现兼容既有调用点 */
 function updateNavButtons(){}
 
 /* ---------------- 开启/暂停截图（截图默认不开启，需在页面手动开启） ---------------- */
@@ -1313,7 +1312,7 @@ function showXCloseAsk(){
   $("xCloseX").addEventListener("click", ()=>{ ov.remove(); });   // 右上角 ✕ = 取消（继续使用）
   $("xOnlyUI").addEventListener("click", ()=>{
     ov.remove();
-    toast("仅关闭前端窗口，后台服务继续运行；如需彻底退出请重开页面后点右上角「退出程序」。", "");
+    toast("仅关闭前端窗口，后台服务继续运行；如需彻底退出请重开页面后点右上角「完全退出」。", "");
     try{ window.close(); }catch(e){ /* 普通标签页可能禁止脚本自关：上面的 toast 已说明，用户可手动关闭本页 */ }
   });
   $("xExitAll").addEventListener("click", ()=>{
