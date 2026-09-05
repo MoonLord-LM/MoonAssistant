@@ -482,6 +482,96 @@ public class ExecutionService {
         }
     }
 
+    /* ================================================================ 另存为待标注截图 ===== */
+
+    /**
+     * 把当前识别画面另存为 capture/ 下的原始截图（未标注，不写标注数据）：当执行画面需要人工
+     * 精确标注 / 修正点击坐标时，先把它放进截图区，再到「标注模式」的「未标注」列表按正常流程
+     * 标注即可。执行画面本身不落盘，因此这里以「另存」方式与截图循环产物同目录、同命名风格。
+     *
+     * <p>保存前执行与截图循环完全相同的去重判定（{@link ScreenCaptureService#duplicateReference}）：
+     * 画面须与 capture/ + classify/ 全部同尺寸 PNG 的平均像素差异都 ≥ {@code capture.diff-threshold-percent}
+     * （默认 5%）才算「新画面」才允许另存；只要与任意一张差异低于阈值（几乎同一画面）即拒绝保存，
+     * 避免手工存到待标注又落盘一张与历史几乎相同的截图。阈值 ≤ 0（关闭去重）时不检查、直接保存。</p>
+     *
+     * @return ok=true + 新文件名；ok=false + kind=dup（差异不达标被拦截）/ message（HTTP 200，便于前端直接提示）
+     */
+    public Map<String, Object> saveFrameToCapture() {
+        Map<String, Object> res = new LinkedHashMap<>();
+        Snapshot s = latestSnapshot();
+        if (s.frame() == null) {
+            res.put("ok", false);
+            res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
+            return res;
+        }
+        double threshold = captureProperties.getDiffThresholdPercent();
+        if (threshold > 0) {
+            ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame());
+            if (dup != null) {
+                // 与截图循环的「判重丢弃」同口径：画面与已保存截图差异不足阈值，禁止另存，避免堆积重复待标注图
+                log.info("执行模式「存到待标注」被去重拦截：画面与 {} 差异 {}% < 阈值 {}%，未另存",
+                        dup.name(), pctText(dup.diffPercent()), pctText(threshold));
+                res.put("ok", false);
+                res.put("kind", "dup");
+                res.put("dupOf", dup.name());
+                res.put("diffPercent", dup.diffPercent());   // 画面与该重复参考图的实际平均像素差异（%），前端/日志提示用
+                res.put("threshold", threshold);
+                res.put("message", "当前画面与截图「" + dup.name() + "」差异为 " + pctText(dup.diffPercent())
+                        + "%（低于 " + pctText(threshold) + "% 阈值），本次未保存。"
+                        + "确为新画面可稍后重试；或调低 capture.diff-threshold-percent 后重试。");
+                return res;
+            }
+        }
+        try {
+            Path dir = storage.capture();
+            Files.createDirectories(dir);
+            String name = uniqueCaptureName();
+            Path png = dir.resolve(name);
+            Path tmp = dir.resolve(name + ".tmp");
+            boolean wrote = ImageIO.write(s.frame(), "png", tmp.toFile());
+            if (!wrote) {
+                Files.deleteIfExists(tmp);
+                res.put("ok", false);
+                res.put("message", "画面编码为 PNG 失败，未保存");
+                return res;
+            }
+            try {
+                Files.move(tmp, png, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, png, StandardCopyOption.REPLACE_EXISTING);
+            }
+            log.info("执行模式把画面 {}x{} 另存为 capture/ 待标注截图：{}", s.imageWidth(), s.imageHeight(), name);
+            res.put("ok", true);
+            res.put("name", name);
+            res.put("imageWidth", s.imageWidth());
+            res.put("imageHeight", s.imageHeight());
+            return res;
+        } catch (Exception e) {
+            log.error("执行模式另存画面到 capture/ 失败：{}", e.toString());
+            res.put("ok", false);
+            res.put("message", "保存失败：" + e.getMessage());
+            return res;
+        }
+    }
+
+    /** 百分比显示文本：整数不带小数位（3.0 → "3"），否则保留一位小数（3.16 → "3.2"） */
+    private static String pctText(double v) {
+        double one = Math.round(v * 10) / 10.0;
+        return one == Math.rint(one) ? String.valueOf((long) one) : String.valueOf(one);
+    }
+
+    /** 生成 capture/ 下不冲突的新截图文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒追加 _2、_3…；
+     *  并避开 classify/ 同名——两目录同名时标注列表会以已标注版本为准，避免保存了却看不到）。 */
+    private String uniqueCaptureName() {
+        String base = "IMG_" + SAMPLE_TS.format(LocalDateTime.now());
+        Path cap = storage.capture(), cls = storage.classify();
+        String name = base + ".png";
+        for (int i = 2; Files.exists(cap.resolve(name)) || Files.exists(cls.resolve(name)); i++) {
+            name = base + "_" + i + ".png";
+        }
+        return name;
+    }
+
     /** 在 classify/ 下生成一个不冲突的样本文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒时追加 _2、_3…）。 */
     private String uniqueSampleName(Path dir) {
         String base = "IMG_" + SAMPLE_TS.format(LocalDateTime.now());

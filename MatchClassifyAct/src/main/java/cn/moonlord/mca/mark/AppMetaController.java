@@ -1,5 +1,6 @@
 package cn.moonlord.mca.mark;
 
+import cn.moonlord.mca.capture.ScreenCaptureService;
 import cn.moonlord.mca.capture.WindowCaptureTask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,11 +26,15 @@ import java.util.Map;
  * <ul>
  *   <li>{@code captureStopReason}：截图 resize 持续无法达标自动停止时，前端据此弹出错误提示；</li>
  *   <li>{@code shotNotice}（{at, kind, name, pct?}）：最近一次截图结果——成功保存（kind=saved，
- *       name 为新图文件名）或画面与已保存参考图差异小于阈值被丢弃（kind=dup，name 为参考图文件名，
- *       pct 为阈值）。每轮完成都记录、不节流，前端每 2s 轮询取走（截图间隔默认 3s > 轮询间隔，
- *       任何结果都不会漏掉）并以右下角轻提示即时展示；</li>
+ *       name 为新图文件名）或画面与已保存参考图差异低于阈值被丢弃（kind=dup，name 为参考图文件名，
+ *       pct 为画面与该参考图的实际平均像素差异百分比、必然低于阈值）。每轮完成都记录、不节流，
+ *       前端每 2s 轮询取走（截图间隔默认 3s > 轮询间隔，任何结果都不会漏掉）并以右下角轻提示即时展示；</li>
  *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
- *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）。</li>
+ *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）；</li>
+ *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed}）：本次启动的历史重复清理结果
+ *       （仅当 capture.diff-threshold-percent &gt; 0 时执行）——按差异阈值重扫 capture/ + classify/
+ *       全部截图删除重复。不论是否删除了图片，前端都会据此在右下角提示一次清理完成
+ *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片）。</li>
  * </ul></p>
  */
 @Slf4j
@@ -38,6 +43,7 @@ import java.util.Map;
 public class AppMetaController {
 
     private final WindowCaptureTask windowCaptureTask;
+    private final ScreenCaptureService screenCaptureService;
 
     private final long startedAt = System.currentTimeMillis();
     private final long codeTs = detectCodeTimestamp();
@@ -58,10 +64,20 @@ public class AppMetaController {
             r.put("at", shot.at);
             r.put("kind", shot.kind);
             r.put("name", shot.name);
-            if (shot.diffPercent > 0) {
-                r.put("pct", shot.diffPercent);
+            if ("dup".equals(shot.kind)) {
+                r.put("pct", shot.diffPercent);   // dup：画面与该参考图的实际平均像素差异（%），必然低于阈值；saved 不带
             }
             m.put("shotNotice", r);               // 非空 = 最近一次截图结果（成功保存 / 差异过小丢弃），前端即时轻提示
+        }
+        // 启动历史重复清理结果：无论是否删除都提示一次，removed 供前端区分「删除重复 N 张 / 检查完成未发现重复」
+        ScreenCaptureService.StartupDedupNotice dedup = screenCaptureService.getStartupDedupNotice();
+        if (dedup != null) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("at", dedup.at());
+            d.put("threshold", dedup.threshold());
+            d.put("scanned", dedup.scanned());
+            d.put("removed", dedup.removed());
+            m.put("startupDedupNotice", d);
         }
         return m;
     }

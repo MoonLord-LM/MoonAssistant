@@ -77,7 +77,7 @@ Java (MatchClassifyAct)
  │    └─ ProcessBuilder 调用:
  │         WindowsCapture.exe --hwnd <句柄> --out <临时.bmp> --timeout-ms <cfg>
  ├─ ImageIO 读回 BufferedImage → savePng() → capture/IMG_yyyyMMdd_HHmmss.png（原始截图；标注后连同数据移入 classify/）
- ├─ WindowCaptureTask                  @Scheduled 每 interval-ms 一轮（带 paused 开关；默认关闭，需页面手动「开启截图」）
+ ├─ WindowCaptureTask                  @Scheduled(fixedDelay=interval-ms)：每帧（截图+尺寸校验+去重比对）处理完再等 interval-ms 取下一帧（处理耗时顺延、绝不叠帧；带 paused 开关，默认关闭，需页面手动「开启截图」）
  ├─ WindowResizer                      截图尺寸 ≠ capture.resize-width×resize-height 时，SetWindowPos 把窗口外框强制缩放到截图恰好达标（不达标不保存，由任务循环自动一直调窗重试）
  ├─ CaptureControlController           /api/capture/status|pause|resume：右上角「开启/暂停截图」（默认关闭）
  ├─ ui/BrowserLauncher                 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（ui.auto-open=false 可关）
@@ -161,7 +161,8 @@ Java 侧 `WindowFinder` 优先选择非 LAYERED 且面积最大的候选，仅�
   - 快捷键 `↑`/`↓` 切换图片、`Enter` 保存并下一张；列表每 10 秒自动静默刷新（有新增/变化才重绘），编辑中或页面切后台不发请求。
   - **布局**：右侧标注编辑区在窗口内**纵向居中**，标注控件集中在视野中线附近，方便连续点击；顶栏中部为四段导航（全部 / 未标注 / 已标注 / 汇总分析），**右上角保留「开启截图 / 暂停截图」与「退出程序」两个按钮**；
   - **开启 / 暂停截图（默认不开启）**：截图任务启动后默认关闭、不自动保存任何图；点击「开启截图」（`POST /api/capture/resume`）才按间隔开始后台截图，按钮随之变绿并显示「暂停截图」；再点一次（`POST /api/capture/pause`）即暂停（不再查找窗口、不保存新截图，控制台其余功能不受影响）。页面打开时会先 `GET /api/capture/status` 同步真实状态；
-  - **截图结果右下角即时提示**：开启截图后每完成一轮（默认约 3 秒）都会即时提示——保存成功显示「已保存截图 `IMG_xx.png`」；画面与已保存参考截图差异小于 `capture.diff-threshold-percent`（默认 5%）被判定重复丢弃时显示「当前画面与截图「参考图名」差异小于 5%，本次不保存」。提示为**单条替换式**（新结果直接替换旧条、约 2 秒后自动淡出，不叠加刷屏）：后端每轮把结果写入 `/api/app/meta` 的 `shotNotice`（at/kind/name/pct），前端轮询取走按时间戳去重——截图默认 3 秒一轮、页面轮询 2 秒一次，故每个结果都不会漏；
+  - **截图结果右下角即时提示**：开启截图后每完成一轮都会即时提示——保存成功显示「已保存截图 `IMG_xx.png`」；画面与去重基准中的参考图（capture/ 原始截图 + classify/ 已标注样本的全部 PNG）差异小于 `capture.diff-threshold-percent`（默认 5%）被判定重复丢弃时显示「当前画面与截图「参考图名」差异小于 5%，本次不保存」。截图节拍 = **每帧处理完再等 `capture.interval-ms`（默认 1 秒）取下一帧**，画面静止判重丢弃时同样约每秒一拍。提示为**单条替换式**（新结果直接替换旧条、约 2 秒后自动淡出，不叠加刷屏）：后端每轮把结果写入 `/api/app/meta` 的 `shotNotice`（at/kind/name/pct），前端每 2 秒轮询取走按时间戳去重——节拍可快于轮询，轮询间隙内连续产生的多条中间结果只展示最新一条（属单条提示的预期行为）；
+  - **启动历史重复清理（每次启动后台执行一次）**：按 `capture.diff-threshold-percent`（默认 5%）把 capture/（未标注原始截图）与 classify/（已标注样本）里<b>全部</b>已有截图做一遍重复清理——保留优先级为「已标注样本 &gt; 未标注截图」，同目录内保留较早一张；同尺寸且与已保留图平均像素差异 &lt; 阈值的判为重复并删除（删除 classify/ 下的重复样本时其同名 `.json` 一并移除，中心表 `data.json` 的分类定义不受影响，汇总分析产物会因样本数变化被自动标记待重算）。这样早期未开去重 / 旧版只对比少数参考图时期堆积的历史重复，重启一次即清掉，不用手工逐个翻。任务在独立后台线程执行、不阻塞启动，且先于首轮截图去重判定完成（避免与文件删除并发）；参考图缩略缓存也随本次任务一次性重建，后续逐帧去重直接命中。画面持续变化产生的新重复仍靠运行期去重挡（挡不掉的见 §五 待办）。
   - **服务端版本自检（后端更新后前端自动刷新）**：前端每 5 秒轮询一次 `GET /api/app/meta`，与页面打开时记录的 `codeTs` 基线比对——该值是「代码构建时间」（`java -jar` 取 jar 文件 mtime，开发目录直接跑取 `static/annotate.html` mtime）。后端重新打包并重启后 `codeTs` 变化，前端自动刷新加载新版页面；若此刻正在编辑未保存，会先提示并挂起刷新，等保存/清除/重新加载成功后再执行，不丢标注。页面从后台切回时也会立刻复核一次。
   - **启动自动开网页 · 退出自动关页**：程序启动就绪后自动用 Edge/Chrome **应用窗口**打开控制台（找不到则回退系统默认浏览器；`--ui.auto-open=false` 可关），截图默认不开启（见上）。点击「退出程序」→ `POST /api/system/shutdown` 结束整个服务进程（若恰有抓帧中的 `WindowsCapture.exe`，关闭钩子会先强制结束它），页面随后自动 `window.close()` **自己关掉**（应用窗口下可被脚本关闭；普通标签页受浏览器策略限制时，页面会显示提示与手动关闭按钮兜底）。若程序被外部结束（崩溃/杀进程/关控制台），页面每 5 秒的心跳探测连续失败后也会触发同样的自动关页。
   - **汇总分析（自动分组 · 仅供展示，不参与标注）**：顶栏第四段进入**分类标注工作台**——系统按「分类标注相同（匹配动作一致）」把已保存标注截图自动分组，统一一个队列展示。进入本段时，所有「样本 ≥2 且尚未生成对照图」的分组会被**自动异步分析**：逐像素比较后生成**七张对照图** —— `交集图`（每个像素取**覆盖大于 90%** 的值：覆盖率 = 该颜色出现的样本占比，>90% 才保留为不透明，其余透明）、`多数图`（每个像素取**覆盖率最多**的颜色）、`均值图`（每个像素取全部样本的 **RGB 均值**）、`1/8 多数图`（所有样本同一 8×8 块内全部像素合并，取出现次数最多的颜色）、`1/32 多数图`（同上按 32×32 块）、`1/8 均值图`（所有样本同一 8×8 块内全部像素合并，取全部像素的 RGB 均值）、`1/32 均值图`（同上按 32×32 块），主区同时显示覆盖率；结果<b>仅供人工目检参考、不参与标注决策</b>，不会写入任何图片标注或结论（画面标签一律以控制台的人工标注为准）。产物按分类标注落盘为 `summary/<分类标注>/same.png|max.png|avg.png|maj8.png|avg8.png|maj32.png|avg32.png`（分析信息：样本数 / 覆盖率 / 公共点击坐标 / 更新时间等写同目录 `info.json`），可随时整目录删除、下次分析按需重算。<b>单击任意一张图放大为原尺寸大图，再单击图片即还原</b>（按 Esc 也可关闭）。右栏顶部有**状态横幅**（样本不足 / 待分析 / 样本有变 / 对照图已生成·覆盖率），下方为【分类标注】【匹配动作】【原始截图张数】【分辨率】四项信息；主区在样本不足或待分析时也会显示对应占位提示而非空白。样本 <2 张的分组不分析并明确提示。列表（标题「分类标注列表（按匹配度）」）排序规则：**已分析分组按交集图像素覆盖率从低到高排列**——覆盖率越高说明该组截图彼此差异越小（多为同一画面反复截取、采样不足，参考价值反而低），放在前面的是截图差异更大、采样更充分的组合，便于优先目检 / 补采；同覆盖率按「分类标注 → 动作」文字升序；其余分组（未分析 / 样本有变待重算）随其后，其中样本 ≥2 的在前、**只有 1 张样本的分组恒排最后**。
@@ -276,7 +277,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | 键 | 默认值 | 说明 |
 |------|--------|------|
 | `capture.window-keywords` | `MuMu模拟器,MuMu安卓设备,MuMu` | 目标图形程序窗口标题关键字（默认即演示环境 MuMu，改成想自动化的任意 GUI 程序标题即可），命中任一即候选，多窗口取面积最大 |
-| `capture.interval-ms` | `3000` | 截图间隔（毫秒）；截图默认不开启，手动「开启截图」后按此间隔执行 |
+| `capture.interval-ms` | `1000` | 相邻两帧截图的最小等待（毫秒），**fixedDelay 语义**：每处理完一帧（截图 → 尺寸校验 → 与去重基准匹配比对 → 保存/丢弃）后再等这么久取下一帧——单帧处理耗时多长就顺延多长，匹配比对没完成不会开始下一帧、绝不叠帧；截图默认不开启，手动「开启截图」后运行 |
 | `capture.capture-dir` | `capture` | 原始截图（未标注）保存目录（相对运行目录，自动创建，已被 .gitignore 忽略） |
 | `capture.classify-dir` | `classify` | 已标注样本（PNG + 归属 json `{state}`）目录；同目录 `data.json` 为分类定义表（每分类动作/坐标一份） |
 | `capture.summary-dir` | `summary` | 汇总分析产物保存目录（内部按「分类标注」分目录，样本取 classify/，可随时重算） |
@@ -284,7 +285,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `capture.capture-timeout-ms` | `5000` | 传给采集器的内部抓帧超时（毫秒） |
 | `capture.resize-width` | `1280` | 截图目标宽（物理像素）：开启截图后，凡是截出来不是「宽×高」的帧一律不保存，并自动用 `SetWindowPos` 把窗口**整体外框**缩放（最大化先还原）后重截验证，直到截出的 PNG 恰好等于目标宽×高才保存。与 `resize-height` 同时 `>0` 才启用（默认 1280×720）；任一设 `0` 则关闭尺寸校验、按旧行为原样保存。注意：需把目标程序内部分辨率/方向配置成同尺寸（如 MuMu 设 1280x720、16:9），否则画面可能变形/带黑边 |
 | `capture.resize-height` | `720` | 截图目标高（物理像素），与 `capture.resize-width` 配套 |
-| `capture.diff-threshold-percent` | `5` | 像素差异去重阈值（%，0~100）：开启后当前画面须与「已保存参考截图」中**每一张**的平均像素差异都 ≥ 该值才保存 PNG，否则视为重复帧丢弃（避免 capture/ 堆满几乎相同的图）；`0` 或负数 = 关闭去重。截图默认 3 秒一轮，每轮结果（保存成功 / 判定重复丢弃）都会即时经 `/api/app/meta` 的 `shotNotice` 推给控制台，右下角以单条替换式轻提示展示约 2 秒：「已保存截图 xx.png」或「当前画面与截图「xx.png」差异小于 5%，本次不保存」——画面静止时即每 3 秒一条，单条替换、不叠加刷屏 |
+| `capture.diff-threshold-percent` | `5` | 像素差异去重阈值（%，0~100）：开启后，当前画面保存前须与**去重基准**——capture/（原始截图）与 classify/（已标注样本）两目录下的**全部** PNG（内部以缩略图快速比对，判定口径同整图平均像素差异）——中<b>每一张</b>的平均像素差异都 ≥ 该值才保存，只要与任意一张过像（画面静止、回到过以前的状态、或与某张已标注样本几乎相同）即视为重复帧丢弃，避免一边标注入库存样本、一边 capture/ 又落盘几乎一模一样的截图；截图被标注移入 classify/ 或程序重启后仍能对上历史任意一张。`0` 或负数 = 关闭去重。截图节拍 = 每帧处理完再等 `capture.interval-ms`（默认 1 秒，fixedDelay 顺延不叠帧），每轮结果（保存成功 / 判定重复丢弃）都会即时经 `/api/app/meta` 的 `shotNotice` 推给控制台，右下角以单条替换式轻提示展示约 2 秒：「已保存截图 xx.png」或「当前画面与截图「xx.png」差异小于 5%，本次不保存」——画面静止判重丢弃时同样约每秒一拍，单条替换、不叠加刷屏。程序<b>每次启动</b>还会在后台按同阈值把 capture/ + classify/ 已有全部截图做一遍历史重复清理（删除与保留图差异低于阈值的重复，见 §2.6） |
 | `ui.auto-open` | `true` | 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（找不到则回退系统默认浏览器） |
 | `ui.path` | `/annotate` | 自动打开的网页路径（根路径 `/` 亦跳入） |
 | `ui.window-size` | `1760x990` | 控制台应用窗口尺寸（宽x高）；`0x0` = 不指定、交给系统 |
@@ -316,10 +317,11 @@ MatchClassifyAct/
    │  │  ├─ WindowInfo.java                  窗口模型：句柄 / 标题 / 屏幕矩形 / 是否最小化
    │  │  ├─ WindowFinder.java                findTarget() 取"面积最大且优先非分层(WS_EX_LAYERED)"的窗口
    │  │  ├─ ScreenCaptureService.java        captureWindow() 调 WindowsCapture.exe；savePng() 原子落盘
-   │  │  │                                   （.tmp→改名）并缓存 latestImage/latestFile
+   │  │  │                                   （.tmp→改名）并缓存 latestImage/latestFile；去重基准缩略缓存、启动历史重复清理
    │  │  ├─ WindowResizer.java               截图尺寸 ≠ 目标宽×高时按尺寸差用 SetWindowPos 强制缩放窗口（最大化先还原、越界平移回屏幕内），由任务循环重截验证直至 PNG 恰好达标
    │  │  ├─ CaptureControlController.java    /api/capture/status|pause|resume：开启/暂停周期截图（默认关闭）
-   │  │  └─ WindowCaptureTask.java           ApplicationRunner + @Scheduled 周期截图（默认 paused=true 不截图，页面手动开启）
+   │  │  ├─ WindowCaptureTask.java           ApplicationRunner + @Scheduled 周期截图（默认 paused=true 不截图，页面手动开启）
+   │  │  └─ StartupDedupCleaner.java         ApplicationReadyEvent：后台执行启动历史重复清理（同 diff-threshold 阈值删历史重复）+ 去重基准缩略缓存预热
    │  ├─ act/                               执行模式（实时识别 + 一键执行，见 §2.7）
    │  │  ├─ ExecuteController.java          REST /api/execute/*：status|start|stop|refresh|latest|frame|act
    │  │  ├─ ExecutionService.java           执行循环主轴：找窗 → 截图（尺寸不符自动调窗重截）→ FrameClassifier 识别 → Snapshot（画面仅内存缓存、不写盘）；act() 复核最新画面后交 WindowClicker 发送鼠标点击
@@ -373,6 +375,6 @@ summary/                                     汇总分析产物（按「分类�
 
 **真待办**：
 1. 同时开多个相同目标程序（如多开几个 MuMu 模拟器）时按标题取"面积最大"，无法区分指定实例。
-2. 每 3 秒一张 PNG 持续占用磁盘：`capture.diff-threshold-percent` 去重可挡掉“画面静止”的重复帧，但画面持续变化时仍会不断积累；长跑注意清理 `capture/`（`classify/` 是要保留的样本；`summary/` 可随时重算后整目录删掉）。后续方向：磁盘配额/自动滚动清理、或对“新画面才保存”做更细的变化判断。
+2. 持续落盘 PNG 占用磁盘（帧间最小间隔默认 1 秒，画面变化越快落盘越密）：`capture.diff-threshold-percent` 去重（基准 = capture/ + classify/ 全部 PNG）可挡掉“画面静止”与“回到已存画面/已标注样本”的重复帧，但画面持续变化时仍会不断积累；长跑注意清理 `capture/`（`classify/` 是要保留的样本；`summary/` 可随时重算后整目录删掉）。后续方向：磁盘配额/自动滚动清理、或对“新画面才保存”做更细的变化判断。
 3. 执行模式的画面识别目前是「整帧像素抽样比对（约 1/16）」：同一画面状态需与样本像素高度一致，轻微光照 / 色偏 / 动态区域都会推高差异度判为未识别；带明显动画或环境变化的分类需更多样本覆盖，后续可升级局部 ROI / 特征匹配提高鲁棒性。
 4. 「识别后执行」目前由人在执行页点「触发执行」确认（安全优先、防误点）；尚未做「识别即自动执行」的策略链与执行历史记录，可按需扩展。

@@ -1,5 +1,7 @@
 package cn.moonlord.mca.mark;
 
+import cn.moonlord.mca.act.FrameClassifier;
+import cn.moonlord.mca.config.ExecuteProperties;
 import cn.moonlord.mca.config.StoragePaths;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,6 +32,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
@@ -109,15 +113,33 @@ public class ThinkService {
     /** 产物生成规则版本：改动产物生成逻辑后递增，使旧产物自动判 stale 并重算 */
     private static final int ART_RULE_VERSION = 5;
 
-    /** 单线程池：像素比对较重，串行避免并发打满 CPU */
+    /** 单线程池：像素比对较重，串行避免并发打满 CPU（手动分析任务 / 单图智能建议 / 自动重算共用） */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "mca-think");
         t.setDaemon(true);
         return t;
     });
 
+    /* ------------------------------------------------- 自动重算（标注样本变化后后台补齐/刷新产物） */
+    /** 自动重算防抖窗口：最后一次标注变化后延迟多久启动扫描，避免连续标注期间反复全量重算 */
+    private static final long RECOMPUTE_DELAY_MS = 3000L;
+
+    /** 仅做延迟触发，真正的分析仍交给上面的计算池串行执行 */
+    private final ScheduledExecutorService autoScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "mca-think-auto");
+        t.setDaemon(true);
+        return t;
+    });
+    private final Object recomputeLock = new Object();
+    private boolean recomputeArmed;    // 已有延迟计划（防抖窗口内合并多次变化）
+    private boolean recomputeRunning;  // 自动重算正在计算池里执行
+    private boolean recomputeAgain;    // 执行期间样本又变化 → 本轮跑完后再补一轮
+
     private final StoragePaths storage;
     private final ClassifyStore classifyStore;
+    /** 执行模式的画面识别器：智能建议直接复用它做比对，保证与执行模式同算法、同阈值、同缓存 */
+    private final FrameClassifier frameClassifier;
+    private final ExecuteProperties executeProperties;
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
 
     /** 单图智能建议任务 */
@@ -130,9 +152,13 @@ public class ThinkService {
         }
     };
 
-    public ThinkService(StoragePaths storage, ClassifyStore classifyStore) {
+    public ThinkService(StoragePaths storage, ClassifyStore classifyStore,
+                        FrameClassifier frameClassifier, ExecuteProperties executeProperties) {
         this.storage = storage;
         this.classifyStore = classifyStore;
+        this.frameClassifier = frameClassifier;
+        this.executeProperties = executeProperties;
+        requestRecompute();   // 启动后自动补一轮：上次退出没跑完 / 重启期间样本有变的产物尽快对齐（约 3 秒后执行）
     }
 
     /* ---------------------------------------------------------------- 对外 API */
@@ -143,6 +169,9 @@ public class ThinkService {
      * @param force true = 无视已有产物全部重算
      */
     public String startAnalyze(boolean force) {
+        if (tasks.size() > 32) {
+            tasks.entrySet().removeIf(e -> !"running".equals(e.getValue().status));   // 只留运行中的任务，防止长期挂机后 map 无限膨胀
+        }
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, force);
         tasks.put(id, t);
@@ -155,15 +184,85 @@ public class ThinkService {
         return taskId == null ? null : tasks.get(taskId);
     }
 
+    /**
+     * 标注样本集合（classify/）发生变化后调用：约 3 秒防抖后，自动启动一轮后台汇总分析，
+     * 把「样本 ≥ 2 张且产物缺失 / 样本数有变」的分组全部补齐或重算。
+     *
+     * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
+     * 只要样本变化，summary/ 下的七张对照图就会自动保持与最新样本一致，
+     * 供执行模式随时取用。与前端手动分析共用同一计算池，串行执行互不并发。
+     */
+    public void requestRecompute() {
+        synchronized (recomputeLock) {
+            if (recomputeRunning) {
+                recomputeAgain = true;      // 正在跑：跑完这轮后自动补一轮，把最新变化扫进去
+                return;
+            }
+            if (recomputeArmed) {
+                return;                     // 已有防抖计划：到点时自会扫描到此刻的最新状态，无需重复排队
+            }
+            recomputeArmed = true;
+        }
+        autoScheduler.schedule(this::autoDispatch, RECOMPUTE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /** 防抖到期：占位并提交计算池（不在本调度线程里做重活） */
+    private void autoDispatch() {
+        synchronized (recomputeLock) {
+            if (!recomputeArmed) {
+                return;
+            }
+            recomputeArmed = false;
+            if (recomputeRunning) {
+                recomputeAgain = true;
+                return;
+            }
+            recomputeRunning = true;
+        }
+        pool.submit(this::runAutoRecomputeLoop);
+    }
+
+    /** 自动重算主体：一轮扫描补齐后，若执行期间样本又变化则继续下一轮，直到追上最新状态 */
+    private void runAutoRecomputeLoop() {
+        try {
+            for (; ; ) {
+                try {
+                    runAnalyze(new Task("auto", false));   // 自动任务不进 tasks map（无需前端轮询）
+                } catch (Throwable e) {
+                    log.warn("自动汇总分析异常，本轮终止（样本再次变化时会自动重试）：{}", e.toString());
+                    return;    // 失败不原地死循环：下次 requestRecompute 自然再触发
+                }
+                boolean again;
+                synchronized (recomputeLock) {
+                    again = recomputeAgain;
+                    recomputeAgain = false;
+                }
+                if (!again) {
+                    return;
+                }
+            }
+        } finally {
+            boolean again;
+            synchronized (recomputeLock) {
+                recomputeRunning = false;
+                again = recomputeAgain;    // 极边角：最后一轮检查之后、解锁之前又收到变化
+                recomputeAgain = false;
+            }
+            if (again) {
+                requestRecompute();
+            }
+        }
+    }
+
     /* ---------------------------------------------------------------- 智能建议（未标注图 × 已生成的七张对照图） */
 
-    /** 单图智能建议任务：把一张未标注截图与每个分类标注已生成的七张对照图做逐像素相似度比对 */
+    /** 单图智能建议任务：把一张未标注截图交给执行模式的识别器（FrameClassifier）与各分类对照图比对 */
     public static class SuggestTask {
         public final String taskId;
         public final String file;
         public volatile String status = "running";   // running / done / error
         public volatile String message = "";
-        /** 候选组，按 score（最高像素一致率）降序 */
+        /** 候选组，与执行模式同口径：按 7 图平均「不匹配点占比」（差异度）升序；每条含 diffPercent/recognized 等字段 */
         public volatile List<Map<String, Object>> candidates = List.of();
 
         SuggestTask(String taskId, String file) {
@@ -212,7 +311,7 @@ public class ThinkService {
                     return;
                 }
             }
-            List<Map<String, Object>> out = compareWithGroups(target);
+            List<Map<String, Object>> out = suggestWithClassifier(target);   // 复用执行模式的识别器，与执行模式同口径
             synchronized (suggestCache) {
                 suggestCache.put(file + "|" + sig, out);
             }
@@ -276,213 +375,42 @@ public class ThinkService {
     }
 
     /**
-     * 目标截图与每个「七张对照图齐全」的分类标注逐像素比对。
-     * 相似度口径（对照图透明像素不计入）：
-     *   pct   像素一致比例 = RGB 完全一致的同位像素占比（%）
-     *   adiff 平均通道色差 = √(Σ(ΔR²+ΔG²+ΔB²) ÷ 像素数 ÷ 3)，0~255，越小越接近
-     * 组得分取七张图里一致比例最高的一张，七张图各自指标一并返回供界面展示。
+     * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
+     * 每个分类的 7 张对照图分别同尺度逐像素比对（单像素 RGB 三维距离 ≥ execute.rgb-dist-threshold 判为
+     * 不匹配点），分类得分 = 各图「不匹配点占比」的算术平均（差异度，越小越像），并按 execute
+     * 识别阈值（match-threshold-percent）判定是否「已识别」。不再维护“像素一致率 / 平均色差”的平行口径，
+     * 避免标注模式的建议与执行模式的真实判定不一致。
      */
-    private List<Map<String, Object>> compareWithGroups(BufferedImage target) throws IOException {
-        List<Map<String, Object>> out = new ArrayList<>();
-        Path sum = storage.summary();
-        if (!Files.isDirectory(sum)) {
-            return out;
+    private List<Map<String, Object>> suggestWithClassifier(BufferedImage target) {
+        FrameClassifier.Outcome oc = frameClassifier.classify(target);
+        if (oc == null || oc.candidates == null || oc.candidates.isEmpty()) {
+            return List.of();
         }
-        List<Path> dirs;
-        try (Stream<Path> ds = Files.list(sum)) {
-            dirs = ds.filter(Files::isDirectory)
-                     .sorted(Comparator.comparing(p -> p.getFileName().toString()))
-                     .toList();
-        }
-        for (Path d : dirs) {
-            if (!artifactsComplete(d)) {
-                continue;
+        double thr = executeProperties.getMatchThresholdPercent();
+        List<Map<String, Object>> out = new ArrayList<>(oc.candidates.size());
+        for (int i = 0; i < oc.candidates.size(); i++) {
+            FrameClassifier.Candidate c = oc.candidates.get(i);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("state", c.state());
+            m.put("dir", c.matchedFile());
+            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 7 图平均不匹配点占比（%）
+            if (i == 0) {
+                m.put("action", oc.action);    // 建议分类的动作只在最佳候选上读取（来自该分类 info.json）
             }
-            Map<String, Object> info = readInfo(d);
-            Object wObj = info.get("width"), hObj = info.get("height");
-            if (!(wObj instanceof Number wn) || !(hObj instanceof Number hn)) {
-                continue;
+            m.put("recognized", oc.recognized);          // 最近似差异度 ≤ execute 识别阈值 → 已识别
+            m.put("thresholdPercent", Math.round(thr * 100.0) / 100.0);
+            List<Map<String, Object>> kinds = new ArrayList<>(c.kinds().size());
+            for (FrameClassifier.KindScore ks : c.kinds()) {
+                kinds.add(Map.of("kind", ks.kind(), "file", ks.file(),
+                        "w", ks.w(), "h", ks.h(), "score", Math.round(ks.score() * 100.0) / 100.0));
             }
-            int w = wn.intValue();
-            int h = hn.intValue();
-            if (w <= 0 || h <= 0) {
-                continue;
-            }
-            BufferedImage base = (target.getWidth() == w && target.getHeight() == h)
-                ? target : scaleTo(target, w, h);
-            List<Map<String, Object>> kinds = new ArrayList<>(7);
-            double bestPct = 0;
-            String bestKind = null;
-            double bestAdiff = 0;
-            for (String kind : KIND_FILE.keySet()) {
-                Path art = d.resolve(KIND_FILE.get(kind));
-                if (!Files.isRegularFile(art)) {
-                    continue;
-                }
-                BufferedImage ref = ImageIO.read(art.toFile());
-                if (ref == null) {
-                    continue;
-                }
-                BufferedImage cmp = base;
-                int[] dn = kindDown(kind);   // {块边长, 1=块内多数 / 0=块内均值}；边长 1 = 不压缩
-                if (dn[0] > 1) {
-                    cmp = blockDown(base, dn[0], dn[1] == 1);   // 低分辨率产物同口径：目标也按块压缩再比
-                }
-                if (cmp.getWidth() != ref.getWidth() || cmp.getHeight() != ref.getHeight()) {
-                    cmp = scaleTo(cmp, ref.getWidth(), ref.getHeight());
-                }
-                double[] m = comparePixels(cmp, ref);
-                kinds.add(Map.of("kind", kind, "pct", m[0], "adiff", m[1]));
-                if (m[0] > bestPct) {
-                    bestPct = m[0];
-                    bestKind = kind;
-                    bestAdiff = m[1];
-                }
-            }
-            if (bestKind == null) {
-                continue;
-            }
-            Map<String, Object> cand = new LinkedHashMap<>();
-            cand.put("state", info.getOrDefault("state", ""));
-            cand.put("action", info.getOrDefault("action", CaptureMark.ACTION_NONE));
-            cand.put("dir", d.getFileName().toString());
-            Object fc = info.get("sampleCount");
-            cand.put("sampleCount", fc == null ? 0 : fc);
-            cand.put("coverage", info.get("coverage"));
-            cand.put("score", bestPct);
-            cand.put("scoreKind", bestKind);
-            cand.put("adiff", bestAdiff);
-            cand.put("kinds", kinds);
-            out.add(cand);
-        }
-        out.sort((a, b) -> Double.compare(
-            ((Number) b.get("score")).doubleValue(), ((Number) a.get("score")).doubleValue()));
-        return out;
-    }
-
-    /** 逐像素比对，返回 {一致比例%, 平均通道色差} */
-    private double[] comparePixels(BufferedImage a, BufferedImage b) {
-        int w = a.getWidth(), h = a.getHeight();
-        int[] pa = a.getRGB(0, 0, w, h, null, 0, w);
-        int[] pb = b.getRGB(0, 0, w, h, null, 0, w);
-        long overlap = 0, equal = 0, sq = 0;
-        for (int i = 0; i < pa.length; i++) {
-            int cb = pb[i];
-            if (((cb >>> 24) & 0xff) < 0x80) {   // 参考图透明（交集图的非公共像素）不参与统计
-                continue;
-            }
-            overlap++;
-            int ca = pa[i];
-            int dr = ((ca >>> 16) & 0xff) - ((cb >>> 16) & 0xff);
-            int dg = ((ca >>> 8) & 0xff) - ((cb >>> 8) & 0xff);
-            int db = (ca & 0xff) - (cb & 0xff);
-            if (dr == 0 && dg == 0 && db == 0) {
-                equal++;
-            } else {
-                sq += (long) dr * dr + (long) dg * dg + (long) db * db;
-            }
-        }
-        if (overlap == 0) {
-            return new double[]{0, 0};
-        }
-        double pct = Math.round(equal * 1000.0 / overlap) / 10.0;          // 1 位小数 %
-        double adiff = Math.round(Math.sqrt(sq / (3.0 * overlap)) * 10) / 10.0;
-        return new double[]{pct, adiff};
-    }
-
-    /** 尺寸不一致时缩放到 w×h（双线性） */
-    private BufferedImage scaleTo(BufferedImage src, int w, int h) {
-        if (src.getWidth() == w && src.getHeight() == h) {
-            return src;
-        }
-        BufferedImage out = new BufferedImage(Math.max(w, 1), Math.max(h, 1), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = out.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(src, 0, 0, Math.max(w, 1), Math.max(h, 1), null);
-        } finally {
-            g.dispose();
+            m.put("kinds", kinds);
+            out.add(m);
         }
         return out;
     }
 
-    /** kind 对应的块压缩参数：{块边长, 1=块内多数 / 0=块内均值}；same/max/avg（不压缩）返回边长 1 */
-    private int[] kindDown(String kind) {
-        switch (kind) {
-            case "m8":
-                return new int[]{8, 1};
-            case "m32":
-                return new int[]{32, 1};
-            case "a8":
-                return new int[]{8, 0};
-            case "a32":
-                return new int[]{32, 0};
-            default:
-                return new int[]{1, 0};
-        }
-    }
 
-    /** 整图按 block×block 块压缩：多数=块内取覆盖最多的颜色 / 均值=块内 R/G/B 平均，输出约 w/block × h/block 尺寸 */
-    private BufferedImage blockDown(BufferedImage src, int block, boolean majority) {
-        int w = src.getWidth(), h = src.getHeight();
-        int[] px = src.getRGB(0, 0, w, h, null, 0, w);
-        int wb = Math.max(1, w / block), hb = Math.max(1, h / block);
-        int[] outPx = blockDown(px, w, h, block, wb, hb, majority);
-        BufferedImage out = new BufferedImage(wb, hb, BufferedImage.TYPE_INT_ARGB);
-        out.setRGB(0, 0, wb, hb, outPx, 0, wb);
-        return out;
-    }
-
-    /** 对像素数组做 block×block 块压缩（多数 / 均值），输出 wb×hb；块按整块对齐，右侧/底部不足整块的像素忽略 */
-    private int[] blockDown(int[] px, int w, int h, int block, int wb, int hb, boolean majority) {
-        int[] out = new int[wb * hb];
-        if (majority) {
-            HashMap<Integer, Integer> freq = new HashMap<>();
-            for (int oy = 0; oy < hb; oy++) {
-                int rowY = oy * block;
-                for (int ox = 0; ox < wb; ox++) {
-                    int colX = ox * block;
-                    freq.clear();
-                    int bestCnt = 0, bestColor = 0;
-                    for (int dy = 0; dy < block; dy++) {
-                        int base = (rowY + dy) * w + colX;
-                        for (int dx = 0; dx < block; dx++) {
-                            int c = px[base + dx];
-                            int cnt = freq.merge(c, 1, Integer::sum);
-                            if (cnt > bestCnt) {
-                                bestCnt = cnt;
-                                bestColor = c;
-                            }
-                        }
-                    }
-                    out[oy * wb + ox] = bestColor | 0xff000000;
-                }
-            }
-        } else {
-            int cnt = block * block;
-            for (int oy = 0; oy < hb; oy++) {
-                int rowY = oy * block;
-                for (int ox = 0; ox < wb; ox++) {
-                    int colX = ox * block;
-                    long r = 0, g = 0, b = 0;
-                    for (int dy = 0; dy < block; dy++) {
-                        int base = (rowY + dy) * w + colX;
-                        for (int dx = 0; dx < block; dx++) {
-                            int c = px[base + dx];
-                            r += (c >>> 16) & 0xff;
-                            g += (c >>> 8) & 0xff;
-                            b += c & 0xff;
-                        }
-                    }
-                    out[oy * wb + ox] = 0xff000000
-                        | ((int) ((r + cnt / 2) / cnt) << 16)
-                        | ((int) ((g + cnt / 2) / cnt) << 8)
-                        | (int) ((b + cnt / 2) / cnt);
-                }
-            }
-        }
-        return out;
-    }
 
     /**
      * 1/8、1/32 多数 / 均值图：按 block×block 网格把所有样本对齐切块，将「同位置的块内全部
@@ -602,6 +530,7 @@ public class ThinkService {
                 g.put("coverage", info.get("coverage"));
                 g.put("width", info.get("width"));
                 g.put("height", info.get("height"));
+                g.put("mtime", infoMtime(gdir));   // 产物 info.json 修改时刻：前端作缓存失效版本号（后台重算后界面能拉到新图）
                 // 样本数相较上次分析有变化，或产物生成规则版本不一致 → 标记为待重分析
                 Object fc = info.get("fileCount");
                 boolean ruleChanged = !Integer.valueOf(ART_RULE_VERSION).equals(info.get("artVer"));
@@ -927,6 +856,19 @@ public class ThinkService {
             && Files.isRegularFile(gdir.resolve(FILE_A8))
             && Files.isRegularFile(gdir.resolve(FILE_M32))
             && Files.isRegularFile(gdir.resolve(FILE_A32));
+    }
+
+    /** 产物目录 info.json 的最后修改时刻（毫秒）；缺失/读不到返回 0。作为该组七图产物整体是否更新过的版本号 */
+    private long infoMtime(Path gdir) {
+        Path info = gdir.resolve(FILE_INFO);
+        if (!Files.isRegularFile(info)) {
+            return 0L;
+        }
+        try {
+            return Files.getLastModifiedTime(info).toMillis();
+        } catch (IOException e) {
+            return 0L;
+        }
     }
 
     /** 读取产物目录下的 info.json；不存在/损坏返回空 map */

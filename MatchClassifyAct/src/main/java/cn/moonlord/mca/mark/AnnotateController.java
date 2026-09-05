@@ -249,6 +249,7 @@ public class AnnotateController {
                 }
                 log.debug("标注完成，截图 {}/ → {}/", storage.capture(), storage.classify());
             }
+            thinkService.requestRecompute();   // 样本集合已变化：后台自动补齐/刷新该分类对照图（无需进入汇总分析页）
             return ResponseEntity.ok(adopted);
         } catch (IOException e) { // JsonProcessingException 是 IOException 子类
             log.error("写样本标注失败 {}: {}", png, e.toString());
@@ -294,6 +295,7 @@ public class AnnotateController {
             if (movedBack != null) {
                 log.debug("清除标注，截图 {}/ → {}/", storage.classify(), storage.capture());
             }
+            thinkService.requestRecompute();   // 样本集合已变化：后台自动重算受影响分组
             return ResponseEntity.ok().build();
         } catch (IOException e) {
             log.error("清除标注失败 {}: {}", png, e.toString());
@@ -334,6 +336,7 @@ public class AnnotateController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("改名失败：" + e.getMessage());
         }
         int purged = thinkService.purgeArtifactsOfState(from);
+        thinkService.requestRecompute();   // 新分类名下样本集合已就位：后台自动生成新产物目录
         log.info("分类标注改名「{}」→「{}」：更新 {} 张样本 json，清理旧产物目录 {} 个", from, to, updated, purged);
         return ResponseEntity.ok(Map.of("updated", updated, "purged", purged));
     }
@@ -363,6 +366,9 @@ public class AnnotateController {
             boolean pngOk = recycled.contains(png);
             boolean markOk = mark != null && recycled.contains(mark);
             log.info("截图移入回收站：{}（标注 {}）", png.getFileName(), markOk ? "一并移除" : "无/跳过");
+            if (markOk) {
+                thinkService.requestRecompute();   // 删除的是已标注样本：后台自动重算受影响分组
+            }
             return ResponseEntity.ok(Map.of("name", name, "png", pngOk, "mark", markOk));
         } catch (IOException e) {
             log.error("截图移入回收站失败 {}: {}", png, e.toString());

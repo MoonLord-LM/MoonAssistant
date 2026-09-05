@@ -35,7 +35,7 @@
   body[data-appmode="mark"] #execPane{display:none!important}
   /* 执行模式：实时画面识别 + 动作执行（画面顶栏放「立即识别 / 执行动作」，右侧识别信息） */
   #execPane{display:flex;flex-direction:column;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0;box-sizing:border-box}
-  .exec-main{flex:1;min-height:0;display:flex;gap:12px}
+  .exec-main{flex:1;min-height:0;display:flex;gap:0}
   .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
   .exec-stage .stagebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-height:42px}
   .exec-stage .fname{font-size:14px;font-weight:600;white-space:nowrap}
@@ -52,12 +52,12 @@
   #execVline,#execHline{position:absolute;background:rgba(47,191,113,.55);pointer-events:none;display:none;z-index:1}
   #execVline{top:0;bottom:0;width:1px}
   #execHline{left:0;right:0;height:1px}
-  .execTag{position:absolute;left:8px;bottom:8px;z-index:2;pointer-events:none}
-  .execTag span{display:inline-block;max-width:min(64vw,560px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    font-size:12px;font-weight:600;padding:3px 10px;border-radius:14px;background:rgba(10,14,22,.74);color:var(--green);
-    border:1px solid rgba(47,191,113,.55);backdrop-filter:blur(2px)}
-  .execTag span.warn{color:var(--amber);border-color:rgba(240,168,60,.6)}
-  .exec-side{width:338px;flex:none;display:flex;flex-direction:column;gap:12px;overflow-y:auto;
+  /* 右栏宽度分隔条：可拖拽调节（拖中间竖条；双击复位；宽度存 localStorage） */
+  .exec-split{flex:none;width:9px;align-self:stretch;cursor:col-resize;display:flex;align-items:center;justify-content:center;position:relative}
+  .exec-split::before{content:"";width:3px;height:38px;border-radius:3px;background:var(--border);transition:background .15s,height .15s}
+  .exec-split:hover::before,.exec-split.dragging::before{background:rgba(47,191,113,.75);height:64px}
+  body.split-dragging{cursor:col-resize;user-select:none}
+  .exec-side{width:380px;flex:none;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;overflow-y:auto;
     background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;min-height:0}
   .exec-side .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:11px 12px}
   .exec-side .edhead{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;margin-bottom:8px;text-transform:uppercase}
@@ -72,6 +72,19 @@
   .kvrow .v.err{color:var(--danger)}
   .exec-ops{display:flex;gap:8px}
   .exec-ops .btn{flex:1;padding:9px 10px;font-size:13px;font-weight:600;border-radius:8px;white-space:nowrap;text-align:center}
+  /* 自动识别（红色测试按钮）：整行独立 + 脉冲提示运行中；下方状态行显示当前循环阶段/倒计时 */
+  #execAutoBtn{display:block;width:100%;margin-top:10px;border:1px solid rgba(255,92,108,.5);background:rgba(255,92,108,.1);color:var(--danger);font-weight:700}
+  #execAutoBtn:hover:not(:disabled){background:var(--danger);color:#fff}
+  #execAutoBtn.running{background:var(--danger);color:#fff;animation:execAutoPulse 1.5s ease-in-out infinite}
+  #execAutoBtn:disabled{opacity:.5;cursor:wait}
+  /* 执行模式：把当前画面另存到 capture/ 待人工标注（画面本不落盘，需精确标注/修正坐标时才用） */
+  #execSaveCap{display:block;width:100%;margin-top:10px;font-size:12.5px}
+  #execSaveCap:hover:not(:disabled){border-color:var(--green);color:var(--green);background:rgba(47,191,113,.08)}
+  #execSaveCap:disabled{opacity:.5;cursor:not-allowed}
+  @keyframes execAutoPulse{50%{opacity:.72}}
+  .execAutoState{display:none;margin-top:8px;padding:6px 9px;font-size:11.5px;line-height:1.55;color:var(--muted);border:1px dashed rgba(255,92,108,.35);border-radius:8px;background:rgba(255,92,108,.06)}
+  .execAutoState.show{display:block}
+  .execAutoState b{color:#ff98a6}
   .cand{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px dashed var(--border);font-size:12.5px}
   .cand:last-child{border-bottom:0}
   .cand .cst{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
@@ -83,7 +96,8 @@
   .cand .mbtn:disabled{opacity:.45;cursor:not-allowed}
   @media (max-width:1000px){
     .exec-main{flex-direction:column;overflow-y:auto}
-    .exec-side{width:auto;flex:none}
+    .exec-split{display:none}               /* 窄屏改上下堆叠，横向拖拽无意义 */
+    .exec-side{width:auto!important;flex:none}
     .exec-area{min-height:260px}
   }
   .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px}
@@ -98,6 +112,9 @@
   .btn.green{background:var(--green);border-color:var(--green);color:#04120a}
   .btn.ghost{background:transparent}
   .btn:disabled{opacity:.45;cursor:not-allowed}
+  /* 无当前图（列表空 / 全部标记完成）时右侧编辑输入与单选一并置灰 */
+  .editor input[type="text"]:disabled{opacity:.5;cursor:not-allowed;background:var(--panel2)}
+  .editor input[type="radio"]:disabled{opacity:.45;cursor:not-allowed}
   .btn.danger{border-color:rgba(255,92,108,.4);color:var(--danger);background:transparent}
   .btn.danger:hover{background:rgba(255,92,108,.12)}
   .btn.del{border-color:rgba(255,92,108,.55);color:var(--danger);background:rgba(255,92,108,.1)}
@@ -150,7 +167,12 @@
   #vline{top:0;bottom:0;width:1px}
   #hline{left:0;right:0;height:1px}
   .imgplaceholder{color:var(--muted);font-size:13px;margin:auto}
-  .editor{width:330px;flex:none;display:flex;flex-direction:column;justify-content:center;justify-content:safe center;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;overflow:auto}
+  .editor{width:400px;flex:none;display:flex;flex-direction:column;justify-content:center;justify-content:safe center;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;overflow:auto}
+  /* 标注编辑区分隔条：拖中间竖条可调编辑区宽度（双击复位为默认宽），宽度持久化 localStorage。
+     负 margin 抵消 flex gap，使图片区→编辑区总间隙仍约 12px，条夹在两面板之间不额外占宽 */
+  .mark-split{flex:none;width:9px;align-self:stretch;margin:0 -10.5px;cursor:col-resize;display:flex;align-items:center;justify-content:center;position:relative;z-index:6}
+  .mark-split::before{content:"";width:3px;height:76px;border-radius:3px;background:var(--border);transition:background .15s,height .15s}
+  .mark-split:hover::before,.mark-split.dragging::before{background:var(--accent);height:120px}
   .editor h3{margin:0 0 4px;font-size:14px}
   .editor .esub{color:var(--muted);font-size:12px;margin-bottom:14px}
   .field{margin-bottom:14px}
@@ -160,6 +182,10 @@
   .status-tag.u{color:var(--amber);background:rgba(240,168,60,.12)}
   .tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
   .tags:empty{display:none}
+  /* 分类标注：已产生的标签在上，「分类标注」文字与文本框分两行展示（文字一行、文本框一行） */
+  .labRow{display:block}
+  .labRow label{margin:0 0 6px;white-space:nowrap}
+  .labRow input{display:block;width:100%;box-sizing:border-box}
   .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 5px 3px 11px;border:1.5px solid rgba(79,140,255,.55);border-radius:16px;color:var(--text);background:rgba(79,140,255,.1);cursor:pointer;transition:border-color .12s,background .12s}
   .tag:hover{border-color:var(--accent);background:rgba(79,140,255,.2)}
   .tag .txt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -272,6 +298,11 @@
   .cat .n{flex:none;font-size:11px;font-weight:600;line-height:17px;min-width:17px;text-align:center;padding:0 6px;border-radius:9px;color:#fff;background:var(--muted)}
   .cat.on{border-color:var(--accent);background:var(--accent-soft)}
   .cat.on .n{background:var(--accent)}
+  /* 「全部」视图：右栏内容从顶部顺序排布；「修改这张图」入口紧跟在下方分类过滤标签之后
+     （不吸底贴右下角，避免被右下角的提示消息遮挡） */
+  aside.editor.jump-mode{justify-content:flex-start}
+  #edJump{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)}
+  #edJump .jbtn{width:100%}
   /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率 */
   #imgLightbox{position:fixed;inset:0;z-index:120;background:rgba(4,7,13,.86);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px}
   #imgLightbox.show{display:flex}
@@ -404,15 +435,19 @@
     </div>
   </section>
 
+  <div class="mark-split" id="markSplit" title="拖拽调节编辑区宽度（双击复位为默认宽度）"></div>
+
   <aside class="editor">
   <div id="edNorm">
     <h3>标注编辑</h3>
 
     <div class="edsec">
       <div class="field">
-        <label for="stateInput">分类标注</label>
         <div class="tags" id="stateTags"></div>
-        <input type="text" id="stateInput" maxlength="40" placeholder="例：登录页 / 主界面 / 弹窗 / 无响应…" title='将作为汇总分析产物目录名（summary/&lt;分类标注&gt;/）：不可包含 \ / : * ? " < > |，且不能以 . 结尾'>
+        <div class="labRow">
+          <label for="stateInput">分类标注</label>
+          <input type="text" id="stateInput" maxlength="40" placeholder="例：登录页 / 主界面 / 弹窗 / 无响应…" title='将作为汇总分析产物目录名（summary/&lt;分类标注&gt;/）：不可包含 \ / : * ? " < > |，且不能以 . 结尾'>
+        </div>
       </div>
 
       <div class="field">
@@ -448,7 +483,7 @@
     </div>
 
     <div class="tip">
-      <kbd>↑</kbd>/<kbd>↓</kbd> 切换；<kbd>Enter</kbd> 保存并跳到随机未标注图。<br>
+      <kbd>↑</kbd>/<kbd>↓</kbd> 切换；<kbd>Enter</kbd> 保存并按时间顺序跳到列表的下一张图。<br>
       同一分类标注只对应一种匹配动作。点击图片，可标记鼠标动作的位置。
     </div>
   </div><!-- /edNorm -->
@@ -467,6 +502,10 @@
     </div>
     <div class="fHint">「全部」视图用于浏览与筛选：点下面的分类标签，左侧列表就只保留该分类下已标注的截图。</div>
     <div class="cats" id="catList"></div>
+  </div>
+
+  <div id="edJump" style="display:none">
+    <button type="button" class="btn green jbtn" id="btnJumpMark" disabled>修改这张图的标记</button>
   </div>
   </aside>
 </main>
@@ -494,12 +533,13 @@
         <div id="execVline"></div>
         <div id="execHline"></div>
         <div id="execDot" title="识别出的点击点"></div>
-        <div class="execTag"><span id="execTagState"></span></div>
       </div>
     </div>
   </div>
 
-  <aside class="exec-side">
+  <div class="exec-split" id="execSplit" title="拖拽调节右侧宽度（双击复位）"></div>
+
+  <aside class="exec-side" id="execSide">
     <div class="edsec">
       <div class="edhead">识别结果</div>
       <div class="kvrow"><span class="k">匹配分组</span><span class="v" id="execMatched">—</span></div>
@@ -527,6 +567,11 @@
         <button type="button" class="btn primary" id="execAct" disabled
           title="识别到「鼠标点击」动作后可用，点击坐标会标在画面上">执行动作</button>
       </div>
+      <button type="button" class="btn auto" id="execAutoBtn"
+        title="自动循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选前台/后台方式动作 → 再等 3 秒游戏响应 → 下一轮。运行中再次点击即停止">开启自动识别</button>
+      <button type="button" class="btn" id="execSaveCap"
+        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存到 capture/ 待标注</button>
+      <div class="execAutoState" id="execAutoState" aria-live="polite"></div>
     </div>
 
     <div class="edsec">
@@ -624,7 +669,7 @@ function toast(msg, kind){
   setTimeout(()=>{ t.style.opacity="0"; t.style.transition="opacity .25s"; setTimeout(()=>t.remove(),260); }, 2600);
 }
 
-/* 右下角单条「截图结果」提示：截图默认每 3s 完成一轮（保存 / 差异过小丢弃），比普通 toast 频密，
+/* 右下角单条「截图结果」提示：截图按“每帧处理完约 1s 一拍”（保存 / 差异过小丢弃），比普通 toast 频密，
    故用单条替换式展示——新结果直接替换旧内容，约 2 秒后自动淡出，不叠加刷屏 */
 let shotTipTimer = 0;
 function showShotTip(msg, kind){
@@ -946,6 +991,7 @@ function renderList(){
     ul.appendChild(d);
   }
   setSegState();   // 筛选按钮文案 + 选中态一起刷新
+  refreshJumpBar();   // 「全部」视图底部「修改这张图」入口随当前图/选中态刷新
 }
 
 /* ---------------- 「全部」视图：按分类过滤（右栏不做标注编辑） ---------------- */
@@ -984,13 +1030,53 @@ function setStateFilter(state){
   selectTarget(next);
 }
 
-/* 按当前视图切换右栏：think → 汇总分析；unmarked/marked → 标注编辑；all → 分类过滤 */
+/* 按当前视图切换右栏：think → 汇总分析；unmarked/marked → 标注编辑；all → 分类过滤 + 底部「修改这张图」入口 */
 function syncRightPanel(){
   if(appMode !== "mark") return;
   $("edThink").style.display = FILTER === "think" ? "" : "none";
   $("edNorm").style.display = (FILTER === "unmarked" || FILTER === "marked") ? "" : "none";
   $("edFilter").style.display = FILTER === "all" ? "" : "none";
+  $("edJump").style.display = FILTER === "all" ? "" : "none";
+  const ed = document.querySelector("aside.editor");
+  if(ed) ed.classList.toggle("jump-mode", FILTER === "all");   // all：内容置顶、「修改这张图」紧随分类过滤之下
   if(FILTER === "all") renderFilterPanel();
+  refreshJumpBar();
+}
+
+/* 「全部」视图右栏「修改这张图」入口（分类过滤标签下方）：随当前选中图刷新目标视图（已标注 → 去「已标注」改；未标注 → 去「未标注」补） */
+function refreshJumpBar(){
+  const btn = $("btnJumpMark");
+  if(!btn) return;
+  const item = itemOf(curName);
+  btn.disabled = !item;
+  if(!item){
+    btn.textContent = "修改这张图的标记";
+    btn.title = "选择一张截图后可一键跳去对应视图修改";
+    return;
+  }
+  btn.textContent = item.marked ? "修改此图（已标注视图）" : "标注此图（未标注视图）";
+  btn.title = item.marked
+    ? "跳转到「已标注」视图并定位这张图，可直接改分类标注 / 匹配动作 / 鼠标点击坐标后保存"
+    : "跳转到「未标注」视图并定位这张图，可补全分类标注 / 匹配动作 / 鼠标点击坐标后保存";
+}
+
+/* 从「全部」浏览视图一键跳转编辑：按当前图状态切到「未标注 / 已标注」视图并定位该图（右栏随即变为标注编辑） */
+function jumpToEdit(){
+  const btn = $("btnJumpMark");
+  const item = itemOf(curName);
+  if(!item || !btn || btn.disabled) return;
+  if(dirty && !confirm("当前标注尚未保存，确定跳转到编辑视图？")) return;
+  const f = item.marked ? "marked" : "unmarked";
+  if(FILTER === f) return;
+  FILTER = f;
+  stateFilter = null;                 // 分类过滤只属于「全部」视图，离开即重置
+  syncSugDock();
+  syncRightPanel();                   // 右栏：分类过滤 → 标注编辑
+  selectTarget(item.name);            // 定位到当前这张图并载入标注，可直接点图改坐标
+  refreshSmartTip();
+  toast(item.marked
+    ? "已跳到「已标注」视图：可直接修改此图的分类标注 / 匹配动作 / 鼠标点击坐标（在图上点一下可微调）"
+    : "已跳到「未标注」视图：可直接补全此图的分类标注 / 匹配动作 / 鼠标点击坐标", "ok");
 }
 
 function showEmpty(msg){
@@ -1005,6 +1091,7 @@ function showEmpty(msg){
   updateTagActive();
   updateNavButtons();
   refreshSmartTip();          // 无图片 → 隐藏智能分析提示条
+  setEditorEnabled(false);    // 无当前图 → 右侧编辑按钮置灰
 }
 
 /* ---------------- 选择 / 展示当前图 ---------------- */
@@ -1022,6 +1109,7 @@ function changeTo(name){
 
 async function showImage(item, opts){
   if(!item){ showEmpty(); return; }
+  setEditorEnabled(true);        // 有可操作图片 → 右侧编辑按钮恢复可用
   const prefill = !(opts && opts.prefill === false);   // false = 严格还原（重新加载）
   loading = item.name;
   dirty = false;
@@ -1084,7 +1172,8 @@ $("mainImg").addEventListener("error", ()=>{
   toast("图片加载失败：" + (cur()?cur().name:"") , "err");
 });
 
-/* 汇总分析样本不足时中间的唯一样本截图：单击打开与对照图相同的 80% 视口弹窗查看 */
+/* 汇总分析样本不足时中间的唯一样本截图：加载失败自动重试；单击打开与对照图相同的 80% 视口弹窗查看 */
+$("thinkSampleImg").addEventListener("error", ()=> onThinkImgError($("thinkSampleImg")));
 $("thinkSampleImg").addEventListener("click", ()=>{
   const src = $("thinkSampleImg").getAttribute("src");
   if(!src) return;
@@ -1280,6 +1369,35 @@ function collect(){
 
 function setDirty(){ dirty = true; }
 
+/* 标注编辑面板可用性：列表为空 / 全部标记完成 → 右侧按钮与输入置灰，避免空操作 */
+function setEditorEnabled(on){
+  ["btnSaveNext","btnLast","btnClear","btnDelete","stateInput"].forEach(id => {
+    const el = $(id); if(el) el.disabled = !on;
+  });
+  document.querySelectorAll('#edNorm input[name="action"]').forEach(r => { r.disabled = !on; });
+}
+
+/* 保存后按时间顺序取当前列表的下一张（列表已按文件名时间戳升序）；
+   未标注视图下走到末尾 = 全部标记完 → 清空画面并把右侧编辑按钮置灰 */
+function advanceAfterSave(item){
+  const L = listNow();
+  const p = L.findIndex(i => i.name === item.name);
+  // 未标注视图：保存后该图已移出列表，原位置被后续项顶替 → 原位置即“下一张”
+  const np = p >= 0 ? p + 1 : L.findIndex(i => i.name > item.name);
+  if(np >= 0 && np < L.length){
+    selectTarget(L[np].name);
+    const li = $("imgList").children[np]; if(li) li.scrollIntoView({block:"nearest"});
+    return;
+  }
+  if(FILTER === "unmarked"){        // 未标注列表已空 → 全部完成
+    renderList();
+    showEmpty("🎉 所有截图都已标记完毕。可切换到「已标注」复核，或到「汇总分析」生成对照图。");
+    toast("所有截图都已标记完毕", "ok");
+  }else{
+    toast("已是本列表最后一张", "info");
+  }
+}
+
 async function saveCurrent(goNext){
   const item = cur(); if(!item) return;
   const body = collect(); if(!body) return;
@@ -1330,12 +1448,7 @@ async function saveCurrent(goNext){
     updateHints();
     toast("已保存 → " + SHORT(item.name) + ".json", "ok");
     await refreshSilent();          // 保存后立即同步：列表带上最新标记与新增截图
-    if(goNext){
-      const cands = ALL.filter(i => !i.marked && i.name !== item.name);   // 全量未标记里随机挑一张，尽快覆盖不同画面
-      const nx = cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
-      if(nx){ selectTarget(nx.name); }
-      else { toast("所有截图都已标记完毕", "ok"); }
-    }
+    if(goNext) advanceAfterSave(item);   // 按时间顺序取当前列表的下一张
     maybeAutoReload();                       // 若此前检测到服务端更新且已挂起，现在刷新
   }catch(e){ toast("保存失败：" + e.message, "err"); }
 }
@@ -1439,7 +1552,8 @@ let capBusy = false;
 let capIntervalMs = null;            // 后端真实截图间隔（毫秒），由 /api/capture/status 下发
 let capDiffThreshold = null;         // 后端像素去重阈值（%），0 = 关闭去重
 let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
-let lastShotAtShown = -1;         // 已右下角提示过的「截图结果」时间戳（去重；截图 3s 一轮、meta 2s 轮询，事件不漏）
+let lastShotAtShown = -1;         // 已右下角提示过的「截图结果」时间戳（去重；截图节奏为“每帧处理完约 1s 一拍”，可能快于 meta 2s 轮询，轮询间隙内连续产生的多条只展示最新一条）
+let lastDedupNoticeAt = -1;       // 已提示过的「启动重复清理结果」时间戳（去重：一条结果只在首次轮询到的那一刻右下角提示，每 2s 轮询不重复打扰）
 
 /* 毫秒间隔 → 人类可读文案（整千显示整秒，否则保留一位小数秒） */
 function fmtCapInterval(ms){
@@ -1718,11 +1832,12 @@ let lastThinkSig = "";        // 组合列表签名（避免无变化时反复�
 const gkey = g => g.state + "\u0001" + g.action;
 const b64u = s => btoa(unescape(encodeURIComponent(s)));   // UTF-8 → Base64（ASCII 安全传目录名）
 // Base64 可能含 + / =，直接放查询串会被服务端按 URL 解码成空格等非法字符（导致图片 404/400 裂图），必须再转义一层
-const artUrl = (kind, dir) => "/api/annotate/think/img/" + encodeURIComponent(kind) + "?dir=" + encodeURIComponent(b64u(dir || ""));
+const artUrl = (kind, dir, v) => "/api/annotate/think/img/" + encodeURIComponent(kind) + "?dir=" + encodeURIComponent(b64u(dir || ""))
+    + (v ? "&v=" + v : "");   // v = 产物 info.json 的 mtime：后台自动重算后 URL 变化 → 浏览器绕过 1h 缓存拉到新对照图
 const fmtCov = c => (c == null ? "—" : Number(c) + "%");
 
 function thinkSig(){
-  return GROUPS.map(g => [g.state,g.action,g.sampleCount,!!g.analyzed,!!g.stale,g.coverage,g.dir].join("|")).join("\n");
+  return GROUPS.map(g => [g.state,g.action,g.sampleCount,!!g.analyzed,!!g.stale,g.coverage,g.dir,g.mtime||0].join("|")).join("\n");
 }
 /* 汇总分析 · 处理过程状态条：渲染到主图底部浮层 dock（thinkBar，与「未标注」的智能分析
    提示条同处同构、悬浮在主图上不占文档流）。切换分组 / 分析进度变化时实时更新。
@@ -1772,11 +1887,47 @@ const THINK_EMPTY = "没有分类标注";
 const IMG_IDS = ["imgSame","imgMax","imgAvg","imgM8","imgM32","imgA8","imgA32"];
 const TCS_IDS = ["tcsSame","tcsMax","tcsAvg","tcsM8","tcsM32","tcsA8","tcsA32"];
 
+/* ---- 对照图加载容错：快速切换分组时，同一 <img> 连续换 src 会中止上一组在途请求，
+   浏览器偶发把中止/瞬时失败残留成裂图（此时服务端文件其实完好——再点裂图在弹窗里能正常加载）。
+   方案：openGroup 每轮递增 thinkSeq，只有「仍是最新分组 + src 仍是目标 URL」的失败才短延时自动重试，
+   过期分组的失败一律忽略，切走即中断旧定时器。 ---- */
+let thinkSeq = 0;                       // 分组切换序号
+const thinkRetry = {};                  // imgId → { seq, url, tries, timer }
+const thinkImgState = id => (thinkRetry[id] || (thinkRetry[id] = { seq:0, url:"", tries:0, timer:0 }));
+/* 记录当前 img 正在加载的目标（赋 src 后调用），并清掉旧定时器 */
+function armThinkRetry(el, url){
+  const st = thinkImgState(el.id);
+  st.seq = thinkSeq; st.url = url; st.tries = 0;
+  if(st.timer){ clearTimeout(st.timer); st.timer = 0; }
+}
+/* 分组已切走/清空：让该 img 的一切在途重试失效 */
+function clearThinkRetry(el){
+  const st = thinkImgState(el.id);
+  st.seq = -1;
+  if(st.timer){ clearTimeout(st.timer); st.timer = 0; }
+}
+/* <img> error：若是当前展示目标则延时重试（间隔递增，最多 4 次，随后交给 10s 自动轮询兜底） */
+function onThinkImgError(el){
+  const st = thinkImgState(el.id);
+  if(st.seq !== thinkSeq) return;                  // 过期分组（已切走）
+  if(!el.getAttribute("src") || el.getAttribute("src") !== st.url) return;
+  if(st.tries >= 4) return;
+  st.tries++;
+  st.timer = setTimeout(() => {
+    st.timer = 0;
+    if(st.seq === thinkSeq && FILTER === "think"
+        && el.getAttribute("src") === st.url && $("imgwrap") && $("imgwrap").style.display === "none"){
+      el.src = st.url;                            // 重新发起同一请求（产物当时可能正被后台重算，短暂重试即好）
+    }
+  }, 400 * st.tries);
+}
+
 /* 进入汇总分析工作台 */
 function enterThink(){
   FILTER = "think";
   dirty = false;
   stateFilter = null;          // 汇总分析不沿用「全部」视图的分类过滤
+  updateCountsOnly();          // 入口即同步顶部计数（异步落盘；分组列表由下面 refreshThink 全量刷新）
   syncRightPanel();            // 右栏切到「汇总分析」（隐藏标注编辑与分类过滤）
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "none";
@@ -1909,11 +2060,13 @@ function setThinkExplain(t){
 /* 在右侧/主区展示某组；g=null 清空。切换分组会同步刷新主图区与底部状态 dock，避免残留上一分组 */
 function openGroup(g){
   closeLightbox();
+  thinkSeq++;                       // 分组切换序号：上一组在途加载 / 失败重试整体作废
   selKey = g ? gkey(g) : null;
   renderThinkList();
   const imgs = IMG_IDS.map(id => $(id));
   const tp = $("thinkPane");
   for(const el of imgs){
+    clearThinkRetry(el);
     el.removeAttribute("src");
     el.style.width = ""; el.style.height = "";
     el.style.imageRendering = "auto";
@@ -1960,7 +2113,9 @@ function openGroup(g){
                    ["a32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"]];
     for(const [kind,imgId,tcsId,label] of kinds){
       const el = $(imgId), card = el.closest(".tcard");
-      el.src = artUrl(kind, g.dir);
+      const url = artUrl(kind, g.dir, g.mtime);
+      el.src = url;
+      armThinkRetry(el, url);                                   // 记录本次加载目标：瞬时失败可按需自动重试
       if(el.complete && el.naturalWidth) applyCardLayout(el);   // 命中缓存时立即排版
       card.style.display = "";
       $(tcsId).textContent = label;
@@ -1980,7 +2135,10 @@ function openGroup(g){
       if(one){
         te.style.display = "none";
         const si = $("thinkSampleImg"), src = imgUrl(one.name);
-        if(si.getAttribute("src") !== src) si.src = src;
+        if(si.getAttribute("src") !== src){
+          si.src = src;
+          armThinkRetry(si, src);
+        }
         sh.style.display = "flex";
         thinkSampleCap = "「" + g.state + "」当前唯一样本截图（样本不足 2 张，暂无对照图）";
       } else {
@@ -2095,8 +2253,7 @@ function toggleLbMode(){
   applyLbZoom();
 }
 
-/* ---------------- 智能分析：未标注图 × 分类规则四图 的相似度提示 ---------------- */
-const KIND_LABEL = { same:"交集图", max:"多数图", avg:"均值图", m8:"1/8 多数图", a8:"1/8 均值图", m32:"1/32 多数图", a32:"1/32 均值图" };
+/* ---------------- 智能分析：未标注图 × 执行模式同一匹配口径（7 张对照图差异度） ---------------- */
 let sugSeq = 0;          // 目标切换序号：用于丢弃过期轮询
 let sugTimer = 0;        // 建议任务轮询定时器
 let sugDismiss = new Set();  // 用户手动收起的智能分析（按文件名），对应图不再自动弹出
@@ -2143,7 +2300,7 @@ function refreshSmartTip(){
   const file = it.name;
   const seq = ++sugSeq;
   sugStop();
-  sugRender('<span class="spin"></span><span>智能分析中：正在把该截图与各分类标注已生成的对照图（交集 / 多数 / 均值 / 1-8、1-32 多尺度）做逐像素比对…</span>');
+  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 7 张对照图（交集 / 多数 / 均值 / 1/8、1/32 多尺度）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
     try{
@@ -2188,29 +2345,32 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染相似度建议 */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类 7 张对照图平均「不匹配点占比」（越小越像） */
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
-      '<span>还没有可参考的对照图：把 ≥2 张同一画面的截图标成同一分类标注，再到「汇总分析」栏生成七张对照图后，本区会自动给出建议。</span>');
+      '<span>还没有可参考的对照图：请先在标注模式把 ≥2 张同一画面的截图标成同一分类标注，并到「汇总分析」栏生成七张对照图（7 图齐全才会参与比对）。</span>');
     return;
   }
   const top = list[0];
-  const topPct = Number(top.score) || 0;
+  const pct = (typeof top.diffPercent === "number") ? top.diffPercent.toFixed(2) + "%" : "—";
+  const thr = (typeof top.thresholdPercent === "number") ? top.thresholdPercent.toFixed(0) + "%" : "25%";
+  const ok = !!top.recognized;
+  const actTxt = (top.action && top.action !== "none") ? "（" + escHtml(actLabel(top.action)) + "）" : "";
   const cands = list.slice(0, 3)
-    .map(g => '<b>' + escHtml(g.state) + '</b> ' + (Number(g.score) || 0) + '%')
+    .map(g => '<b>' + escHtml(g.state) + '</b> ' +
+        ((typeof g.diffPercent === "number") ? g.diffPercent.toFixed(2) + "%" : "—"))
     .join('　·　');
-  const lowNote = topPct < 15
-    ? '<div>相似度整体很低：可能是还没有对照样本的新画面，直接人工标注即可把它归入对应分类的样本池。</div>' : "";
+  const lowNote = ok ? "" :
+    '<div style="margin-top:6px">差异度超阈值（&gt;' + thr + '）：与执行模式判定一致，该画面属于「未识别」——多半是还没有对照样本的新画面，直接人工标注即可把它归入对应分类的样本池。</div>';
   sugRender(
     '<span class="sb-title">智能分析</span>' +
-    '<span class="sug">建议分类标注：<b>「' + escHtml(top.state) + '」</b>' +
-      (top.action && top.action !== "none" ? '（' + escHtml(actLabel(top.action)) + '）' : '') + '</span>' +
-    '<span class="cand">与「' + escHtml(KIND_LABEL[top.scoreKind] || top.scoreKind) + '」的像素一致率 <b>' + topPct + '%</b>' +
-      (top.adiff != null ? ' · 平均色差 <b>' + top.adiff + '</b>' : '') + '</span>' +
-    '<span class="cand">候选：' + cands + '</span>' +
+    '<span class="sug">建议分类标注：<b>「' + escHtml(top.state) + '」</b>' + actTxt +
+      ' <span style="color:' + (ok ? "var(--green)" : "#e0a04e") + '">差异度 ' + pct +
+      (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
+    '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">一致率 = 两图同位置 RGB 完全相同像素占比（对照图透明公共区不计入）；平均色差 = √(Σ(ΔR²+ΔG²+ΔB²) ÷ 像素数 ÷ 3)，越小越接近。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 7 张对照图（交集 / 多数 / 均值 / 1/8、1/32 多尺度）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的算术平均（越小越像）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2231,16 +2391,17 @@ $("dockX").addEventListener("click", ()=>{
   toast("已收起本图的智能分析提示。", "");
 });
 document.querySelectorAll("#filterSeg button").forEach(b=>{
-  b.addEventListener("click", ()=>{
+  b.addEventListener("click", async ()=>{
     const f = b.dataset.f;
     if(FILTER === f) return;
     if(dirty && !confirm("当前标注尚未保存，确定切换？")) return;
-    if(f === "think"){ enterThink(); return; }
+    if(f === "think"){ enterThink(); return; }   // 汇总分析入口自带 refreshThink 全量刷新
     if(FILTER === "think"){ exitThink(); curName = null; }
     FILTER = f;
     if(f !== "all") stateFilter = null;        // 分类过滤只属于「全部」视图，离开即重置
     syncSugDock();                             // dock 浮层按当前是否有提示内容显示/隐藏（浮层不占布局）
     syncRightPanel();                          // 右栏随视图切换：all→分类过滤 / unmarked、marked→标注编辑
+    if(!dirty) await refreshSilent();          // 切到新视图前先把列表/计数同步到最新：挂机期间落盘的新截图即刻出现
     const name = cur() ? cur().name : null;
     if(name && listNow().some(i=>i.name===name)){ renderList(); updateNavButtons(); }
     else if(listNow().length){ selectTarget(listNow()[0].name); }
@@ -2249,10 +2410,17 @@ document.querySelectorAll("#filterSeg button").forEach(b=>{
   });
 });
 
-/* 汇总分析七图：load 后按“原图一半”排版；单击卡片打开 80% 视口弹窗 */
+/* 「全部」视图右栏底部「修改这张图」：一键跳转到当前图所属的未标注/已标注视图并进入标注编辑 */
+$("btnJumpMark").addEventListener("click", jumpToEdit);
+
+/* 汇总分析七图：load 后按“原图一半”排版；error 时若仍为当前分组目标则自动重试；单击卡片打开 80% 视口弹窗 */
 for(const id of IMG_IDS){
   const el = $(id);
-  el.addEventListener("load", ()=> applyCardLayout(el));
+  el.addEventListener("load", ()=>{
+    if(thinkImgState(id).seq !== thinkSeq) return;   // 已切到其它分组：过期图的 load 不参与排版
+    applyCardLayout(el);
+  });
+  el.addEventListener("error", ()=> onThinkImgError(el));
   el.addEventListener("click", ()=>{
     if(!el.getAttribute("src")) return;
     const card = el.closest(".tcard");
@@ -2328,16 +2496,40 @@ async function refreshSilent(){
   updateNavButtons();
   return true;
 }
+
+/* 汇总分析视图下的静默同步：只刷新顶部「全部 / 未标注 / 已标注 / 汇总分析」计数，不重建任何列表。
+   分组列表由 refreshThink 统一重绘，新截图落盘只影响计数、不应整列重建打扰查看对照图 */
+async function updateCountsOnly(){
+  let arr;
+  try{ arr = await fetchAllSafe(); }catch(e){ return; }
+  if(listSig(ALL) === listSig(arr)) return;
+  ALL = arr;
+  setSegState();
+}
 async function pollTick(){
-  if(document.hidden) return;
   if(appMode !== "mark") return;                // 执行模式：暂停后台列表静默同步
-  if(FILTER === "think"){                       // 汇总分析模式：静默刷新组合状态
-    if(!thinkBusy && !dirty) await refreshThink(false, true);
+  if(FILTER === "think"){                       // 汇总分析模式：先同步计数，再静默刷新组合状态
+    if(!thinkBusy && !dirty){
+      await updateCountsOnly();                 // 新截图 / 新标注 → 「全部 / 未标注 / 已标注」计数自动更新
+      await refreshThink(false, true);
+    }
     return;
   }
   if(dirty) return;                             // 编辑中不发请求，保存时统一同步
   await refreshSilent();
 }
+
+/* 页面隐藏期间浏览器会收紧后台定时器：从后台回到前台 / 窗口重新可见时立即同步一次，
+   让「全部 / 未标注 / 汇总分析」的计数与产物尽快追上最新状态，不用等下一次轮询 */
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden) return;
+  if(appMode !== "mark" || dirty) return;
+  if(FILTER === "think"){
+    if(!thinkBusy){ updateCountsOnly(); refreshThink(false, true); }
+  }else{
+    refreshSilent();
+  }
+});
 
 /* ---------------- 服务端版本检测：后端重新打包/重启后自动刷新页面 ---------------- */
 const META_MS = 2000;      // 每 2 秒探一次：既做版本/存活探测，也借 savedSeq 感知“新截图已保存”以即时刷新列表
@@ -2364,7 +2556,8 @@ async function checkAppVersion(){
       showCapStopModal(stopReason);
     }
     // 截图结果即时提示：meta 携带最近一次「保存 / 差异过小丢弃」结果（后端每轮都记、不节流；
-    // 截图默认 3s 一轮 > meta 2s 轮询，任何一轮结果都不会漏）。新结果 → 右下角单条替换式轻提示，2s 后自动淡出
+    // 截图“每帧处理完约 1s 一拍”，可快于 2s 轮询，轮询间隙内连续产生的多条只展示最新一条）。
+    // 新结果 → 右下角单条替换式轻提示，2s 后自动淡出
     const shot = j && j.shotNotice;
     if(shot && shot.at && Number(shot.at) !== lastShotAtShown){
       lastShotAtShown = Number(shot.at);
@@ -2377,16 +2570,34 @@ async function checkAppVersion(){
         showShotTip("当前画面与截图「" + (shot.name || "参考图") + "」差异小于 " + pct + "%，本次不保存", "skip");
       }
     }
+    // 启动历史重复清理结果：后端每次启动按差异阈值（默认 5%）重扫 capture/ + classify/ 全部截图、
+    // 删除差异低于阈值的重复图（只保留最早一张）。不论是否删除了图片都右下角提示一次清理完成
+    const dedup = j && j.startupDedupNotice;
+    if(dedup && dedup.at && Number(dedup.at) !== lastDedupNoticeAt){
+      lastDedupNoticeAt = Number(dedup.at);
+      let pct = (dedup.threshold != null ? dedup.threshold : (capDiffThreshold || 0));
+      if(Number.isInteger(pct)){ pct = String(pct); }
+      else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 5.0% → 显示“5%”
+      const msg = (dedup.removed > 0)
+        ? "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，删除重复 " + dedup.removed + " 张"
+        : "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，检查完成，未发现重复图片";
+      showShotTip(msg, "ok");
+    }
     const ts = Number(j && j.codeTs) || 0;
     if(!ts) return;
     if(baseCodeTs === null){ baseCodeTs = ts; lastSavedSeqShown = Number(j && j.savedSeq) || 0; return; }   // 首次：只记基线（含截图计数），不做比对
-    // 后端保存计数递增 = 刚有一张新截图落盘：立即静默刷新列表，无需等 10s 后台轮询；
-    // 编辑中或汇总分析/执行模式下不抢，避免打扰当前操作（保存成功那一步本来就会统一同步列表）
+    // 后端保存计数递增 = 刚有一张新截图落盘：立即静默刷新顶部计数，无需等 10s 后台轮询；
+    // 编辑中 / 执行模式下不抢，避免打扰当前操作（保存成功那一步本来就会统一同步列表）。
+    // 汇总分析视图只刷计数（新截图不改动分组列表，分组在 10s 轮询里自行刷新）；
+    // 普通截图视图才整列重建，让挂机期间落盘的新截图与数量即时可见。
     const saved = Number(j && j.savedSeq) || 0;
     if(saved !== lastSavedSeqShown){
       lastSavedSeqShown = saved;
       // 保存采用「.tmp 写入 → 原子改名 .png」：.png 一旦出现即完整，列表按后缀即可即时列出，无需延迟补刷
-      if(!dirty && appMode === "mark" && FILTER !== "think") refreshSilent();
+      if(!dirty && appMode === "mark"){
+        if(FILTER === "think") updateCountsOnly();
+        else refreshSilent();
+      }
     }
     if(ts === baseCodeTs) return;
     baseCodeTs = ts;                                       // 已变化：去重，避免反复提示
@@ -2442,6 +2653,7 @@ function setAppMode(m){
     toast("已切换到「执行模式」：立即识别当前画面，命中后一键执行点击。", "ok");
     if(typeof execOnModeChange === "function") execOnModeChange();
   } else {
+    if(typeof execAutoStop === "function") execAutoStop();   // 离开执行模式：结束自动识别循环
     toast("已回到「标注模式」。", "ok");
     refreshSilent();     // 隐藏期间可能新增了截图：切回时同步一次列表
     syncRightPanel();    // 右栏按当前视图重置（可能停留在“全部”→ 显示分类过滤）
@@ -2471,7 +2683,12 @@ let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
 let execImgReady = false;       // 当前是否已有可展示的画面
 let execActBusy = false;        // “执行动作”进行中（防连点）
 let execShownMarked = false;    // 当前画面是否已「存入分类」过（防同一帧重复标记）
+let execPending = false;        // 是否有「立即识别 / 进入即识别」一轮在途：在途时中央保持转圈，不让占位文案覆盖
+let execScanningOn = false;     // 中央是否正处于「正在截图识别…」转圈态（轮询期间避免反复重建动画）
+let execFrameRetries = 0;       // 画面帧瞬时加载失败的重试计数（快照刚被替换时短暂出现，最多重试 3 次）
 const execPollMs = 1500;
+let execAutoOn = false;     // 自动识别循环运行中？（红色按钮开关：运行时会自动 截图→确认→动作→响应等待 循环）
+let execAutoSeq = 0;        // 自动识别「代」序号：开/关时自增，用于让停止前仍在途的旧轮自动退出
 
 const execEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -2505,12 +2722,22 @@ function execApplyMode(mode){
 async function execRefreshOnce(){
   const b = $("execRefresh");
   if(!b || b.disabled) return;
+  execPending = true;                                 // 本轮识别在途：期间中央保持「正在截图识别…」
   b.disabled = true;
   if($("execAct")) $("execAct").disabled = true;      // 识别进行中暂时不可执行，避免对旧画面误点
   if(!execFrameShown()) execShowScanning();           // 尚无画面：把中间提示换成「正在截图识别…」
-  const j = await execGet("/api/execute/refresh", { method:"POST" });
-  b.disabled = false;
-  if(!j){ toast("识别失败：接口不可用", "err"); return; }
+  let j = null;
+  try{
+    j = await execGet("/api/execute/refresh", { method:"POST" });
+  } finally {
+    b.disabled = false;
+    execPending = false;
+  }
+  if(!j){
+    toast("识别失败：接口不可用", "err");
+    if(!execFrameShown()) execShowScanning();         // 识别失败且从未出图：保持转圈，不显示“请先点立即识别”类误导文案
+    return;
+  }
   execLatest = j;
   renderExecAll();
   toast("已按当前画面完成一次识别", "ok");
@@ -2531,7 +2758,8 @@ function execFrameShown(){
 }
 /* 中间占位提示：正在截图识别（首次进入 / 手动刷新但尚无画面时显示，避免出现「尚未识别，请手动点击」的误导文案） */
 function execShowScanning(){
-  const ph = $("execPlaceholder"); if(!ph) return;
+  const ph = $("execPlaceholder"); if(!ph || execScanningOn) return;
+  execScanningOn = true;
   ph.style.display = "";
   ph.innerHTML =
     '<div style="text-align:center;padding:24px">' +
@@ -2557,7 +2785,12 @@ function renderExecAll(){
   execSetVal("execCost", (j.captureMs >= 0 && j.classifyMs >= 0)
       ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
 
-  if(j.error && j.imageWidth <= 0 && !j.windowFound){
+  // 尚无可展示画面且不是已确认的失败：识别一轮在途，或后端只是“还没产生过结果”（占位快照）→ 属等待态
+  const idleWait = execPending || String(j.error || "").indexOf("尚未产生识别结果") === 0;
+
+  if(idleWait){
+    execSetVal("execState", "—", "");
+  } else if(j.error && j.imageWidth <= 0 && !j.windowFound){
     execSetVal("execState", "—", "err");
   } else if(j.recognized){
     execSetVal("execState", j.state || "已识别", "ok");
@@ -2581,10 +2814,12 @@ function renderExecAll(){
       j.scannedSamples > 0 && j.totalSamples > j.scannedSamples ? "err" : "");
   execSetVal("execWin", j.windowFound
       ? (j.windowTitle || "已找到窗口")
-      : (j.error || "未找到目标窗口"), j.windowFound ? "" : "err");
+      : (idleWait ? "正在识别（尚未产生结果）…" : (j.error || "未找到目标窗口")),
+      (j.windowFound || idleWait) ? "" : "err");
 
   renderExecCandidates(j.candidates || []);
   renderExecActBtn(j, clickable);
+  renderExecSaveCap(j);
 
   if(j.imageWidth > 0 && j.at !== execShownAt){
     execShownAt = j.at;
@@ -2592,7 +2827,12 @@ function renderExecAll(){
     execLoadFrame();
   } else if(j.imageWidth > 0){
     renderExecMarkers();      // 同一帧：只刷新标记/缩放
+  } else if(idleWait){
+    // 识别在途 / 尚未产生过结果（占位快照）：画面区保持「正在截图识别…」转圈，
+    // 不要用“请先点立即识别”这类文案覆盖——进入执行模式 / 自动识别本身无需手动操作，误导且打断等待。
+    execShowScanning();
   } else {
+    // 已确认的失败原因（未找到窗口 / 已最小化 / 截图失败等）→ 展示具体原因文案。
     execSetPlaceholder(j.error || "当前没有可显示的画面");
   }
 }
@@ -2600,6 +2840,7 @@ function renderExecAll(){
 function renderExecActBtn(j, clickable){
   const b = $("execAct");
   if(!b) return;
+  if(execAutoOn){ b.disabled = true; return; }   // 自动识别运行中：禁用手动「执行动作」，避免双触发
   b.disabled = !clickable || execActBusy;
   b.textContent = "执行动作";
   b.title = clickable
@@ -2607,6 +2848,34 @@ function renderExecActBtn(j, clickable){
           ? "将复核最新画面后把窗口带到前台做一次真实鼠标点击（前台点击模式，要求窗口可见、不被遮挡）"
           : "将复核最新画面后向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起（后台消息模式，不抢前台）")
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
+}
+
+/* 「把当前画面存到 capture/ 待标注」可用态：有画面且不在自动识别循环中
+   （自动循环每秒都在换帧，此时保存可能存的不是当前看到的那张） */
+function renderExecSaveCap(j){
+  const b = $("execSaveCap"); if(!b) return;
+  const can = !execAutoOn && !!(j && j.imageWidth > 0 && j.imageHeight > 0);
+  b.disabled = !can;
+}
+
+/* 把当前画面另存为 capture/ 原始截图（未标注）：切到「标注模式 → 未标注」即可定位并按正常流程精确标注 / 修正坐标 */
+async function execSaveToCapture(){
+  const b = $("execSaveCap");
+  if(!b || b.disabled || execAutoOn) return;
+  b.disabled = true;
+  const old = b.textContent;
+  b.textContent = "保存中…";
+  const j = await execGet("/api/execute/save-to-capture", { method:"POST" });
+  b.textContent = old;
+  renderExecSaveCap(execLatest);
+  if(j && j.ok){
+    toast("已把当前画面存入 capture/（" + j.name + "）。切到「标注模式 → 未标注」即可定位并精确标注（含鼠标点击坐标）。", "ok");
+  } else if(j && j.kind === "dup"){
+    // 与已保存截图差异不达标被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与差异比例由后端给出
+    toast(j.message || "当前画面与某张已保存截图几乎相同，本次未保存", "skip");
+  } else {
+    toast("保存失败：" + ((j && j.message) || "接口不可用"), "err");
+  }
 }
 
 function renderExecCandidates(list){
@@ -2630,8 +2899,8 @@ function renderExecCandidates(list){
       const vbtn = document.createElement("button");
       vbtn.type = "button";
       vbtn.className = "mbtn";
-      vbtn.textContent = "7图分值";
-      vbtn.title = "查看该分类 7 张对照图（交集/多数/均值/8块/32块）各自的不匹配点占比分值";
+      vbtn.textContent = "详细分值";
+      vbtn.title = "查看该分类各张对照图（交集/多数/均值/8块/32块等）各自的不匹配点占比分值";
       vbtn.addEventListener("click", () => openKindScores(it));
       row.appendChild(vbtn);
     }
@@ -2675,11 +2944,11 @@ function openKindScores(it){
   ov.className = "modal-ov";
   ov.innerHTML =
     '<div class="xcard" style="max-width:580px;width:100%;text-align:left;position:relative">' +
-      '<div class="xt2">7 张对照图分值</div>' +
+      '<div class="xt2">对照图分值</div>' +
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
-        "【标注分类：" + escHtml(it.state || "—") + "】<br>" +
-        "【差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比】<br>" +
-        "【色差按 RGB 三维空间距离阈值>=256 判定为不一致】</div>" +
+        "标注分类：" + escHtml(it.state || "—") + "<br>" +
+        "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
+        "色差按 RGB 三维空间距离阈值>=256 判定为不一致</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";
@@ -2710,6 +2979,7 @@ async function execQuickMark(state, btn){
 
 /* ---- 画面展示 / 点击点标记 ---- */
 function execSetPlaceholder(msg){
+  execScanningOn = false;
   const ph = $("execPlaceholder"), w = $("execWrap");
   if(ph){
     ph.innerHTML = '<div style="text-align:center;padding:24px"><div class="hint">' + execEsc(msg) + "</div></div>";
@@ -2723,6 +2993,8 @@ function execLoadFrame(){
   const img = $("execImg"), ph = $("execPlaceholder"), w = $("execWrap");
   if(!img || !ph || !w) return;
   img.onload = () => {
+    execFrameRetries = 0;
+    execScanningOn = false;                 // 已有真实画面：退出转圈态
     ph.style.display = "none";
     w.style.display = "inline-block";
     execShownW = img.naturalWidth || 0;
@@ -2730,7 +3002,16 @@ function execLoadFrame(){
     execImgReady = execShownW > 0;
     execFitImage();
   };
-  img.onerror = () => execSetPlaceholder("最新画面加载失败（快照刚被替换时短暂出现，会自动重试）");
+  img.onerror = () => {
+    // 后端一轮截图/识别可能正占用较长：快照刚被替换时 /frame 可能短暂取不到对应 PNG，自动重试几次
+    if(execFrameRetries < 3 && execLatest && execLatest.at === execShownAt && execLatest.imageWidth > 0){
+      execFrameRetries++;
+      setTimeout(execLoadFrame, 800);
+    } else {
+      execFrameRetries = 0;
+      execSetPlaceholder("最新画面加载失败（快照刚被替换时短暂出现，会自动重试）");
+    }
+  };
   img.src = "/api/execute/frame?at=" + execShownAt + "&t=" + Date.now();
 }
 
@@ -2751,7 +3032,7 @@ function renderExecMarkers(){
   const j = execLatest, img = $("execImg");
   if(!j || !img || !execShownW || !execImgReady){ return; }
   const clickable = !!(j.recognized && j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
-  const dot = $("execDot"), vl = $("execVline"), hl = $("execHline"), tag = $("execTagState");
+  const dot = $("execDot"), vl = $("execVline"), hl = $("execHline");
   const sx = img.clientWidth / execShownW;
   const sy = img.clientHeight / execShownH;
   const show = (el, on) => { if(el) el.style.display = on ? "" : "none"; };
@@ -2763,17 +3044,6 @@ function renderExecMarkers(){
     dot.style.top = y + "px";
     vl.style.left = x + "px";
     hl.style.top = y + "px";
-  }
-  if(tag){
-    if(j.recognized && j.state){
-      tag.textContent = "「" + j.state + "」已识别" + (clickable ? " · 点击 (" + j.left + "," + j.top + ")" : " · 无动作");
-      tag.className = "";
-    } else if(j.state){
-      tag.textContent = "未识别（最近似「" + j.state + "」）";
-      tag.className = "warn";
-    } else {
-      tag.textContent = "";
-    }
   }
 }
 
@@ -2797,6 +3067,7 @@ async function execActNow(){
 /* ---- 模式切换 / 轮询入口（单次识别，无后台循环） ---- */
 function execOnModeChange(){
   if(appMode !== "exec") return;
+  execPending = true;   // 进入即自动识别一轮：在途期间画面区保持转圈，避免先带回的占位快照把转圈换成误导文案
   execSyncStatus().then(async () => {
     const shown = await execLoadLatest();      // 先展示最近一帧画面（若有），避免空窗
     if(!shown) execShowScanning();             // 无历史画面：显示「正在截图识别…」，等待下方首次自动识别返回
@@ -2810,11 +3081,204 @@ function execPollTick(){
   execLoadLatest();               // 同步最新快照（本次页面 / 其它窗口操作产生的结果）
 }
 
+/* ---- 自动识别（红色测试按钮）：连续循环 = 截图识别 → 显示结果并等 3 秒确认 →
+       按下方所选前台/后台方式动作 → 等 3 秒游戏响应 → 下一轮 ---- */
+const execSleep = ms => new Promise(r => setTimeout(r, ms));
+const execModeZh = m => (m === "screen" ? "前台点击" : "后台消息");
+
+function execAutoStatus(html){
+  const el = $("execAutoState");
+  if(!el) return;
+  if(html){ el.className = "execAutoState show"; el.innerHTML = html; }
+  else { el.className = "execAutoState"; el.innerHTML = ""; }
+}
+function execAutoBtnUi(){
+  const b = $("execAutoBtn"); if(!b) return;
+  b.textContent = execAutoOn ? "自动识别中（点击停止）" : "开启自动识别";
+  b.classList.toggle("running", execAutoOn);
+}
+function execIsClickable(){
+  return !!(execLatest && execLatest.recognized && execLatest.action === "click"
+      && Number.isInteger(execLatest.left) && Number.isInteger(execLatest.top));
+}
+/* 循环期间禁用手动「立即识别 / 执行动作」，停止后按最新结果恢复 */
+function execAutoSetManual(locked){
+  const r = $("execRefresh"); if(r) r.disabled = locked;
+  renderExecActBtn(execLatest || { recognized:false }, !locked && execIsClickable());
+  if(locked){ const s = $("execSaveCap"); if(s) s.disabled = true; }
+  else renderExecSaveCap(execLatest);     // 停止自动循环后按当前画面恢复可用态
+}
+function execAutoStop(){
+  if(!execAutoOn) return;
+  execAutoOn = false;
+  execAutoSeq++;                       // 让仍在途的旧轮 await 返回后自弃退出
+  execAutoSetManual(false);
+  execAutoBtnUi();
+  execAutoStatus("<b>已停止自动识别</b>（画面与右侧结果保留）。");
+}
+function execAutoToggle(){
+  if(execAutoOn){ execAutoStop(); return; }
+  execAutoOn = true;
+  execAutoSeq++;
+  execAutoBtnUi();
+  execAutoSetManual(true);             // 循环期间禁用手动操作，避免与自动点击抢跑
+  execAutoStatus("自动识别已开启，开始第 1 轮：正在截图识别…");
+  execAutoLoop();
+}
+/* 倒计时等待：把模板里的 {s} 每秒替换成剩余秒数；等待期间被停止则返回 false */
+async function execAutoWait(tpl, secs, seq){
+  for(let i = secs; i >= 1; i--){
+    if(!(execAutoOn && seq === execAutoSeq)) return false;
+    execAutoStatus(tpl.split("{s}").join(String(i)));
+    await execSleep(1000);
+  }
+  return execAutoOn && seq === execAutoSeq;
+}
+async function execAutoLoop(){
+  const seq = execAutoSeq;
+  let round = 0;
+  while(execAutoOn && seq === execAutoSeq){
+    round++;
+    // 1) 截图并识别：/refresh 为同步一轮，返回即「识别完成」，随后渲染画面与右侧结果
+    execAutoStatus("第 " + round + " 轮：正在截图识别…");
+    const j = await execGet("/api/execute/refresh", { method:"POST" });
+    if(!(execAutoOn && seq === execAutoSeq)) return;
+    if(!j){
+      const k1 = await execAutoWait('第 ' + round + ' 轮：识别接口不可用。<b>{s} 秒后重试…</b>', 3, seq);
+      if(!k1) return;
+      continue;
+    }
+    execLatest = j;
+    renderExecAll();
+    if(!execIsClickable()){
+      // 未识别 / 该分类未定义点击动作：确认时间后直接下一轮（没有动作就没有“游戏响应”等待）
+      const why = (j.imageWidth <= 0 && j.error)
+          ? execEsc(j.error)
+          : (j.recognized
+              ? "识别为「" + execEsc(j.state || "") + "」但无「鼠标点击」动作，跳过动作"
+              : (j.state ? "未识别（最近似「" + execEsc(j.state) + "」），不动作" : "未识别出已标注分类，不动作"));
+      const k1 = await execAutoWait('第 ' + round + ' 轮：' + why + '。<b>{s} 秒后开始下一轮…</b>', 3, seq);
+      if(!k1) return;
+      continue;
+    }
+    // 2) 识别出可点击动作：留 3 秒确认时间（可查看画面/右侧结果，随时可点按钮停止）
+    const st = execEsc(j.state || "");
+    const keep2 = await execAutoWait('第 ' + round + ' 轮：识别为「' + st + '」· 点击 (' + j.left + ',' + j.top + ')。'
+        + '<b>{s} 秒后按「' + execModeZh(execClickMode) + '」执行…</b>', 3, seq);
+    if(!keep2) return;
+    // 3) 按上面所选的前台 / 后台方式执行动作（后端按当前 clickMode 复核最新画面后点击）
+    execAutoStatus('第 ' + round + ' 轮：正在按「' + execModeZh(execClickMode) + '」执行点击…');
+    const r = await execGet("/api/execute/act", { method:"POST" });
+    await execLoadLatest();            // 后端复核后画面可能已更新：同步展示
+    if(!(execAutoOn && seq === execAutoSeq)) return;
+    if(!r){
+      const k3 = await execAutoWait('第 ' + round + ' 轮：执行请求失败（后端不可用）。<b>{s} 秒后开始下一轮…</b>', 2, seq);
+      if(!k3) return;
+    } else if(r.ok){
+      // 4) 动作完成：留 3 秒游戏响应时间再拍下一张
+      const k3 = await execAutoWait('已执行点击（' + execModeZh(execClickMode) + '，分类「'
+          + execEsc(r.state || st) + '」）。<b>{s} 秒游戏响应等待后开始下一轮…</b>', 3, seq);
+      if(!k3) return;
+    } else {
+      const k3 = await execAutoWait('第 ' + round + ' 轮：本轮未能执行点击'
+          + (r.message ? "（" + execEsc(r.message) + "）" : "") + '。<b>{s} 秒后开始下一轮…</b>', 2, seq);
+      if(!k3) return;
+    }
+  }
+}
+
+/* ---- 右侧信息栏宽度：拖拽分隔条调节（双击复位），宽度持久化到 localStorage ---- */
+(function execSideResize(){
+  const split = $("execSplit"), side = $("execSide");
+  if(!split || !side) return;
+  const KEY = "mca.execSideW", DEF = 380, MIN = 300;
+  const maxW = () => Math.max(MIN, Math.round(window.innerWidth * 0.65));
+  let sideW = DEF;
+  try{
+    const v = parseInt(localStorage.getItem(KEY) || "", 10);
+    if(v && v >= MIN && v <= maxW()) sideW = v;
+  }catch(e){}
+  side.style.width = sideW + "px";
+  function apply(w){
+    sideW = Math.max(MIN, Math.min(maxW(), Math.round(w)));
+    side.style.width = sideW + "px";
+    try{ localStorage.setItem(KEY, String(sideW)); }catch(e){}
+    if(typeof execFitImage === "function") execFitImage();
+  }
+  split.addEventListener("mousedown", ev => {
+    if(window.innerWidth <= 1000) return;   // 窄屏上下堆叠时不支持横向拖拽
+    ev.preventDefault();
+    const startX = ev.clientX, startW = side.getBoundingClientRect().width;
+    split.classList.add("dragging");
+    document.body.classList.add("split-dragging");
+    let queued = 0;
+    const move = e => {
+      if(queued) return;
+      queued = requestAnimationFrame(() => { queued = 0; apply(startW + (e.clientX - startX)); });
+    };
+    const up = () => {
+      if(queued){ cancelAnimationFrame(queued); queued = 0; }
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      split.classList.remove("dragging");
+      document.body.classList.remove("split-dragging");
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+  split.addEventListener("dblclick", () => apply(DEF));
+})();
+
+/* ---- 标注模式右侧编辑区宽度：拖编辑面板左缘竖条调节（双击复位），宽度持久化 localStorage ---- */
+(function markSideResize(){
+  const split = $("markSplit");
+  const ed = document.querySelector("aside.editor");
+  if(!split || !ed) return;
+  const KEY = "mca.editorW", DEF = 400, MIN = 300;
+  const maxW = () => Math.max(MIN, Math.round(window.innerWidth * 0.5));
+  let w = DEF;
+  try{
+    const v = parseInt(localStorage.getItem(KEY) || "", 10);
+    if(v && v >= MIN && v <= maxW()) w = v;
+  }catch(e){}
+  ed.style.width = w + "px";
+  function apply(nw){
+    w = Math.max(MIN, Math.min(maxW(), Math.round(nw)));
+    ed.style.width = w + "px";
+    try{ localStorage.setItem(KEY, String(w)); }catch(e){}
+    if($("imgwrap").style.display !== "none" && typeof applyMainZoom === "function") applyMainZoom();
+    if(typeof renderDot === "function") renderDot();
+  }
+  split.addEventListener("mousedown", ev => {
+    ev.preventDefault();
+    const startX = ev.clientX, startW = ed.getBoundingClientRect().width;
+    split.classList.add("dragging");
+    document.body.classList.add("split-dragging");
+    let queued = 0;
+    const move = e => {
+      if(queued) return;
+      queued = requestAnimationFrame(() => { queued = 0; apply(startW - (e.clientX - startX)); });
+    };
+    const up = () => {
+      if(queued){ cancelAnimationFrame(queued); queued = 0; }
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      split.classList.remove("dragging");
+      document.body.classList.remove("split-dragging");
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+  split.addEventListener("dblclick", () => apply(DEF));
+})();
+
 /* ---- 控件绑定与启动 ---- */
 (function execBoot(){
-  const r = $("execRefresh"), a = $("execAct"), img = $("execImg");
+  const r = $("execRefresh"), a = $("execAct"), ab = $("execAutoBtn"), img = $("execImg");
   if(r) r.addEventListener("click", execRefreshOnce);
   if(a) a.addEventListener("click", execActNow);
+  if(ab) ab.addEventListener("click", execAutoToggle);
+  const sc = $("execSaveCap"); if(sc) sc.addEventListener("click", execSaveToCapture);
   document.querySelectorAll('input[name="execModeOpt"]').forEach(mode => mode.addEventListener("change", async () => {
     if(!mode.checked) return;
     const j = await execGet("/api/execute/click-mode", { method:"POST",
