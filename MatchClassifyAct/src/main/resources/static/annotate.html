@@ -155,7 +155,7 @@
   .tkstat b{color:var(--text)}
   .tkstat .kv{color:var(--amber);font-weight:600;font-variant-numeric:tabular-nums}
   #tkExplain{color:var(--muted);font-size:11px;line-height:1.8;border:1px dashed rgba(47,191,113,.4);background:rgba(47,191,113,.05);border-radius:8px;padding:7px 9px;margin-top:4px}
-  /* 汇总分析 · 80% 视口弹窗：默认“整数适配”，弹窗内点图片切换 自适应 ↔ 最大化铺满 */
+  /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率 */
   #imgLightbox{position:fixed;inset:0;z-index:120;background:rgba(4,7,13,.86);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px}
   #imgLightbox.show{display:flex}
   #imgLightbox .lbBox{max-width:80vw;max-height:calc(80vh - 72px);overflow:auto;background:#000;border:1px solid var(--border);border-radius:8px;line-height:0}
@@ -215,10 +215,9 @@
       <span class="fname" id="fname">—</span>
       <span class="sub" id="fsub"></span>
       <div class="spacer"></div>
-      <div class="zoomCtl" id="zoomCtl" title="显示模式：原始分辨率=100% 原像素；自适应缩放=整幅缩小到适应区域；最大化铺满=按较紧的边铺满显示区（超出可滚动）。也可直接点按图片在「自适应 ↔ 最大化铺满」间切换">
-        <button id="zmOrig" type="button" title="按实际像素 1:1 显示（超出显示区时可滚动查看）">原始分辨率</button>
-        <button id="zmFit" type="button" title="整幅缩小到完全可见（图片比区域小则保持原尺寸，不放大模糊）">自适应缩放</button>
-        <button id="zmFill" type="button" title="放大铺满整个显示区（超出部分可滚动）">最大化铺满</button>
+      <div class="zoomCtl" id="zoomCtl" title="显示模式：原始分辨率=100% 原像素（空间不足时可滚动）；自适应缩放=整幅可见并尽量占满：空间不足等比缩小、空间充足等比放大（如 140%），四周留少量空白且不产生滚动条。也可直接点按图片在「自适应缩放 ↔ 原始分辨率」间切换">
+        <button id="zmOrig" type="button" title="按实际像素 1:1 显示（空间不足时产生滚动条）">原始分辨率</button>
+        <button id="zmFit" type="button" title="整幅可见并尽量占满：不足等比缩小、充足等比放大，四周留少量空白，不产生滚动条">自适应缩放</button>
         <span class="zpct" id="zoomPct">—</span>
       </div>
       <span class="status-tag u" id="statusTag">未标记</span>
@@ -234,31 +233,31 @@
       <div id="thinkPane" style="display:none">
         <div class="tcard">
           <div class="tch"><span class="tn">交集图（每个像素取覆盖大于90%的值）</span><span class="tcs" id="tcsSame">—</span></div>
-          <div class="tcimg"><img id="imgSame" alt="交集图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgSame" alt="交集图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">多数图（每个像素取覆盖率最多的值）</span><span class="tcs" id="tcsMax">—</span></div>
-          <div class="tcimg"><img id="imgMax" alt="多数图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgMax" alt="多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">均值图（每个像素取RGB的均值）</span><span class="tcs" id="tcsAvg">—</span></div>
-          <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/16 多数图（每个像素取16x16个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM16">—</span></div>
-          <div class="tcimg"><img id="imgM16" alt="1/16 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgM16" alt="1/16 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/64 多数图（每个像素取64x64个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM64">—</span></div>
-          <div class="tcimg"><img id="imgM64" alt="1/64 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgM64" alt="1/64 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/16 均值图（每个像素取16x16个原始像素的RGB的均值）</span><span class="tcs" id="tcsA16">—</span></div>
-          <div class="tcimg"><img id="imgA16" alt="1/16 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgA16" alt="1/16 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/64 均值图（每个像素取64x64个原始像素的RGB的均值）</span><span class="tcs" id="tcsA64">—</span></div>
-          <div class="tcimg"><img id="imgA64" alt="1/64 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应 ↔ 最大化铺满」间切换，点空白 / Esc 关闭"></div>
+          <div class="tcimg"><img id="imgA64" alt="1/64 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
       </div>
     </div>
@@ -308,7 +307,7 @@
 
     <div class="tip">
       <kbd>↑</kbd>/<kbd>↓</kbd> 切换；<kbd>Enter</kbd> 保存并跳到随机未标注图。<br>
-      点按大图在「自适应缩放 ↔ 最大化铺满」间切换；顶栏可切到「原始分辨率 / 自适应缩放 / 最大化铺满」三档（「鼠标点击」模式下单击用于取坐标，请用顶栏按钮切换显示）。<br>
+      点按大图在「自适应缩放 ↔ 原始分辨率」间切换；顶栏同样两档可选（「鼠标点击」模式下单击用于取坐标，请用顶栏按钮切换显示）。<br>
       同一分类标注只对应一种匹配动作；点击坐标 = 窗口相对坐标，可直接执行鼠标动作。
     </div>
   </div><!-- /edNorm -->
@@ -347,7 +346,7 @@ let FILTER = "unmarked";
 let curName = null;    // 当前展示图片名（可能不在当前筛选列表之外）
 let dirty = false;
 let naturalW = 0, naturalH = 0;
-let mainMode = "fit";        // 主图显示模式：fit=自适应缩放 / orig=原始分辨率 / fill=最大化铺满
+let mainMode = "fit";        // 主图显示模式：fit=自适应缩放（整幅可见并尽量占满：不足等比缩小、充足等比放大，不产生滚动条） / orig=原始分辨率 1:1
 let actionSel = "none";
 let px = null;         // {x,y} 图片像素（窗口相对坐标）
 let loading = null;    // 当前图片名，用于防异步竞态
@@ -691,28 +690,33 @@ $("mainImg").addEventListener("error", ()=>{
   toast("图片加载失败：" + (cur()?cur().name:"") , "err");
 });
 
-/* ---------------- 主图缩放：原始分辨率 / 自适应缩放 / 最大化铺满 ---------------- */
+/* ---------------- 主图缩放：原始分辨率 / 自适应缩放 ---------------- */
 function showZoomCtl(show){ $("zoomCtl").classList.toggle("show", !!show); }
 
-/* 当前可显示区尺寸（imgarea 去掉内边距后的内容区） */
+/* 自适应缩放预留的安全余量（px）：可用区整体内缩后再等比放大/缩小，
+   可吸收 1px 边框与亚像素舍入造成的临界溢出，保证贴满也绝不出现滚动条；
+   “原始分辨率”模式不受影响（1:1 放不下时仍按设计可滚动） */
+const FIT_GAP_PX = 8;
+
+/* 当前可显示区尺寸（imgarea 去掉内边距后的内容区，再预留 FIT_GAP_PX 安全余量） */
 function imgAreaBox(){
   const el = $("imgarea"), cs = getComputedStyle(el);
   const padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
   const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
   return {
-    w: Math.max(60, el.clientWidth - padL - padR),
-    h: Math.max(60, el.clientHeight - padT - padB)
+    w: Math.max(40, el.clientWidth - padL - padR - FIT_GAP_PX),
+    h: Math.max(40, el.clientHeight - padT - padB - FIT_GAP_PX)
   };
 }
 
-/* 三种模式对应的显示比例 */
+/* 两种模式对应的显示比例 */
 function mainScale(){
   if(!naturalW || !naturalH) return 0;
+  if(mainMode === "orig") return 1;                                 // 原始分辨率：1:1 原像素
   const A = imgAreaBox();
-  if(mainMode === "orig") return 1;                               // 原始分辨率：1:1 原像素
-  if(mainMode === "fill") return Math.max(A.w/naturalW, A.h/naturalH); // 最大化铺满：贴紧较紧的边
-  const s = Math.min(A.w/naturalW, A.h/naturalH);                 // 自适应缩放：整幅可见
-  return s > 1 ? 1 : s;                                           // 原图小于区域时不放大，保持清晰
+  // 自适应缩放 = 整幅可见且尽量占满可用区：空间不足等比缩小、空间充足等比放大到可放下的最大尺寸；
+  // 四周保留舞台内边距的少量留白；floor 后不超出显示区，始终不产生滚动条
+  return Math.min(A.w / naturalW, A.h / naturalH);
 }
 
 function applyMainZoom(){
@@ -728,11 +732,11 @@ function applyMainZoom(){
   }
   st.setProperty("maxWidth", "none");
   st.setProperty("maxHeight", "none");
-  const w = Math.max(1, Math.round(naturalW * s));
-  const h = Math.max(1, Math.round(naturalH * s));
+  const w = Math.max(1, Math.floor(naturalW * s));  // floor：保证不超出显示区，不产生滚动条
+  const h = Math.max(1, Math.floor(naturalH * s));
   st.width = w + "px";
   st.height = h + "px";
-  img.style.imageRendering = s >= 2 ? "pixelated" : "auto";   // 放大到整数倍以上时保持像素锐利
+  img.style.imageRendering = "auto";   // 平滑缩放（缩小或放大）、原始分辨率 1:1，无需像素锐化
   wrap.classList.toggle("zoomed", mainMode !== "fit");
   if(mainMode === "fit"){
     $("imgarea").scrollLeft = 0;
@@ -743,16 +747,16 @@ function applyMainZoom(){
 }
 
 function setMainMode(m){
-  if(m !== "orig" && m !== "fit" && m !== "fill") return;
+  if(m !== "orig" && m !== "fit") return;
   if(!naturalW) return;
   mainMode = m;
   applyMainZoom();
 }
 
-/* 直接点图片：在「自适应 ↔ 最大化铺满」之间切换（鼠标点击模式下用于取坐标） */
+/* 直接点图片：在「自适应缩放 ↔ 原始分辨率」之间切换（鼠标点击模式下用于取坐标） */
 function toggleMainMode(){
   if(!naturalW) return;
-  setMainMode(mainMode === "fill" ? "fit" : "fill");
+  setMainMode(mainMode === "orig" ? "fit" : "orig");
 }
 
 function resetZoom(){
@@ -763,7 +767,7 @@ function resetZoom(){
 }
 
 function syncZoomCtl(){
-  const ids = { orig:"zmOrig", fit:"zmFit", fill:"zmFill" };
+  const ids = { orig:"zmOrig", fit:"zmFit" };
   for(const m in ids){
     const b = $(ids[m]);
     if(b) b.classList.toggle("on", mainMode === m);
@@ -840,7 +844,7 @@ $("mainImg").addEventListener("click", (e)=>{
     setDirty();
     return;
   }
-  // 其它模式：单击图片 = 在「自适应缩放 ↔ 最大化铺满」之间切换（空间足够时按整数倍放大保持清晰）
+  // 其它模式：单击图片 = 在「自适应缩放 ↔ 原始分辨率」之间切换（自适应整幅可见，不足缩小、充足放大到占满可用区）
   if(!naturalW){ toast("图片尚未加载完成", "err"); return; }
   toggleMainMode();
 });
@@ -1109,8 +1113,8 @@ async function requestExit(){
     const alive = await probeAlive();
     if(!alive){
       if(++deadCount >= 2){
-        showExitScreen();               // 后端确实已停，再自关本页
-        armPageClose();
+        showExitScreen();               // 后端确实已停：先亮出“已退出”覆盖层提示
+        armPageClose(1600);             // 延迟约 1.6s 再尝试自动关页，确保提示可见（失败时留手动按钮）
         return;
       }
     } else {
@@ -1127,15 +1131,18 @@ async function requestExit(){
   showExitFailed("服务进程未能在 10 秒内停止。可再试一次；若持续失败，请在任务管理器中手动结束 java 进程。");
 }
 
-/* 反复尝试自动关闭本页（应用窗口模式下可被脚本关闭；普通标签页约 6 秒后放弃，留给手动按钮） */
-function armPageClose(){
+/* 反复尝试自动关闭本页：delayMs 后再开始尝试，让“已退出”覆盖层提示先可见；
+   应用窗口（Edge/Chrome --app）模式下脚本可自关；普通标签页约 6 秒后放弃，留给手动按钮兜底 */
+function armPageClose(delayMs){
   if(closeArmed) return;
   closeArmed = true;
-  let n = 0;
-  const timer = setInterval(()=>{
-    try{ window.close(); }catch(e){ /* 忽略 */ }
-    if(++n >= 15){ clearInterval(timer); }
-  }, 400);
+  setTimeout(()=>{
+    let n = 0;
+    const timer = setInterval(()=>{
+      try{ window.close(); }catch(e){ /* 忽略 */ }
+      if(++n >= 15){ clearInterval(timer); }
+    }, 400);
+  }, delayMs || 0);
 }
 
 /* ---------------- 汇总分析 · 组合分析工作台 ---------------- */
@@ -1360,7 +1367,7 @@ function openGroup(g){
   }
   $("tkInfo").innerHTML = info;
   $("tkExplain").innerHTML = g.analyzed
-    ? "七张图均为同一画面多次出现的合成：交集图只保留「覆盖率 &gt;90%」的像素（其余透明）；多数 / 均值图逐像素取覆盖率最多颜色 / RGB 均值；带 1/16、1/64 的图把所有样本对齐切块后，将同一 16×16 / 64×64 块内的全部像素合并，直接取合并集中覆盖率最多的颜色 / RGB 平均。列表默认展示为原图一半大小；单击任一对照图打开 80% 视口弹窗，弹窗内默认取能放下的最大整数倍（放不下才缩小适配），单击弹窗内图片在「自适应 ↔ 最大化铺满」间切换，点空白或按 Esc 关闭。"
+    ? "七张图均为同一画面多次出现的合成：交集图只保留「覆盖率 &gt;90%」的像素（其余透明）；多数 / 均值图逐像素取覆盖率最多颜色 / RGB 均值；带 1/16、1/64 的图把所有样本对齐切块后，将同一 16×16 / 64×64 块内的全部像素合并，直接取合并集中覆盖率最多的颜色 / RGB 平均。列表默认展示为原图一半大小；单击任一对照图打开 80% 视口弹窗，弹窗内默认整幅可见地缩放（不足等比缩小、空间充足等比放大到尽量占满，四周留少量空白），单击弹窗内图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白或按 Esc 关闭。"
     : (g.canAnalyze ? "样本 ≥2 张，正在自动生成对照图…" : "同组样本达到 2 张后自动生成对照图。");
 }
 
@@ -1408,8 +1415,8 @@ async function pollAnalyze(id){
   toast("分析耗时过长，已停止等待（可稍后重新进入本栏）", "err");
 }
 
-/* 80% 视口弹窗：默认「整数适配」（空间足够取最大整数倍，否则缩小到框内）；
-   单击弹窗内图片在「自适应 ↔ 最大化铺满」间切换；点空白 / Esc / ✕ 关闭 */
+/* 80% 视口弹窗：默认「自适应缩放」（整幅可见并尽量占满：不足等比缩小、空间充足等比放大到框内最大，四周留少量空白，不产生滚动条）；
+   单击弹窗内图片在「自适应缩放 ↔ 原始分辨率」间切换；点空白 / Esc / ✕ 关闭 */
 let lbMode = "fit";
 let lbNatural = { w:0, h:0 };
 
@@ -1420,7 +1427,7 @@ function openLightbox(src, cap){
   img.style.width = ""; img.style.height = "";
   img.style.imageRendering = "auto";
   img.src = src;
-  capEl.textContent = cap + "　·　单击图片：自适应 ↔ 最大化铺满；点空白 / Esc 关闭";
+  capEl.textContent = cap + "　·　单击图片：自适应缩放 ↔ 原始分辨率；点空白 / Esc 关闭";
   lb.classList.add("show");
 }
 function closeLightbox(){
@@ -1428,36 +1435,35 @@ function closeLightbox(){
   $("lbImg").removeAttribute("src");
 }
 /* 弹窗可用区 ≈ 视口 80% */
+/* 弹窗可用区 ≈ 视口 80%（再预留 FIT_GAP_PX：lbBox 自身有 1px 边框且按 border-box 限 80vw，
+   直接算到满会因边框宽度超界而触发滚动条，内缩后可避免） */
 function lbBox(){
   return {
-    w: Math.max(100, window.innerWidth * 0.8),
-    h: Math.max(100, window.innerHeight * 0.8 - 72)
+    w: Math.max(100, window.innerWidth * 0.8 - FIT_GAP_PX),
+    h: Math.max(100, window.innerHeight * 0.8 - 72 - FIT_GAP_PX)
   };
 }
 function lbScale(){
   const nw = lbNatural.w, nh = lbNatural.h;
   if(!nw || !nh) return 0;
+  if(lbMode === "orig") return 1;                                   // 原始分辨率：1:1 原像素
   const B = lbBox();
-  if(lbMode === "fill") return Math.max(B.w/nw, B.h/nh);            // 最大化铺满（可滚动）
-  if(nw <= B.w && nh <= B.h){                                       // 空间足够：取能放下的最大整数倍
-    let k = 1;
-    while((k + 1) * nw <= B.w && (k + 1) * nh <= B.h) k++;
-    return k;
-  }
-  return Math.min(B.w/nw, B.h/nh);                                  // 放不下才缩小适配
+  // 自适应缩放 = 整幅可见且尽量占满弹窗：空间不足等比缩小、空间充足等比放大到可放下的最大尺寸；
+  // floor 后不超出弹窗，四周留少量空白，始终不产生滚动条
+  return Math.min(B.w / nw, B.h / nh);
 }
 function applyLbZoom(){
   const img = $("lbImg");
   const s = lbScale();
   if(!s) return;
-  img.style.width = Math.max(1, Math.round(lbNatural.w * s)) + "px";
-  img.style.height = Math.max(1, Math.round(lbNatural.h * s)) + "px";
-  img.style.imageRendering = s >= 2 ? "pixelated" : "auto";
+  img.style.width = Math.max(1, Math.floor(lbNatural.w * s)) + "px";  // floor：保证不超出，不产生滚动条
+  img.style.height = Math.max(1, Math.floor(lbNatural.h * s)) + "px";
+  img.style.imageRendering = "auto";   // 平滑缩放（缩小或放大）、原始分辨率 1:1，无需像素锐化
   const box = img.parentElement;
   box.scrollLeft = 0; box.scrollTop = 0;
 }
 function toggleLbMode(){
-  lbMode = lbMode === "fill" ? "fit" : "fill";
+  lbMode = lbMode === "orig" ? "fit" : "orig";
   applyLbZoom();
 }
 
@@ -1613,7 +1619,7 @@ $("lbClose").addEventListener("click", (e)=>{
   closeLightbox();
 });
 lb.addEventListener("click", (e)=>{
-  if(e.target.closest(".lbBox")){ toggleLbMode(); return; }   // 弹窗内单击图片：自适应 ↔ 最大化铺满
+  if(e.target.closest(".lbBox")){ toggleLbMode(); return; }   // 弹窗内单击图片：自适应缩放 ↔ 原始分辨率
   closeLightbox();                                             // 点空白处关闭
 });
 document.addEventListener("keydown", (e)=>{
@@ -1629,7 +1635,6 @@ $("btnRevert").addEventListener("click", revertCurrent);
 $("btnDelete").addEventListener("click", deleteCurrent);
 $("zmOrig").addEventListener("click", ()=> setMainMode("orig"));
 $("zmFit").addEventListener("click", ()=> setMainMode("fit"));
-$("zmFill").addEventListener("click", ()=> setMainMode("fill"));
 $("stateInput").addEventListener("input", ()=>{
   const el = $("stateInput");
   if(BAD_LABEL.test(el.value)) el.value = cleanLabel(el.value);   // 无法作为文件名的符号直接剔除
@@ -1685,10 +1690,11 @@ const META_DOWN_LIMIT = 8; // 连续这么多次探不到后端即判定“程�
 let baseCodeTs = null;     // 页面打开时记录的后端代码构建时间（基线）
 let pendingReload = false; // 编辑未保存时挂起的刷新（保存后再执行）
 let metaDown = 0;          // 连续探测失败计数
-let metaGone = false;      // 是否已判定程序退出（只触发一次本页自关）
+let metaGone = false;      // 是否已判定程序退出（只触发一次）
+let needExitUI = false;    // 判定发生在后台时，等页面回到前台再弹“已退出”提示并自关
 
 async function checkAppVersion(){
-  if(pendingReload || document.hidden) return;
+  if(pendingReload) return;   // 页面在后台也继续探活：后端退出后仍能按时间判定，避免计数被“切走”冻结
   try{
     const r = await fetch("/api/app/meta", { cache:"no-store" });
     if(!r.ok) return;
@@ -1707,12 +1713,13 @@ async function checkAppVersion(){
       setTimeout(()=> location.reload(), 500);
     }
   }catch(e){
-    /* 探测失败：短时间失败可能是服务重启间隙；连续多次失败 = 程序已退出 → 本页自己关掉 */
-    if(exiting || metaGone || document.hidden) return;
+    /* 探测失败：短时间失败可能是服务重启间隙；连续多次失败 = 程序已退出 → 提示并尝试自关 */
+    if(exiting || metaGone) return;
     if(++metaDown >= META_DOWN_LIMIT){
       metaGone = true;
+      if(document.hidden){ needExitUI = true; return; }  // 后台先不打扰/不误关，回到前台立即提示
       showExitScreen();
-      armPageClose();
+      armPageClose(1200);   // 先让“已退出”提示可见，再尝试关页
     }
   }
 }
@@ -1727,7 +1734,14 @@ function maybeAutoReload(){
 }
 
 document.addEventListener("visibilitychange", ()=>{
-  if(!document.hidden && baseCodeTs !== null) checkAppVersion();   // 切回页面立刻复核一次
+  if(document.hidden) return;
+  if(needExitUI){                          // 后台已判定程序退出：回到页面立即展示提示并尝试自关
+    needExitUI = false;
+    showExitScreen();
+    armPageClose(1200);
+    return;
+  }
+  if(baseCodeTs !== null) checkAppVersion();   // 切回页面立刻复核一次
 });
 
 /* ---------------- 启动 ---------------- */

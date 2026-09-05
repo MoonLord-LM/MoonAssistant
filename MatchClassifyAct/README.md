@@ -77,7 +77,7 @@ Java (MatchClassifyAct)
  │         WindowsCapture.exe --hwnd <句柄> --out <临时.bmp> --timeout-ms <cfg>
  ├─ ImageIO 读回 BufferedImage → savePng() → capture/IMG_yyyyMMdd_HHmmss.png（原始截图；标注后连同数据移入 classify/）
  ├─ WindowCaptureTask                  @Scheduled 每 interval-ms 一轮（带 paused 开关；默认关闭，需页面手动「开启截图」）
- ├─ WindowResizer                      开启截图时把目标窗口客户区宽度一次缩放到 capture.resize-width（物理像素）
+ ├─ WindowResizer                      截图尺寸 ≠ capture.resize-width×resize-height 时，SetWindowPos 把窗口外框强制缩放到截图恰好达标（不达标不保存，由任务循环自动一直调窗重试）
  ├─ CaptureControlController           /api/capture/status|pause|resume：右上角「开启/暂停截图」（默认关闭）
  ├─ ui/BrowserLauncher                 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（ui.auto-open=false 可关）
  └─ 控制台（web，人工打标 → 喂给后续 Classify/Act 的样本数据，见 2.6）
@@ -221,7 +221,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `capture.summary-dir` | `summary` | 汇总分析产物保存目录（内部按「分类标注」分目录，样本取 classify/，可随时重算） |
 | `capture.output-dir` | `captures` | **旧版**单目录（截图/标注/汇总同根）：仅启动时自动迁移用，之后不再读写 |
 | `capture.capture-timeout-ms` | `5000` | 传给采集器的内部抓帧超时（毫秒） |
-| `capture.resize-width` | `1280` | 开启截图时把目标窗口**截图内容区（客户区）宽度**一次缩放为该物理像素值（高度按当前宽高比、位置不变；目标窗口最大化会自动还原后调整）。只在每次「开启截图」时执行一次；若当时窗口未开/最小化，截图任务开始后会自动补做。`0`=不调整 |
+| `capture.resize-width` | `1280` | 开启截图时把目标窗口**截图内容区（客户区）宽度**一次调整为该物理像素值：模拟拖动窗口右缘把宽度拖到目标、**高度交给窗口自身等比适配**（MuMu 等模拟器避免 SetWindowPos 硬塞宽高导致画面变形；位置不变；目标窗口最大化会自动还原后调整；窗口被完全遮挡/锁缩放时放弃并提示手动调整）。只在每次「开启截图」时执行一次；若当时窗口未开/最小化，截图任务开始后会自动补做。`0`=不调整 |
 | `ui.auto-open` | `true` | 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（找不到则回退系统默认浏览器） |
 | `ui.path` | `/annotate` | 自动打开的网页路径 |
 
@@ -247,7 +247,7 @@ MatchClassifyAct/
    │  │  ├─ WindowFinder.java                findTarget() 取"面积最大且优先非分层(WS_EX_LAYERED)"的窗口
    │  │  ├─ ScreenCaptureService.java        captureWindow() 调 WindowsCapture.exe；savePng() 原子落盘
    │  │  │                                   （.tmp→改名）并缓存 latestImage/latestFile
-   │  │  ├─ WindowResizer.java               SetWindowPos：把客户区宽度缩放到 capture.resize-width（物理像素）
+   │  │  ├─ WindowResizer.java               截图尺寸 ≠ 目标宽×高时按尺寸差用 SetWindowPos 强制缩放窗口（最大化先还原、越界平移回屏幕内），由任务循环重截验证直至 PNG 恰好达标
    │  │  ├─ CaptureControlController.java    /api/capture/status|pause|resume：开启/暂停周期截图（默认关闭）
    │  │  └─ WindowCaptureTask.java           ApplicationRunner + @Scheduled 周期截图（默认 paused=true 不截图，页面手动开启）
    │  └─ mark/
