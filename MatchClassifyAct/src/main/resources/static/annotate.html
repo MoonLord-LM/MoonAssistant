@@ -157,13 +157,26 @@
   .toast.ok{border-left-color:var(--green)}
   .toast.err{border-left-color:var(--danger)}
   .toast.skip{border-left-color:var(--amber)}
-  /* 智能分析 · 相似度建议条：dock 固定贴在主图区底部。dock 高度恒定占位（class=sugdock-on），
-     bar 的显隐 / 内容行数变化都不会改变主图可用区尺寸 → 截图始终稳定不上下“挤”动。
-     仅「全部 / 未标注」视图（可能出建议）展开占位，其余模式收起为 0。 */
-  .sugdock{flex:none;height:0;overflow:hidden;background:#111826;border-top:1px solid transparent}
-  .sugdock .smartbar{width:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 12px;font-size:12px;line-height:1.55;color:var(--muted);overflow-y:auto}
+  /* 智能分析 · 建议提示条：以「浮层」叠在主图上层，不占文档流 → 出现 / 收起 / 内容换行都不会再挤压图片，
+     图片显示区恒为全高。「未标注」显示智能分析建议（smartBar），「汇总分析」显示处理状态（thinkBar）；
+     两条都无内容时整条浮层隐藏。浮层半透明 + 磨砂，可点右上 ✕ 收起本图的建议，方便查看/点选整图。 */
+  .sugdock{position:absolute;left:10px;right:10px;bottom:10px;z-index:30;height:52px;overflow:hidden;display:grid;place-items:center;border:1px solid rgba(76,98,146,.55);border-radius:10px;background:rgba(13,18,30,.92);box-shadow:0 10px 28px rgba(0,0,0,.45);opacity:0;visibility:hidden;transform:translateY(8px);pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+  body.sugdock-on .sugdock{opacity:1;visibility:visible;transform:none;pointer-events:auto}
+  .sugdock .dismiss{position:absolute;top:2px;right:4px;z-index:2;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:12px;line-height:1;cursor:pointer}
+  .sugdock .dismiss:hover{color:#fff;background:rgba(255,255,255,.14)}
+  .sugdock .dismiss[hidden]{display:none}
+  .sugdock .smartbar{width:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 30px 7px 12px;font-size:12px;line-height:1.55;color:var(--muted);overflow-y:auto}
   .smartbar[hidden]{display:none}
-  body.sugdock-on .sugdock{height:52px;border-top-color:var(--border);display:grid;place-items:center}
+  /* 汇总分析 · 处理过程状态条：与「未标注」智能分析提示共用同一浮层（内容可两行、超出滚动） */
+  .thinkbar{width:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 12px;font-size:12px;line-height:1.6;color:#c6cfe0;overflow-y:auto}
+  .thinkbar[hidden]{display:none}
+  .thinkbar .tb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
+  .thinkbar b{color:var(--text);font-weight:700}
+  .thinkbar .kv{color:#ffd24d;font-weight:700;font-variant-numeric:tabular-nums}
+  .thinkbar.warn{color:#ffe6b0}
+  .thinkbar.warn .tb-title{color:var(--amber)}
+  .thinkbar.bad{color:#ffd9d2}
+  .thinkbar.bad .tb-title{color:#ffb4ab}
   .smartbar .spin{width:13px;height:13px;flex:none;border:2px solid #33405e;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .smartbar .sb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
@@ -189,22 +202,29 @@
   .tkstat{font-size:13px;line-height:1.9;margin-bottom:12px}
   .tkstat b{color:var(--text)}
   .tkstat .kv{color:var(--amber);font-weight:600;font-variant-numeric:tabular-nums}
-  /* 汇总分析 · 右侧状态横幅（样本不足/待分析/样本有变/已生成 四态，切换分组时强反馈） */
-  .tkstate{display:flex;align-items:flex-start;gap:8px;padding:9px 11px;border-radius:9px;font-size:12.5px;line-height:1.75;margin-top:10px}
-  .tkstate b{font-weight:700}
-  .tkstate .kv{font-weight:700;font-variant-numeric:tabular-nums}
-  .tkstate.ok{color:#bff0cc;background:rgba(47,191,113,.1);border:1px solid rgba(47,191,113,.45)}
-  .tkstate.warn{color:#ffe6b0;background:rgba(255,180,70,.1);border:1px solid rgba(255,180,70,.5)}
-  .tkstate.bad{color:#ffd9d2;background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.5)}
-  /* 汇总分析 · 主区占位提示（未选择 / 样本不足 / 待分析时替代对照图网格） */
-  #thinkEmpty{display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:34px 20px;width:100%;height:100%;color:var(--muted)}
-  #thinkEmpty .ti{width:48px;height:48px;border-radius:14px;background:var(--panel2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--accent)}
+  /* 汇总分析 · 主图区轻占位（无对照图时给一行极简提示）—— 完整原因与下一步全部收敛到
+     底部 dock 状态条（thinkBar），不再在右栏 / 主图中央堆叠同义横幅 */
+  #thinkEmpty{display:none;align-items:center;justify-content:center;width:100%;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:0 24px}
   #thinkEmpty b{color:var(--text);font-size:15px}
-  #thinkEmpty .sub{font-size:12px;line-height:1.95;max-width:520px}
-  #thinkEmpty.bad .ti{color:#ff7a6e}
+  #thinkEmpty.warn b{color:var(--amber)}
   #thinkEmpty.bad b{color:#ffb4ab}
-  #thinkEmpty.warn .ti{color:var(--amber)}
   #tkExplain{color:var(--muted);font-size:11px;line-height:1.8;border:1px dashed rgba(47,191,113,.4);background:rgba(47,191,113,.05);border-radius:8px;padding:7px 9px;margin-top:4px}
+  /* 汇总分析 · 样本不足（仅 1 张）时：中间直接展示那张样本截图；原因提示在底部 dock */
+  #thinkSample{display:none;align-items:center;justify-content:center;width:100%;height:100%;padding:16px;box-sizing:border-box}
+  #thinkSample img{display:block;max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.4);background:#000;cursor:zoom-in}
+  /* 智能提示浮层展开期间，「汇总分析」的对照图网格与唯一样本底部多留一块空间，
+     最后一行内容不会被浮条盖住（网格不缩小、仅在其下留白；样本图内收一点） */
+  body.sugdock-on #thinkPane{padding-bottom:72px}
+  body.sugdock-on #thinkSample{padding-bottom:72px}
+  /* 「全部」视图右栏 = 按分类过滤（标注编辑仅用于「未标注 / 已标注」视图） */
+  .fHint{color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px}
+  .cats{display:flex;flex-wrap:wrap;gap:6px}
+  .cat{display:inline-flex;align-items:center;gap:6px;max-width:100%;font-size:12px;padding:4px 8px 4px 10px;border:1.5px solid var(--border);border-radius:16px;color:var(--text);background:var(--panel2);cursor:pointer;transition:border-color .12s,background .12s}
+  .cat:hover{border-color:var(--accent)}
+  .cat .tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cat .n{flex:none;font-size:11px;font-weight:600;line-height:17px;min-width:17px;text-align:center;padding:0 6px;border-radius:9px;color:#fff;background:var(--muted)}
+  .cat.on{border-color:var(--accent);background:var(--accent-soft)}
+  .cat.on .n{background:var(--accent)}
   /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率 */
   #imgLightbox{position:fixed;inset:0;z-index:120;background:rgba(4,7,13,.86);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px}
   #imgLightbox.show{display:flex}
@@ -246,7 +266,7 @@
   }
 </style>
 </head>
-<body data-mode="none" data-appmode="mark" class="sugdock-on">
+<body data-mode="none" data-appmode="mark">
 
 <header class="topbar">
   <!-- 左上角：工作模式选择（标注模式为默认；执行模式建设中）。合拢时下拉本身即显示当前模式 -->
@@ -324,14 +344,13 @@
           <div class="tcimg"><img id="imgA32" alt="1/32 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
       </div>
-      <div id="thinkEmpty">
-        <div class="ti">◫</div>
-        <b id="teTitle"></b>
-        <div class="sub" id="teSub"></div>
+      <div id="thinkEmpty"><b id="teTitle"></b></div>
+      <div id="thinkSample"><img id="thinkSampleImg" alt="分类样本截图" title="单击放大查看样本截图"></div>
+      <div class="sugdock" id="smartDock">
+        <button type="button" class="dismiss" id="dockX" title="收起本图的智能分析提示（图片保持当前显示大小）" hidden>✕</button>
+        <div class="smartbar" id="smartBar" hidden></div>
+        <div class="thinkbar" id="thinkBar" hidden></div>
       </div>
-    </div>
-    <div class="sugdock" id="smartDock">
-      <div class="smartbar" id="smartBar" hidden></div>
     </div>
   </section>
 
@@ -388,9 +407,16 @@
     <div class="edHead">
       <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
     </div>
-    <div class="tkstate" id="tkState" style="display:none"></div>
     <div class="tkstat" id="tkInfo" style="margin-top:10px">左侧选择分类标注查看对照图。</div>
     <div id="tkExplain" style="margin-top:4px;font-size:12px;color:var(--muted);line-height:1.8"></div>
+  </div>
+
+  <div id="edFilter" style="display:none">
+    <div class="edHead">
+      <h3 style="margin:0;font-size:14px">按分类过滤</h3>
+    </div>
+    <div class="fHint">「全部」视图用于浏览与筛选：点下面的分类标签，左侧列表就只保留该分类下已标注的截图。</div>
+    <div class="cats" id="catList"></div>
   </div>
   </aside>
 </main>
@@ -435,8 +461,14 @@ let px = null;         // {x,y} 图片像素（窗口相对坐标）
 let loading = null;    // 当前图片名，用于防异步竞态
 let lastMark = null;   // 上次输入/保存的标记草稿 {state,action,left,top}，切到未标注图时自动带入
 let DEF = {};          // 分类定义表快照 {state: {action,left,top}}，来自 /api/annotate/defs（中心表：动作坐标每分类一份）
+let stateFilter = null;   // 仅「全部」视图使用：null=不过滤；字符串=只显示该分类下已标注的截图
+let thinkSampleCap = "";  // 汇总分析样本不足时，中间那张单样本截图的弹窗说明
 
-function listNow(){ return FILTER==="all" ? ALL : ALL.filter(i => FILTER==="unmarked" ? !i.marked : i.marked); }
+function listNow(){
+  let L = FILTER === "all" ? ALL.slice() : ALL.filter(i => FILTER === "unmarked" ? !i.marked : i.marked);
+  if(FILTER === "all" && stateFilter) L = L.filter(i => i.marked && i.state === stateFilter);
+  return L;
+}
 function curIndex(){ return listNow().findIndex(i => i.name===curName); }
 function cur(){ const L = listNow(); const p = curIndex(); return p>=0 ? L[p] : null; }
 function itemOf(name){ return ALL.find(i => i.name===name) || null; }
@@ -478,6 +510,30 @@ function toast(msg, kind){
   t.textContent = msg;
   $("toasts").appendChild(t);
   setTimeout(()=>{ t.style.opacity="0"; t.style.transition="opacity .25s"; setTimeout(()=>t.remove(),260); }, 2600);
+}
+
+/* 右下角单条「截图结果」提示：截图默认每 3s 完成一轮（保存 / 差异过小丢弃），比普通 toast 频密，
+   故用单条替换式展示——新结果直接替换旧内容，约 2 秒后自动淡出，不叠加刷屏 */
+let shotTipTimer = 0;
+function showShotTip(msg, kind){
+  const box = $("toasts");
+  let el = box.querySelector(".toast.shot");
+  if(!el){
+    el = document.createElement("div");
+    el.className = "toast shot " + (kind||"");
+    box.appendChild(el);
+  }else{
+    el.className = "toast shot " + (kind||"");
+    el.style.transition = "none";     // 先取消淡出过渡，立即恢复显示
+    el.style.opacity = "1";
+  }
+  el.textContent = msg;
+  clearTimeout(shotTipTimer);
+  shotTipTimer = setTimeout(()=>{
+    el.style.transition = "opacity .25s";
+    el.style.opacity = "0";
+    setTimeout(()=> el.remove(), 280);
+  }, 2000);
 }
 
 /* ---------------- 列表加载 / 渲染 ---------------- */
@@ -754,6 +810,8 @@ function renderList(){
   const L = listNow();
   const ul = $("imgList"); ul.innerHTML = "";
   $("listCount").textContent = L.length + " 张";
+  $("lstTitle").textContent = (FILTER === "all" && stateFilter) ? "「" + stateFilter + "」分类截图" : "截图列表（按时间）";
+  if(FILTER === "all") renderFilterPanel();   // 分类过滤面板跟随最新计数刷新
   const curItem = cur();
   for(const item of L){
     const li = document.createElement("li"); li.className="row" + (curItem && curItem.name===item.name ? " on" : "");
@@ -771,19 +829,65 @@ function renderList(){
     // 目录里根本没有图片 → 统一说「没有图片」；有图片时才按当前筛选给具体提示
     d.textContent = ALL.length === 0 ? "没有图片"
       : FILTER === "marked" ? "还没有已标记的图片"
+      : FILTER === "all" && stateFilter ? "「" + stateFilter + "」分类下暂无截图"
       : "🎉 全部图片都已标记";
     ul.appendChild(d);
   }
   setSegState();   // 筛选按钮文案 + 选中态一起刷新
 }
 
-function showEmpty(){
+/* ---------------- 「全部」视图：按分类过滤（右栏不做标注编辑） ---------------- */
+function renderFilterPanel(){
+  const box = $("catList"); if(!box) return;
+  const counts = new Map();
+  for(const i of ALL){ if(i.marked && i.state) counts.set(i.state, (counts.get(i.state)||0)+1); }
+  box.innerHTML = "";
+  const add = (label, n, state) => {
+    const c = document.createElement("span");
+    c.className = "cat" + (stateFilter === state ? " on" : "");
+    const tx = document.createElement("span"); tx.className = "tx"; tx.textContent = label;
+    const cnt = document.createElement("span"); cnt.className = "n"; cnt.textContent = n;
+    c.title = state ? "显示该分类下已标注的 " + n + " 张截图" : "显示全部截图";
+    c.appendChild(tx); c.appendChild(cnt);
+    c.addEventListener("click", ()=> setStateFilter(state));
+    box.appendChild(c);
+  };
+  add("全部", ALL.length, null);
+  for(const s of [...counts.keys()].sort((a,b)=>a.localeCompare(b,"zh"))) add(s, counts.get(s), s);
+}
+
+function setStateFilter(state){
+  if(FILTER !== "all"){ stateFilter = null; return; }
+  if(state === stateFilter) state = null;   // 再次点击当前分类 = 取消过滤
+  stateFilter = state;
+  const L = listNow();
+  if(!L.length){
+    curName = null;
+    renderList();
+    showEmpty(state ? "「" + state + "」分类下暂无截图。" : "");
+    return;
+  }
+  const keep = itemOf(curName);
+  const next = keep && L.some(i => i.name === keep.name) ? keep.name : L[0].name;
+  selectTarget(next);
+}
+
+/* 按当前视图切换右栏：think → 汇总分析；unmarked/marked → 标注编辑；all → 分类过滤 */
+function syncRightPanel(){
+  if(appMode !== "mark") return;
+  $("edThink").style.display = FILTER === "think" ? "" : "none";
+  $("edNorm").style.display = (FILTER === "unmarked" || FILTER === "marked") ? "" : "none";
+  $("edFilter").style.display = FILTER === "all" ? "" : "none";
+  if(FILTER === "all") renderFilterPanel();
+}
+
+function showEmpty(msg){
   curName = null;
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "";
   showZoomCtl(false);
   resetZoom();
-  $("placeholder").textContent = "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。";
+  $("placeholder").textContent = msg || "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。";
   $("fname").textContent = ""; $("fsub").textContent = ""; $("imgDims").textContent = "";
   $("stateInput").value = ""; setAction("none"); px=null; renderDot();
   updateTagActive();
@@ -843,6 +947,14 @@ async function showImage(item, opts){
   }catch(e){
     if(loading === item.name) toast("读取标注失败（按未标注处理）：" + e.message, "err");
   }
+  // 「全部」视图只做浏览与按分类过滤，不编辑标注：收起取点、清掉自动带入的草稿，避免误改/误存
+  if(FILTER === "all"){
+    $("stateInput").value = "";
+    setAction("none", false);
+    px = null;
+    renderDot();
+    updateTagActive();
+  }
 }
 
 $("mainImg").addEventListener("load", ()=>{
@@ -858,6 +970,13 @@ $("mainImg").addEventListener("load", ()=>{
 });
 $("mainImg").addEventListener("error", ()=>{
   toast("图片加载失败：" + (cur()?cur().name:"") , "err");
+});
+
+/* 汇总分析样本不足时中间的唯一样本截图：单击打开与对照图相同的 80% 视口弹窗查看 */
+$("thinkSampleImg").addEventListener("click", ()=>{
+  const src = $("thinkSampleImg").getAttribute("src");
+  if(!src) return;
+  openLightbox(src, thinkSampleCap || "分类样本截图");
 });
 
 /* ---------------- 主图缩放：原始分辨率 / 自适应缩放 ---------------- */
@@ -1208,7 +1327,7 @@ let capBusy = false;
 let capIntervalMs = null;            // 后端真实截图间隔（毫秒），由 /api/capture/status 下发
 let capDiffThreshold = null;         // 后端像素去重阈值（%），0 = 关闭去重
 let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
-let lastDropNoticeAtShown = -1;   // 已 toast 提示过的「相似帧丢弃」通知时间戳（去重，同一通知只提示一次）
+let lastShotAtShown = -1;         // 已右下角提示过的「截图结果」时间戳（去重；截图 3s 一轮、meta 2s 轮询，事件不漏）
 
 /* 毫秒间隔 → 人类可读文案（整千显示整秒，否则保留一位小数秒） */
 function fmtCapInterval(ms){
@@ -1493,38 +1612,48 @@ const fmtCov = c => (c == null ? "—" : Number(c) + "%");
 function thinkSig(){
   return GROUPS.map(g => [g.state,g.action,g.sampleCount,!!g.analyzed,!!g.stale,g.coverage,g.dir].join("|")).join("\n");
 }
-/* 右侧状态横幅（汇总分析视图）：切换分组时给出强反馈 —— 样本不足 / 待分析 / 样本有变 / 已生成 */
-function setStateBanner(g){
-  const el = $("tkState");
-  if(!g){ el.style.display = "none"; el.className = "tkstate"; el.innerHTML = ""; return; }
-  let cls = "ok", html;
+/* 汇总分析 · 处理过程状态条：渲染到主图底部浮层 dock（thinkBar，与「未标注」的智能分析
+   提示条同处同构、悬浮在主图上不占文档流）。切换分组 / 分析进度变化时实时更新。
+   样本不足 → 正在生成 → 样本有变 → 已生成，均只在此展示一次 */
+function renderThinkDock(g){
+  const b = $("thinkBar");
+  if(!g){ b.hidden = true; syncDockNow(); return; }
+  let cls = "", text;
   if(!g.analyzed){
     if(g.canAnalyze){
       cls = "warn";
-      html = '<b>待分析</b>：样本已达 <b class="kv">' + g.sampleCount + ' 张</b>，对照图正在自动生成…';
+      text = '「<b>' + escHtml(g.state) + '</b>」样本已达 <b>' + g.sampleCount
+        + ' 张</b>，正在后台合成七张对照图，完成后自动显示在上方。';
     }else{
       cls = "bad";
-      html = '<b>样本不足</b>：「' + escHtml(g.state) + '」当前只有 <b class="kv">' + g.sampleCount + ' 张</b> 标注截图，不足 2 张无法合成对照图；继续给该分类标注截图，满 2 张后会自动生成。';
+      text = '样本不足：当前仅 <b>' + g.sampleCount + ' 张</b> 标注截图，无法合成对照图；'
+        + '继续给该分类标注，满 2 张后会自动生成。';
     }
   }else if(g.stale){
     cls = "warn";
-    html = '<b>样本有变</b>：新增/改动样本后对照图尚未重算，稍后会自动更新。';
+    text = '样本有变：新增 / 改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
-    html = g.coverage != null
-      ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>'
-      : '<b>对照图已生成</b>';
+    text = g.coverage != null
+      ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，七张对照图已生成。'
+      : '七张对照图已生成。';
   }
-  el.className = "tkstate " + cls;
-  el.style.display = "";
-  el.innerHTML = html;
+  b.hidden = false;
+  b.className = "thinkbar" + (cls ? " " + cls : "");
+  b.innerHTML = '<span class="tb-title">汇总分析</span><span>' + text + '</span>';
+  syncDockNow();
 }
-/* 主区占位提示（未选择 / 样本不足 / 待分析时替代对照图网格） */
-function showThinkEmpty(cls, title, sub){
+/* 主图区轻占位：无对照图时给一行极简提示；具体原因与下一步见底部浮层状态条 */
+function showThinkEmpty(cls, title){
   const te = $("thinkEmpty");
-  te.className = ["bad","warn","ok"].includes(cls) ? cls : "";
-  $("teTitle").textContent = title;
-  $("teSub").textContent = sub || "";
+  te.className = ["bad","warn"].includes(cls) ? cls : "";
+  $("teTitle").textContent = title || "";
   te.style.display = "flex";
+}
+/* 某分组（分类标注 + 匹配动作）对应的全部已标注截图：汇总分析的样本就是这些截图 */
+function sampleItemsOf(g){
+  return ALL.filter(i => i.marked
+    && (i.state || "") === (g.state || "")
+    && (i.action || "none") === (g.action || "none"));
 }
 const THINK_EMPTY = "没有分类标注";
 /* 汇总分析七张对照图（顺序：交集 / 多数 / 均值 / 1-8多数 / 1-32多数 / 1-8均值 / 1-32均值） */
@@ -1535,14 +1664,14 @@ const TCS_IDS = ["tcsSame","tcsMax","tcsAvg","tcsM8","tcsM32","tcsA8","tcsA32"];
 function enterThink(){
   FILTER = "think";
   dirty = false;
-  $("edNorm").style.display = "none";
-  $("edThink").style.display = "";
+  stateFilter = null;          // 汇总分析不沿用「全部」视图的分类过滤
+  syncRightPanel();            // 右栏切到「汇总分析」（隐藏标注编辑与分类过滤）
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "none";
   showZoomCtl(false);      // 汇总分析七图用各自的 lightbox 放大，隐藏主图缩放控件
   resetZoom();
-  hideSmartTip();          // 汇总分析模式下不显示智能分析提示条
-  syncSugDock();           // 汇总分析无建议条：收起 dock 占位，主图区扩展到整栏
+  hideSmartTip();          // 汇总分析模式下不显示「未标注」智能分析建议条
+  syncSugDock();           // 汇总分析：处理状态浮层按 thinkBar 内容自动显示
   $("lstTitle").textContent = "分类标注列表（按匹配度）";
   selKey = null;
   openGroup(null);
@@ -1554,7 +1683,13 @@ function exitThink(){
   closeLightbox();
   $("statusTag").style.display = "none";  // 汇总分析里可能显示了徽标，回截图视图前隐藏（图片上方不再放状态徽标）
   $("thinkEmpty").style.display = "none"; // 隐藏主区占位，避免残留影响普通截图视图
+  $("thinkEmpty").className = "";
+  $("thinkSample").style.display = "none"; // 清空“唯一样本截图”，避免残留到普通截图视图
+  $("thinkSampleImg").removeAttribute("src");
+  $("thinkBar").hidden = true;             // 清空汇总分析状态浮层，退出后该浮层交给智能分析提示条
+  syncDockNow();
   thinkMeta = null;                        // 退出后清掉列表基准，避免普通视图误排版
+  thinkSampleCap = "";
   $("thinkPane").style.display = "none";
   $("edThink").style.display = "none";
   $("edNorm").style.display = "";
@@ -1651,7 +1786,15 @@ function applyCardLayout(img){
   img.style.imageRendering = t.pixel ? "pixelated" : "auto";
 }
 
-/* 在右侧/主区展示某组；g=null 清空。切换任何分组都会同步刷新右栏状态横幅与信息，避免残留上一分组 */
+/* 右栏底部的操作说明条：仅在对照图已生成时给弹窗缩放提示；未生成时隐藏
+   （处理状态与原因统一由主图底部 dock 说明，此处不再重复） */
+function setThinkExplain(t){
+  const el = $("tkExplain");
+  el.innerHTML = t;
+  el.style.display = t ? "" : "none";
+}
+
+/* 在右侧/主区展示某组；g=null 清空。切换分组会同步刷新主图区与底部状态 dock，避免残留上一分组 */
 function openGroup(g){
   closeLightbox();
   selKey = g ? gkey(g) : null;
@@ -1664,16 +1807,17 @@ function openGroup(g){
     el.style.imageRendering = "auto";
   }
   thinkMeta = null;
-  setStateBanner(g);                    // 右侧状态横幅：样本不足 / 待分析 / 样本有变 / 已生成（每次切换强反馈）
+  renderThinkDock(g);                   // 处理状态固定展示在主图底部 dock：样本不足 / 正在生成 / 样本有变 / 已生成
   const te = $("thinkEmpty");
   if(!g){
     tp.style.display = "none";
     te.style.display = "none";
+    $("thinkSample").style.display = "none";
     $("fname").textContent = "汇总分析";
     $("fsub").textContent = "";
     $("imgDims").textContent = "";
     $("tkInfo").innerHTML = "左侧选择分类标注查看对照图。";
-    $("tkExplain").innerHTML = "";
+    setThinkExplain("");
     return;
   }
   $("fname").textContent = g.state + " ｜ " + (ACT_LABEL[g.action] || g.action);
@@ -1685,6 +1829,7 @@ function openGroup(g){
   if(g.analyzed){
     tp.style.display = "grid";           // 恢复为 CSS 网格（对照图）
     te.style.display = "none";
+    $("thinkSample").style.display = "none";
     const sz8 = v => Math.max(1, Math.floor(v / 8));
     const sz32 = v => Math.max(1, Math.floor(v / 32));
     const W = Number(g.width) || 0, H = Number(g.height) || 0;
@@ -1716,18 +1861,30 @@ function openGroup(g){
     for(const id of IMG_IDS){
       $(id).closest(".tcard").style.display = "none";
     }
-    if(g.canAnalyze){
-      showThinkEmpty("warn", "正在生成对照图…", "「" + g.state + "」样本已达 " + g.sampleCount
-        + " 张，系统正在后台自动合成七张对照图，稍候会出现在这里…");
-    }else{
-      showThinkEmpty("bad", "样本不足", "「" + g.state + "」目前只有 " + g.sampleCount
-        + " 张标注截图，不足 2 张无法合成对照图。切回「标注」给该分类再标一些截图，满 2 张后会自动生成。");
+    const sh = $("thinkSample");
+    // 样本不足（只有 1 张）时：中间直接展示那张样本截图，原因与下一步仍由底部 dock 说明
+    if(!g.canAnalyze && g.sampleCount === 1){
+      const one = sampleItemsOf(g)[0];
+      if(one){
+        te.style.display = "none";
+        const si = $("thinkSampleImg"), src = imgUrl(one.name);
+        if(si.getAttribute("src") !== src) si.src = src;
+        sh.style.display = "flex";
+        thinkSampleCap = "「" + g.state + "」当前唯一样本截图（样本不足 2 张，暂无对照图）";
+      } else {
+        sh.style.display = "none";
+        showThinkEmpty("bad", "暂无对照图");
+      }
+    } else {
+      sh.style.display = "none";
+      // 只给一行极简空态词；原因与下一步统一由底部 dock（renderThinkDock）说明，避免重复文案
+      showThinkEmpty(g.canAnalyze ? "warn" : "bad", g.canAnalyze ? "正在合成对照图…" : "暂无对照图");
     }
   }
   $("tkInfo").innerHTML = info;
-  $("tkExplain").innerHTML = g.analyzed
+  setThinkExplain(g.analyzed
     ? "单击弹窗内图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白或按 Esc 关闭。"
-    : (g.canAnalyze ? "样本 ≥2 张，正在自动生成对照图…" : "样本不足 2 张，无法生成对照图；该分类标注继续增加到 2 张后会自动分析。");
+    : "");
 }
 
 /* 自动分析所有「可分析但尚未生成对照图」的组合 */
@@ -1830,6 +1987,7 @@ function toggleLbMode(){
 const KIND_LABEL = { same:"交集图", max:"多数图", avg:"均值图", m8:"1/8 多数图", a8:"1/8 均值图", m32:"1/32 多数图", a32:"1/32 均值图" };
 let sugSeq = 0;          // 目标切换序号：用于丢弃过期轮询
 let sugTimer = 0;        // 建议任务轮询定时器
+let sugDismiss = new Set();  // 用户手动收起的智能分析（按文件名），对应图不再自动弹出
 
 function sugStop(){ if(sugTimer){ clearTimeout(sugTimer); sugTimer = 0; } }
 
@@ -1838,32 +1996,38 @@ function sugRender(html, cls){
   b.hidden = false;
   b.className = "smartbar" + (cls ? " " + cls : "");
   b.innerHTML = html;
+  syncDockNow();
 }
 
 /* 隐藏提示条并停止轮询 */
 function hideSmartTip(){
   sugStop();
   $("smartBar").hidden = true;
+  syncDockNow();
 }
 
-/* dock 占位是否展开：仅「全部 / 未标注」视图（可能给出建议）恒定占位，其余模式收起为 0。
-   返回是否发生状态变化——变化意味着主图可用区尺寸改变，调用方应重排主图 */
-function syncSugDock(){
-  const on = appMode === "mark" && (FILTER === "all" || FILTER === "unmarked");
-  const had = document.body.classList.contains("sugdock-on");
-  document.body.classList.toggle("sugdock-on", on);
-  return had !== on;
+/* dock 提示浮层（叠加在主图上、不占文档流）是否显示：只看此刻 smartBar / thinkBar 是否真有内容。
+   dockX「收起」只在智能分析建议条可见时出现（汇总分析的处理状态条不提供收起） */
+function syncDockNow(){
+  const smartOn = appMode === "mark" && !$("smartBar").hidden;
+  const thinkOn = appMode === "mark" && !$("thinkBar").hidden;
+  $("dockX").hidden = !smartOn || thinkOn;
+  document.body.classList.toggle("sugdock-on", smartOn || thinkOn);
 }
+/* 兼容旧调用点语义：现在 dock 是否展开只取决于是否有提示内容，不再影响图片布局 */
+function syncSugDock(){ syncDockNow(); }
 
-/* 仅当「当前图存在且未标注、且不在汇总分析模式」时展示 */
+/* 仅「未标注」视图展示智能分析建议条：
+   标注编辑只在未标注 / 已标注可用，「全部」视图仅浏览过滤、不做标记，故也不做建议与填入 */
 function smartTipVisible(){
-  return FILTER !== "think" && !!cur() && !cur().marked;
+  return FILTER === "unmarked" && !!cur() && !cur().marked;
 }
 
 /* 触发当前未标注图的智能分析（切图 / 清除标记 / 退出汇总分析等时机调用） */
 function refreshSmartTip(){
   const it = cur();
   if(!smartTipVisible() || !it){ hideSmartTip(); return; }
+  if(sugDismiss.has(it.name)){ hideSmartTip(); return; }   // 本图曾被手动收起 → 不再自动弹出
   const file = it.name;
   const seq = ++sugSeq;
   sugStop();
@@ -1946,6 +2110,14 @@ function renderSuggest(list){
 }
 
 /* ---------------- 事件绑定 ---------------- */
+/* dockX：收起当前未标注图的智能分析提示（该图之后不再自动弹出，方便完整查看 / 点选整张图取坐标） */
+$("dockX").addEventListener("click", ()=>{
+  const it = cur();
+  if(it) sugDismiss.add(it.name);
+  sugSeq++;                 // 作废可能仍在途的智能分析轮询
+  hideSmartTip();
+  toast("已收起本图的智能分析提示。", "");
+});
 document.querySelectorAll("#filterSeg button").forEach(b=>{
   b.addEventListener("click", ()=>{
     const f = b.dataset.f;
@@ -1954,13 +2126,14 @@ document.querySelectorAll("#filterSeg button").forEach(b=>{
     if(f === "think"){ enterThink(); return; }
     if(FILTER === "think"){ exitThink(); curName = null; }
     FILTER = f;
-    syncSugDock();                             // dock 占位随视图启用/收起：占位变化时立即按新可用区重排当前主图
-    if(naturalW && $("imgwrap").style.display !== "none") applyMainZoom();
+    if(f !== "all") stateFilter = null;        // 分类过滤只属于「全部」视图，离开即重置
+    syncSugDock();                             // dock 浮层按当前是否有提示内容显示/隐藏（浮层不占布局）
+    syncRightPanel();                          // 右栏随视图切换：all→分类过滤 / unmarked、marked→标注编辑
     const name = cur() ? cur().name : null;
     if(name && listNow().some(i=>i.name===name)){ renderList(); updateNavButtons(); }
     else if(listNow().length){ selectTarget(listNow()[0].name); }
     else { renderList(); showEmpty(); }
-    refreshSmartTip();   // 筛选/视图切换后，按当前目标图刷新智能分析提示条
+    refreshSmartTip();   // 视图切换后，按当前目标图刷新智能分析提示条（建议条只出现在「未标注」）
   });
 });
 
@@ -2019,7 +2192,8 @@ document.addEventListener("keydown", (e)=>{
   else if(e.key==="Enter" && !typing){
     if(tag==="button" || tag==="a") return;        // 让按钮/链接自己响应 Enter
     e.preventDefault();
-    if(FILTER !== "think") saveCurrent(true);      // 汇总分析模式 Enter 不保存
+    // 仅未标注 / 已标注视图可编辑保存；全部（只浏览过滤）、汇总分析模式 Enter 不保存
+    if(FILTER === "unmarked" || FILTER === "marked") saveCurrent(true);
   }
 });
 
@@ -2077,11 +2251,19 @@ async function checkAppVersion(){
       if(!capPaused){ capPaused = true; renderCapBtn(); }   // 后端已暂停：按钮恢复为「开启截图」
       showCapStopModal(stopReason);
     }
-    // 相似帧丢弃通知：画面与已保存参考截图差异过小被去重不保存 → toast 提示（后端已按 30s 节流，此处仅按时间戳去重）
-    const dn = j && j.dropNotice;
-    if(dn && dn.at && dn.at !== lastDropNoticeAtShown){
-      lastDropNoticeAtShown = dn.at;
-      toast(dn.text || "最新截图与已有画面差异较小，不做保存", "skip");
+    // 截图结果即时提示：meta 携带最近一次「保存 / 差异过小丢弃」结果（后端每轮都记、不节流；
+    // 截图默认 3s 一轮 > meta 2s 轮询，任何一轮结果都不会漏）。新结果 → 右下角单条替换式轻提示，2s 后自动淡出
+    const shot = j && j.shotNotice;
+    if(shot && shot.at && Number(shot.at) !== lastShotAtShown){
+      lastShotAtShown = Number(shot.at);
+      if(shot.kind === "saved"){
+        showShotTip("已保存截图 " + (shot.name || ""), "ok");
+      }else if(shot.kind === "dup"){
+        let pct = (shot.pct != null ? shot.pct : (capDiffThreshold || 0));
+        if(Number.isInteger(pct)){ pct = String(pct); }
+        else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 5.0% → 显示“5%”，一位小数足够
+        showShotTip("当前画面与截图「" + (shot.name || "参考图") + "」差异小于 " + pct + "%，本次不保存", "skip");
+      }
     }
     const ts = Number(j && j.codeTs) || 0;
     if(!ts) return;
@@ -2149,6 +2331,7 @@ function setAppMode(m){
   } else {
     toast("已回到「标注模式」。", "ok");
     refreshSilent();     // 隐藏期间可能新增了截图：切回时同步一次列表
+    syncRightPanel();    // 右栏按当前视图重置（可能停留在“全部”→ 显示分类过滤）
     syncCapStatus();     // 同步截图运行状态（开启/暂停按钮的文案与高亮）
   }
 }

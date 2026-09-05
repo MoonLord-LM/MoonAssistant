@@ -24,8 +24,10 @@ import java.util.Map;
  * <p>除版本探针外，meta 还携带截图任务的动态提示事件：
  * <ul>
  *   <li>{@code captureStopReason}：截图 resize 持续无法达标自动停止时，前端据此弹出错误提示；</li>
- *   <li>{@code dropNotice}（{at, text}）：画面与已保存参考截图差异过小、相似帧被丢弃时，
- *       前端据此 toast 提示「最新截图和窗口画面差异较小，不做保存」；</li>
+ *   <li>{@code shotNotice}（{at, kind, name, pct?}）：最近一次截图结果——成功保存（kind=saved，
+ *       name 为新图文件名）或画面与已保存参考图差异小于阈值被丢弃（kind=dup，name 为参考图文件名，
+ *       pct 为阈值）。每轮完成都记录、不节流，前端每 2s 轮询取走（截图间隔默认 3s > 轮询间隔，
+ *       任何结果都不会漏掉）并以右下角轻提示即时展示；</li>
  *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
  *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）。</li>
  * </ul></p>
@@ -50,12 +52,16 @@ public class AppMetaController {
         if (reason != null) {
             m.put("captureStopReason", reason);   // 非空 = 截图任务刚因 resize 持续不成功而自动暂停
         }
-        WindowCaptureTask.DropNotice notice = windowCaptureTask.getDropNotice();
-        if (notice != null) {
-            Map<String, Object> drop = new LinkedHashMap<>();
-            drop.put("at", notice.at);
-            drop.put("text", notice.text);
-            m.put("dropNotice", drop);            // 非空 = 最近一次因画面与参考图太像而丢弃了相似帧
+        WindowCaptureTask.ShotNotice shot = windowCaptureTask.getShotNotice();
+        if (shot != null) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("at", shot.at);
+            r.put("kind", shot.kind);
+            r.put("name", shot.name);
+            if (shot.diffPercent > 0) {
+                r.put("pct", shot.diffPercent);
+            }
+            m.put("shotNotice", r);               // 非空 = 最近一次截图结果（成功保存 / 差异过小丢弃），前端即时轻提示
         }
         return m;
     }
