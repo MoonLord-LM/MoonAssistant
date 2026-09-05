@@ -46,12 +46,13 @@ import java.util.stream.Stream;
  *       取出现次数最多（同票取样本顺序靠前）的颜色作为该点颜色。</li>
  *   <li><b>均值图</b>（avg.png）：每个像素对全部样本的 R、G、B 分别取平均，
  *       得到一张“各点平均颜色”的合成画面（透明通道统一视为不透明）。</li>
- *   <li><b>1/16 多数图</b>（maj16.png）：先把每张样本按 16×16 块内取“覆盖率最多的颜色”
- *       压缩到约 1/16 尺寸，再对压缩后的样本逐像素取覆盖率最多的颜色。</li>
- *   <li><b>1/64 多数图</b>（maj64.png）：同上，块为 64×64，压缩到约 1/64 尺寸。</li>
- *   <li><b>1/16 均值图</b>（avg16.png）：先把每张样本按 16×16 块内取 RGB 均值压缩到约
- *       1/16 尺寸，再对压缩后的样本逐像素取 R、G、B 均值。</li>
- *   <li><b>1/64 均值图</b>（avg64.png）：同上，块为 64×64，压缩到约 1/64 尺寸。</li>
+ *   <li><b>1/16 多数图</b>（maj16.png）：按 16×16 网格把所有样本对齐切块，将「同位置的块内全部
+ *       像素」跨样本合并成一个集合，输出该集合中出现次数最多的颜色（覆盖率最多，同票取样本顺序
+ *       靠前）；即一个输出像素 = 全部样本同一 16×16 块内所有原始像素的众数色，不分步压缩。</li>
+ *   <li><b>1/64 多数图</b>（maj64.png）：同上，块为 64×64。</li>
+ *   <li><b>1/16 均值图</b>（avg16.png）：按 16×16 网格把所有样本对齐切块，将「同位置的块内全部
+ *       像素」跨样本合并成一个集合，输出该集合全部像素 R/G/B 的总平均色。</li>
+ *   <li><b>1/64 均值图</b>（avg64.png）：同上，块为 64×64。</li>
  * </ol>
  *
  * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
@@ -106,7 +107,7 @@ public class ThinkService {
     private static final double SAME_AGREE_RATIO = 0.90;
 
     /** 产物生成规则版本：改动产物生成逻辑后递增，使旧产物自动判 stale 并重算 */
-    private static final int ART_RULE_VERSION = 3;
+    private static final int ART_RULE_VERSION = 4;
 
     /** 单线程池：像素比对较重，串行避免并发打满 CPU */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
@@ -482,48 +483,71 @@ public class ThinkService {
     }
 
     /**
-     * 1/16、1/64 多数 / 均值图：先把每张样本按 block×block 块内取「覆盖最多的颜色（多数）」
-     * 或「RGB 均值」压缩到约 1/block 尺寸，再对所有压缩样本逐像素做同样的多数 / 均值合成。
+     * 1/16、1/64 多数 / 均值图：按 block×block 网格把所有样本对齐切块，将「同位置的块内全部
+     * 像素」跨样本合并成一个像素集合（右侧 / 底部不足整块的余边忽略，产物尺寸 w/block × h/block）——
+     * 多数图：输出该集合中出现次数最多的颜色（同票取样本顺序靠前的颜色）；
+     * 均值图：输出该集合全部像素 R/G/B 的总平均色。即一个输出像素直接对应
+     * 「全部样本同一块区域的所有原始像素」，不再先逐张块内压缩再跨样本合成。
      */
     private BufferedImage lowSample(List<BufferedImage> imgs, int w, int h, int block, boolean majority) {
         int wb = Math.max(1, w / block), hb = Math.max(1, h / block);
-        int m = wb * hb;
-        List<int[]> downs = new ArrayList<>(imgs.size());
-        for (BufferedImage im : imgs) {
-            int[] px = im.getRGB(0, 0, im.getWidth(), im.getHeight(), null, 0, im.getWidth());
-            downs.add(blockDown(px, im.getWidth(), im.getHeight(), block, wb, hb, majority));
-        }
-        int S = downs.size();
-        int[] outPx = new int[m];
+        int S = imgs.size();
+        int[] outPx = new int[wb * hb];
         if (majority) {
+            // 跨样本块内合并多数：同一输出行带（原图 block 行）逐输出列统计，控制峰值内存
+            int[] buf = new int[w * block];
+            int[][] band = new int[S][w * block];
             HashMap<Integer, Integer> freq = new HashMap<>();
-            for (int i = 0; i < m; i++) {
-                freq.clear();
-                int bestCnt = 0, bestColor = 0;
-                for (int[] d : downs) {
-                    int c = d[i];
-                    int cnt = freq.merge(c, 1, Integer::sum);
-                    if (cnt > bestCnt) {
-                        bestCnt = cnt;
-                        bestColor = c;
-                    }
+            for (int oy = 0; oy < hb; oy++) {
+                int y0 = oy * block;
+                for (int s = 0; s < S; s++) {
+                    imgs.get(s).getRGB(0, y0, w, block, buf, 0, w);
+                    System.arraycopy(buf, 0, band[s], 0, buf.length);
                 }
-                outPx[i] = bestColor | 0xff000000;
+                for (int ox = 0; ox < wb; ox++) {
+                    int x0 = ox * block;
+                    freq.clear();
+                    int bestCnt = 0, bestColor = 0;
+                    for (int s = 0; s < S; s++) {
+                        int[] row = band[s];
+                        for (int dy = 0; dy < block; dy++) {
+                            int base = dy * w + x0;
+                            for (int dx = 0; dx < block; dx++) {
+                                int c = row[base + dx];
+                                int cnt = freq.merge(c, 1, Integer::sum);
+                                if (cnt > bestCnt) {   // 同票保留先出现的颜色（样本顺序靠前）
+                                    bestCnt = cnt;
+                                    bestColor = c;
+                                }
+                            }
+                        }
+                    }
+                    outPx[oy * wb + ox] = bestColor | 0xff000000;
+                }
             }
         } else {
-            long[] sr = new long[m], sg = new long[m], sb = new long[m];
-            for (int[] d : downs) {
-                for (int i = 0; i < m; i++) {
-                    sr[i] += (d[i] >>> 16) & 0xff;
-                    sg[i] += (d[i] >>> 8) & 0xff;
-                    sb[i] += d[i] & 0xff;
+            // 跨样本块内合并均值：全部样本同位置块内的每个原始像素都计入同一条累加器
+            int total = S * block * block;
+            long[] sr = new long[wb * hb], sg = new long[wb * hb], sb = new long[wb * hb];
+            for (BufferedImage im : imgs) {
+                int[] px = im.getRGB(0, 0, w, h, null, 0, w);
+                for (int y = 0; y < hb * block; y++) {
+                    int rowBase = y * w;
+                    int cellRow = (y / block) * wb;
+                    for (int x = 0; x < wb * block; x++) {
+                        int idx = cellRow + x / block;
+                        int c = px[rowBase + x];
+                        sr[idx] += (c >>> 16) & 0xff;
+                        sg[idx] += (c >>> 8) & 0xff;
+                        sb[idx] += c & 0xff;
+                    }
                 }
             }
-            for (int i = 0; i < m; i++) {
+            for (int i = 0; i < outPx.length; i++) {
                 outPx[i] = 0xff000000
-                    | ((int) ((sr[i] + S / 2) / S) << 16)
-                    | ((int) ((sg[i] + S / 2) / S) << 8)
-                    | (int) ((sb[i] + S / 2) / S);
+                    | ((int) ((sr[i] + total / 2) / total) << 16)
+                    | ((int) ((sg[i] + total / 2) / total) << 8)
+                    | (int) ((sb[i] + total / 2) / total);
             }
         }
         BufferedImage out = new BufferedImage(wb, hb, BufferedImage.TYPE_INT_ARGB);
@@ -823,8 +847,8 @@ public class ThinkService {
         BufferedImage avgImg = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         avgImg.setRGB(0, 0, w, h, avgPx, 0, w);
 
-        // 1/16、1/64 多数 / 均值图：先把每张样本按 16×16 / 64×64 块内取「覆盖最多的颜色」或
-        // 「RGB 均值」压缩到约 1/16 / 1/64 尺寸，再对所有压缩样本逐像素取覆盖率最多颜色 / RGB 均值
+        // 1/16、1/64 多数 / 均值图：把所有样本按块对齐切分后，同一块内的全部原始像素跨样本合并统计——
+        // 多数 = 合并集中出现次数最多的颜色；均值 = 合并集 R/G/B 的总平均（不再先逐张压缩再合成）
         BufferedImage m16Img = lowSample(imgs, w, h, 16, true);
         BufferedImage a16Img = lowSample(imgs, w, h, 16, false);
         BufferedImage m64Img = lowSample(imgs, w, h, 64, true);

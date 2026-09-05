@@ -224,7 +224,7 @@
       <span class="status-tag u" id="statusTag">未标记</span>
     </div>
     <div class="imgarea" id="imgarea">
-      <span class="imgplaceholder" id="placeholder">截图目录为空。启动截图任务后，原始截图会保存到 capture/ 目录并自动出现在本列表。</span>
+      <span class="imgplaceholder" id="placeholder">没有图片。启动截图任务后，原始截图会保存到 capture/ 目录并自动出现在本列表。</span>
       <div class="imgwrap" id="imgwrap" style="display:none">
         <img id="mainImg" alt="截图">
         <div id="vline"></div>
@@ -597,7 +597,10 @@ function renderList(){
   }
   if(!L.length){
     const d=document.createElement("li"); d.className="empty";
-    d.textContent = FILTER==="marked" ? "还没有已标记的图片" : FILTER==="all" ? "目录为空" : "🎉 全部图片都已标记";
+    // 目录里根本没有图片 → 统一说「没有图片」；有图片时才按当前筛选给具体提示
+    d.textContent = ALL.length === 0 ? "没有图片"
+      : FILTER === "marked" ? "还没有已标记的图片"
+      : "🎉 全部图片都已标记";
     ul.appendChild(d);
   }
   setSegState();   // 筛选按钮文案 + 选中态一起刷新
@@ -609,7 +612,7 @@ function showEmpty(){
   $("placeholder").style.display = "";
   showZoomCtl(false);
   resetZoom();
-  $("placeholder").textContent = "截图目录为空。截图任务开启后，新截图会自动出现并同步到本列表。";
+  $("placeholder").textContent = "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。";
   $("fname").textContent = "—"; $("fsub").textContent = ""; $("natSize").textContent = "";
   $("statusTag").className = "status-tag u"; $("statusTag").textContent = "无图片";
   $("stateInput").value = ""; setAction("none"); px=null; renderDot();
@@ -1357,7 +1360,7 @@ function openGroup(g){
   }
   $("tkInfo").innerHTML = info;
   $("tkExplain").innerHTML = g.analyzed
-    ? "七张图均为同一画面多次出现的合成：交集图只保留「覆盖率 &gt;90%」的像素（其余透明）；多数 / 均值图逐像素取覆盖率最多颜色 / RGB 均值；带 1/16、1/64 的图先把每张样本按 16×16 / 64×64 块内多数 / 均值压缩，再跨样本合成。列表默认展示为原图一半大小；单击任一对照图打开 80% 视口弹窗，弹窗内默认取能放下的最大整数倍（放不下才缩小适配），单击弹窗内图片在「自适应 ↔ 最大化铺满」间切换，点空白或按 Esc 关闭。"
+    ? "七张图均为同一画面多次出现的合成：交集图只保留「覆盖率 &gt;90%」的像素（其余透明）；多数 / 均值图逐像素取覆盖率最多颜色 / RGB 均值；带 1/16、1/64 的图把所有样本对齐切块后，将同一 16×16 / 64×64 块内的全部像素合并，直接取合并集中覆盖率最多的颜色 / RGB 平均。列表默认展示为原图一半大小；单击任一对照图打开 80% 视口弹窗，弹窗内默认取能放下的最大整数倍（放不下才缩小适配），单击弹窗内图片在「自适应 ↔ 最大化铺满」间切换，点空白或按 Esc 关闭。"
     : (g.canAnalyze ? "样本 ≥2 张，正在自动生成对照图…" : "同组样本达到 2 张后自动生成对照图。");
 }
 
