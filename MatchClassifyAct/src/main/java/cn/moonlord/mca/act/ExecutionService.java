@@ -73,6 +73,9 @@ public class ExecutionService {
     /** 最近一次识别快照（含画面缓存）。 */
     private volatile Snapshot latest = null;
 
+    /** 运行期点击方式（null = 使用 execute.click-mode 配置默认）；控制台页可实时切换，重启后恢复配置默认。 */
+    private volatile String clickMode = null;
+
     private long nextFindFailLogTime = 0;
 
     /* ================================================================ 对外控制 ========== */
@@ -94,6 +97,27 @@ public class ExecutionService {
     public void stop() {
         running.set(false);
         log.info("执行循环已停止（最后一次识别结果保留在界面上）");
+    }
+
+    /** 当前生效的鼠标点击方式（运行期切换值优先；未切换时用 execute.click-mode 默认）。 */
+    public String getClickMode() {
+        String m = clickMode;
+        return (m == null || m.isBlank()) ? executeProperties.getClickMode() : m;
+    }
+
+    /** 运行期切换鼠标点击方式（post = 后台消息 / screen = 前台点击）。非法值被忽略并保留原值。 */
+    public void setClickMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return;
+        }
+        String m = mode.trim().toLowerCase();
+        if (!WindowClicker.MODE_POST.equals(m) && !WindowClicker.MODE_SCREEN.equals(m)) {
+            log.warn("忽略非法的点击方式：{}", mode);
+            return;
+        }
+        clickMode = m;
+        log.info("执行点击方式已切换为：{}（{}）", m,
+                WindowClicker.MODE_SCREEN.equals(m) ? "前台点击：真实鼠标输入，模拟器/游戏需用此项" : "后台消息：完整点击消息序列，不抢鼠标焦点");
     }
 
     /**
@@ -286,21 +310,13 @@ public class ExecutionService {
             if (oc.candidates != null) {
                 candidates = oc.candidates;
             }
-            // 从「命中样本」解析动作定义：动作类型 + 点击坐标（图片像素 = 窗口坐标）
-            if (oc.bestFile != null) {
-                try {
-                    CaptureMark def = classifyStore.readSample(oc.bestFile);
-                    if (def != null) {
-                        if (def.getAction() != null) {
-                            action = def.getAction();
-                        }
-                        left = def.getLeft();
-                        top = def.getTop();
-                    }
-                } catch (Exception e) {
-                    log.warn("读取命中样本 {} 的动作定义失败：{}", oc.bestFile, e.toString());
-                }
+            // 动作定义由识别器随最近似分类带回（读自该分类汇总产物 summary/<dir>/info.json）：
+            // 动作类型 + 点击坐标（图片像素 = 窗口坐标）
+            if (oc.action != null) {
+                action = oc.action;
             }
+            left = oc.clickLeft;
+            top = oc.clickTop;
         }
 
         int w = image == null ? 0 : image.getWidth();
@@ -389,7 +405,7 @@ public class ExecutionService {
             res.put("message", "目标窗口已不存在，无法发送鼠标点击。");
             return res;
         }
-        WindowClicker.Result r = windowClicker.click(window, s.left(), s.top(), executeProperties.getClickMode());
+        WindowClicker.Result r = windowClicker.click(window, s.left(), s.top(), getClickMode());
         res.put("ok", r.ok());
         res.put("mode", r.mode());
         res.put("message", r.message());

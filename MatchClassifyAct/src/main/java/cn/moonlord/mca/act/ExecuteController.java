@@ -45,7 +45,7 @@ public class ExecuteController {
         m.put("running", executionService.isRunning());
         m.put("intervalMs", executeProperties.getIntervalMs());
         m.put("thresholdPercent", executeProperties.getMatchThresholdPercent());
-        m.put("clickMode", executeProperties.getClickMode());
+        m.put("clickMode", executionService.getClickMode());
         return m;
     }
 
@@ -92,6 +92,13 @@ public class ExecuteController {
     @PostMapping("/act")
     public Map<String, Object> act() {
         return executionService.act();
+    }
+
+    /** 实时切换鼠标点击方式（post=后台消息 / screen=前台点击）。 */
+    @PostMapping("/click-mode")
+    public Map<String, Object> clickMode(@RequestBody(required = false) Map<String, String> body) {
+        executionService.setClickMode(body == null ? null : body.get("mode"));
+        return status();
     }
 
     /** 快速标记：把最近一次识别画面另存为指定分类的新样本（识别错了 → 立即纠正，减少后续误判）。 */

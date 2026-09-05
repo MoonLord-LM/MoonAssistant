@@ -33,13 +33,13 @@
   body[data-appmode="exec"] .mark-only{display:none!important}
   body[data-appmode="exec"] .layout{display:none!important}
   body[data-appmode="mark"] #execPane{display:none!important}
-  /* 执行模式：实时画面识别 + 动作执行（上部：画面区 + 右侧识别信息；底部固定操作条，仅「立即识别 / 执行动作」） */
+  /* 执行模式：实时画面识别 + 动作执行（画面顶栏放「立即识别 / 执行动作」，右侧识别信息） */
   #execPane{display:flex;flex-direction:column;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0;box-sizing:border-box}
   .exec-main{flex:1;min-height:0;display:flex;gap:12px}
   .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
   .exec-stage .stagebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-height:42px}
   .exec-stage .fname{font-size:14px;font-weight:600;white-space:nowrap}
-  .exec-stage .dims{font-size:12px;color:var(--muted);border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .exec-stage .dims{font-size:12px;color:var(--muted);border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;white-space:nowrap;font-variant-numeric:tabular-nums;margin-left:auto}
   .exec-stage .spacer{flex:1}
   .exec-area .imgplaceholder{display:flex;align-items:center;justify-content:center}
   .exec-side .hint,.exec-area .hint{display:block;margin:0}
@@ -61,21 +61,17 @@
     background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;min-height:0}
   .exec-side .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:11px 12px}
   .exec-side .edhead{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;margin-bottom:8px;text-transform:uppercase}
+  .exec-side .mopt{display:flex;align-items:flex-start;gap:8px;padding:6px 0;font-size:12.5px;line-height:1.55;color:var(--text);cursor:pointer}
+  .exec-side .mopt input{margin:3px 0 0;accent-color:var(--green);cursor:pointer}
+  .exec-side .mopt b{color:var(--text)}
+  .exec-side .mopt i{font-style:normal;color:var(--muted);font-size:11.5px}
   .kvrow{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:3px 0}
   .kvrow .k{flex:none;width:70px;color:var(--muted)}
   .kvrow .v{flex:1;min-width:0;word-break:break-all;color:var(--text)}
   .kvrow .v.ok{color:var(--green);font-weight:600}
   .kvrow .v.err{color:var(--danger)}
-  .exec-bar{flex:none;display:flex;align-items:center;gap:10px;background:var(--panel);
-    border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
-  .exec-bar .btn{flex:none;justify-content:center;padding:10px 22px;font-size:14px;font-weight:700;border-radius:10px;white-space:nowrap}
-  .exec-bar .msg{flex:1;min-width:0;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #execRefresh{color:#fff;background:linear-gradient(180deg,#5b93f7,#3f7bf0);border:1px solid #3f7bf0}
-  #execRefresh:hover:not(:disabled){filter:brightness(1.07)}
-  #execRefresh:disabled{opacity:.5;cursor:not-allowed;filter:saturate(.4)}
-  #execAct{background:linear-gradient(180deg,#37c97c,#2fbf71);border:1px solid #2fbf71;color:#04120a}
-  #execAct:hover:not(:disabled){filter:brightness(1.07)}
-  #execAct:disabled{opacity:.45;cursor:not-allowed;filter:saturate(.3)}
+  .exec-ops{display:flex;gap:8px}
+  .exec-ops .btn{flex:1;padding:9px 10px;font-size:13px;font-weight:600;border-radius:8px;white-space:nowrap;text-align:center}
   .cand{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px dashed var(--border);font-size:12.5px}
   .cand:last-child{border-bottom:0}
   .cand .cst{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
@@ -292,10 +288,13 @@
   .miniDot.g{background:var(--green)}
   .miniDot.d{background:var(--danger)}
   @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+  @keyframes execspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
   #exitScreen,#exitingScreen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:24px}
   #exitScreen .xt,#exitingScreen .xt{font-size:24px;font-weight:700;color:var(--green)}
   #exitScreen .msg,#exitingScreen .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:8px}
   #exitConfirm,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
+  /* 7 图分值明细弹层：遮罩更暗更不透明，避免后排页面透出来干扰阅读 */
+  #kindScoreModal{background:rgba(2,4,9,.92)}
   #exitConfirm .xcard,#capStopModal .xcard,#xCloseAsk .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
   #exitConfirm .xt2,#capStopModal .xt2,#xCloseAsk .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
   #exitConfirm .msg,#capStopModal .msg,#xCloseAsk .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
@@ -479,16 +478,15 @@
     <div class="stagebar">
       <span class="fname">执行模式 · 实时画面识别</span>
       <span class="dims" id="execMetaChip">—</span>
-      <span class="spacer"></span>
     </div>
     <div class="exec-area" id="execArea">
       <div class="imgplaceholder" id="execPlaceholder">
         <div style="text-align:center;padding:24px">
-          <div style="font-size:26px;line-height:1;margin-bottom:12px;opacity:.7">▶</div>
-          <div>尚未显示画面。点击下方「<b style="color:var(--text)">立即识别</b>」抓取目标窗口最新画面并识别当前状态。</div>
-          <div style="margin-top:10px;font-size:12px;color:#5b6577;line-height:1.7">
-            提示：请先确认目标窗口标题包含 capture.window-keywords（默认 MuMu 系列）；<br>
-            并在「标注模式」给同尺寸画面标注过分类（动作=鼠标点击、带坐标），识别才会命中。</div>
+          <div class="execspin" style="width:28px;height:28px;margin:0 auto 14px;border:3px solid rgba(255,255,255,.15);border-top-color:var(--green);border-radius:50%;animation:execspin 1s linear infinite"></div>
+          <div style="font-size:14px">正在截图识别…</div>
+          <div style="margin-top:8px;font-size:12px;color:#5b6577;line-height:1.7">
+            已自动抓取目标窗口画面并与已标注分类比对，无需手动操作；<br>
+            若长时间无结果，可点右侧「<b style="color:var(--text)">立即识别</b>」重试。</div>
         </div>
       </div>
       <div class="exec-wrap" id="execWrap" style="display:none">
@@ -504,13 +502,13 @@
   <aside class="exec-side">
     <div class="edsec">
       <div class="edhead">识别结果</div>
-      <div class="kvrow"><span class="k">识别时间</span><span class="v" id="execAt">—</span></div>
+      <div class="kvrow"><span class="k">匹配分组</span><span class="v" id="execMatched">—</span></div>
       <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
       <div class="kvrow"><span class="k">分类标注</span><span class="v" id="execState">—</span></div>
       <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
       <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
       <div class="kvrow"><span class="k">差异度</span><span class="v" id="execDiff">—</span></div>
-      <div class="kvrow"><span class="k">样本规模</span><span class="v" id="execSamples">—</span></div>
+      <div class="kvrow"><span class="k">比对分组</span><span class="v" id="execSamples">—</span></div>
       <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
     </div>
 
@@ -524,21 +522,24 @@
     </div>
 
     <div class="edsec">
-      <div class="edhead">操作说明</div>
-      <div class="hint" style="font-size:12px;line-height:1.75">
-        <b style="color:var(--text)">立即识别</b>：抓取目标窗口最新画面，识别一次当前状态；<br>
-        <b style="color:var(--text)">执行动作</b>：复核最新画面后，向目标窗口发送一次鼠标左键点击
-        （默认后台发送、不抢前台；需要真实输入时用 <code>--execute.click-mode=screen</code>）。<br>
-        坐标语义：图片像素 = 窗口相对坐标，识别出的点击点已直接标在画面上。
+      <div class="exec-ops">
+        <button type="button" class="btn green" id="execRefresh" title="重新抓取目标窗口最新画面并识别当前状态">立即识别</button>
+        <button type="button" class="btn primary" id="execAct" disabled
+          title="识别到「鼠标点击」动作后可用，点击坐标会标在画面上">执行动作</button>
+      </div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">点击方式</div>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="post" checked>
+        <span><b>后台消息</b> —— 不抢鼠标焦点，向目标窗口投递完整点击消息序列：先模拟滑入移动、再按下/抬起。<br><i>比单纯投递按下/抬起更接近真实输入；若目标程序仍忽略，请改用下方「前台点击」。</i></span></label>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="screen">
+        <span><b>前台点击</b> —— 把窗口带到前台后模拟一次真实鼠标左键点击。<br><i>模拟器 / 游戏等只认真实输入的程序必须用此项，否则点击会被忽略。</i></span></label>
+      <div class="hint" style="font-size:11.5px;line-height:1.6;margin-top:8px">
+        切换立即生效、无需重启；执行动作前会自动复核最新画面，点击点即画面上标记的位置。
       </div>
     </div>
   </aside>
-  </div>
-
-  <div class="exec-bar">
-    <span class="msg" id="execActHint"></span>
-    <button type="button" class="btn" id="execRefresh">立即识别</button>
-    <button type="button" id="execAct" disabled>执行动作</button>
   </div>
 </section>
 
@@ -2463,7 +2464,7 @@ $("modeSel").addEventListener("change", ()=>{
 });
 
 /* ---------------- 执行模式：实时画面识别 + 动作执行（驱动 /api/execute/*；单次识别，无后台循环） ---------------- */
-let execClickMode = "post";     // 后端配置的点击方式（/api/execute/status.clickMode：post=后台消息 / screen=真实输入）
+let execClickMode = "post";     // 后端配置的点击方式（/api/execute/status.clickMode：post=后台消息 / screen=前台点击）
 let execLatest = null;          // 最近一次 /api/execute/latest 的返回
 let execShownAt = 0;            // 当前画面对应快照的 at（与 /api/execute/frame 配对）
 let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
@@ -2488,13 +2489,25 @@ async function execGet(url, opt){
 /* ---- 参数同步（点击模式等） ---- */
 async function execSyncStatus(){
   const j = await execGet("/api/execute/status");
-  if(j && (j.clickMode === "screen" || j.clickMode === "post")) execClickMode = j.clickMode;
+  if(j && (j.clickMode === "screen" || j.clickMode === "post")) execApplyMode(j.clickMode);
+}
+function syncExecModeUi(){
+  const v = (execClickMode === "post") ? "post" : "screen";
+  document.querySelectorAll('input[name="execModeOpt"]').forEach(r => { r.checked = (r.value === v); });
+}
+function execApplyMode(mode){
+  if(mode !== "screen" && mode !== "post") return;
+  execClickMode = mode;
+  syncExecModeUi();
+  renderExecActBtn(execLatest || null, !!(execLatest && execLatest.recognized && execLatest.action === "click"
+      && Number.isInteger(execLatest.left) && Number.isInteger(execLatest.top)));
 }
 async function execRefreshOnce(){
   const b = $("execRefresh");
   if(!b || b.disabled) return;
   b.disabled = true;
   if($("execAct")) $("execAct").disabled = true;      // 识别进行中暂时不可执行，避免对旧画面误点
+  if(!execFrameShown()) execShowScanning();           // 尚无画面：把中间提示换成「正在截图识别…」
   const j = await execGet("/api/execute/refresh", { method:"POST" });
   b.disabled = false;
   if(!j){ toast("识别失败：接口不可用", "err"); return; }
@@ -2506,9 +2519,26 @@ async function execRefreshOnce(){
 /* ---- 拉取并渲染最新快照 ---- */
 async function execLoadLatest(){
   const j = await execGet("/api/execute/latest");
-  if(!j) return;
+  if(!j) return false;
   execLatest = j;
   renderExecAll();
+  return execFrameShown();     // 是否已展示出真实画面（无画面时中间只显示占位提示）
+}
+/* 画面区当前是否已展示出图片 */
+function execFrameShown(){
+  const w = $("execWrap");
+  return !!(w && w.style.display !== "none");
+}
+/* 中间占位提示：正在截图识别（首次进入 / 手动刷新但尚无画面时显示，避免出现「尚未识别，请手动点击」的误导文案） */
+function execShowScanning(){
+  const ph = $("execPlaceholder"); if(!ph) return;
+  ph.style.display = "";
+  ph.innerHTML =
+    '<div style="text-align:center;padding:24px">' +
+      '<div class="execspin" style="width:26px;height:26px;margin:0 auto 12px;border:3px solid rgba(255,255,255,.15);border-top-color:var(--green);border-radius:50%;animation:execspin 1s linear infinite"></div>' +
+      '<div style="font-size:13.5px">正在截图识别…</div>' +
+      '<div style="margin-top:8px;font-size:12px;color:#5b6577;line-height:1.7">正在抓取目标窗口最新画面并与已标注分类比对，请稍候。</div>' +
+    '</div>';
 }
 function execSetVal(id, txt, cls){
   const e = $(id); if(!e) return;
@@ -2521,9 +2551,9 @@ function renderExecAll(){
   if(!j) return;
   const meta = $("execMetaChip");
   if(meta) meta.textContent = (j.imageWidth > 0 && j.imageHeight > 0)
-      ? (j.imageWidth + "×" + j.imageHeight + " · " + execClock(j.at)) : "—";
+      ? (j.imageWidth + "×" + j.imageHeight) : "—";
 
-  execSetVal("execAt", j.at ? execClock(j.at) : "—");
+  execSetVal("execMatched", j.matchedSample || "—", j.recognized ? "ok" : (j.state ? "err" : ""));
   execSetVal("execCost", (j.captureMs >= 0 && j.classifyMs >= 0)
       ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
 
@@ -2547,7 +2577,8 @@ function renderExecAll(){
   execSetVal("execDiff", (typeof j.bestDiffPercent === "number" && j.bestDiffPercent >= 0)
       ? (j.bestDiffPercent.toFixed(2) + "%" + (j.recognized ? "（达标）" : "（超阈值）")) : "—",
       j.recognized ? "ok" : (j.state ? "err" : ""));
-  execSetVal("execSamples", "同尺寸 " + (j.scannedSamples || 0) + " / 全部 " + (j.totalSamples || 0) + " 张", "");
+  execSetVal("execSamples", "已比对 " + (j.scannedSamples || 0) + " / 全部 " + (j.totalSamples || 0) + " 个分类",
+      j.scannedSamples > 0 && j.totalSamples > j.scannedSamples ? "err" : "");
   execSetVal("execWin", j.windowFound
       ? (j.windowTitle || "已找到窗口")
       : (j.error || "未找到目标窗口"), j.windowFound ? "" : "err");
@@ -2567,24 +2598,22 @@ function renderExecAll(){
 }
 
 function renderExecActBtn(j, clickable){
-  const b = $("execAct"), hint = $("execActHint");
+  const b = $("execAct");
   if(!b) return;
   b.disabled = !clickable || execActBusy;
   b.textContent = "执行动作";
-  if(hint){
-    hint.textContent = clickable
+  b.title = clickable
       ? (execClickMode === "screen"
-          ? "复核最新画面后，把窗口带到前台并在屏幕坐标模拟一次真实鼠标左键点击（screen 模式，要求窗口可见、不被遮挡）。"
-          : "复核最新画面后，向目标窗口后台发送一次鼠标左键点击消息（post 模式，不需窗口在前台、不抢鼠标焦点）。")
-      : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上。";
-  }
+          ? "将复核最新画面后把窗口带到前台做一次真实鼠标点击（前台点击模式，要求窗口可见、不被遮挡）"
+          : "将复核最新画面后向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起（后台消息模式，不抢前台）")
+      : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
 function renderExecCandidates(list){
   const box = $("execCandidates"); if(!box) return;
   box.innerHTML = "";
   if(!list || !list.length){
-    box.innerHTML = '<div class="hint">暂无可用比对样本：请先在标注模式为该尺寸画面保存至少一个带坐标的分类。</div>';
+    box.innerHTML = '<div class="hint">暂无可用比对分组：请在标注模式为每个分类保存 ≥2 张同尺寸样本，并到「汇总分析」生成对照图（7 图齐全才会参与识别）。</div>';
     return;
   }
   const done = execShownMarked;
@@ -2593,9 +2622,19 @@ function renderExecCandidates(list){
     row.className = "cand" + (i === 0 ? " top" : "");
     const stateTxt = execEsc(it.state || "—");
     const diffTxt = (typeof it.diffPercent === "number" && it.diffPercent >= 0) ? it.diffPercent.toFixed(2) + "%" : "—";
-    const fileTxt = it.matchedFile ? ' <span style="color:#556;font-size:11px">' + execEsc(it.matchedFile) + "</span>" : "";
+    const fileTxt = (it.matchedFile && it.matchedFile !== it.state)
+        ? ' <span style="color:#556;font-size:11px">' + execEsc(it.matchedFile) + "</span>" : "";
     row.innerHTML = '<span class="cst">' + stateTxt + fileTxt + "</span>" +
                     '<span class="cd">差异 ' + diffTxt + "</span>";
+    if(Array.isArray(it.kinds) && it.kinds.length){
+      const vbtn = document.createElement("button");
+      vbtn.type = "button";
+      vbtn.className = "mbtn";
+      vbtn.textContent = "7图分值";
+      vbtn.title = "查看该分类 7 张对照图（交集/多数/均值/8块/32块）各自的不匹配点占比分值";
+      vbtn.addEventListener("click", () => openKindScores(it));
+      row.appendChild(vbtn);
+    }
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mbtn";
@@ -2610,6 +2649,46 @@ function renderExecCandidates(list){
   });
 }
 
+/* ---- 7 图分值明细弹层：某候选分类 summary 产物目录里 7 张对照图各自的分值 ---- */
+function openKindScores(it){
+  if(!it || !Array.isArray(it.kinds) || !it.kinds.length){
+    toast("该候选缺少 7 图分值明细（服务端版本过旧或未参与比对）", "err");
+    return;
+  }
+  if($("kindScoreModal")) $("kindScoreModal").remove();
+  const zh = { same:"交集图（全部样本公共区）", max:"逐像素多数合成", avg:"逐像素均值合成",
+               m8:"8×8 块 · 多数色", a8:"8×8 块 · 均值色", m32:"32×32 块 · 多数色", a32:"32×32 块 · 均值色" };
+  const rows = it.kinds.map(ks => {
+    const nm = zh[ks.kind] || ks.kind;
+    const grid = (typeof ks.w === "number" && ks.w > 0 && typeof ks.h === "number" && ks.h > 0)
+        ? (ks.kind === "same" ? "产物尺寸 " : "块网格 ") + ks.w + "×" + ks.h : "—";
+    const score = (typeof ks.score === "number" && ks.score >= 0)
+        ? '<b style="color:' + (ks.score <= 25 ? "var(--green)" : "#e0a04e") + '">' + ks.score.toFixed(2) + "%</b>"
+        : '<span style="color:#778">跳过</span>';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:12.5px">' +
+      '<span>' + escHtml(nm) +
+        '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml(ks.kind + ".png · " + grid) + "</span></span>" +
+      '<span style="white-space:nowrap">' + score + "</span></div>";
+  }).join("");
+  const ov = document.createElement("div");
+  ov.id = "kindScoreModal";
+  ov.className = "modal-ov";
+  ov.innerHTML =
+    '<div class="xcard" style="max-width:580px;width:100%;text-align:left;position:relative">' +
+      '<div class="xt2">7 张对照图分值</div>' +
+      '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
+        "【标注分类：" + escHtml(it.state || "—") + "】<br>" +
+        "【差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比】<br>" +
+        "【色差按 RGB 三维空间距离阈值>=256 判定为不一致】</div>" +
+      '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
+      '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
+    "</div>";
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.addEventListener("click", e => { if(e.target === ov) close(); });   // 点弹层外（旁边）即关闭
+  const ok = $("kindsOk"); if(ok) ok.addEventListener("click", close);
+}
+
 /* ---- 快速标记：把当前画面另存为所选分类的样本（识别错了 → 立即纠正） ---- */
 async function execQuickMark(state, btn){
   if(!state || btn.disabled) return;
@@ -2621,8 +2700,7 @@ async function execQuickMark(state, btn){
   });
   if(j && j.ok){
     execShownMarked = true;
-    toast("已把当前画面存入分类「" + state + "」，下次识别会优先参考它。", "ok");
-    await execRefreshOnce();        // 保存后立即重新识别，展示新的匹配结果
+    toast("已把当前画面存入分类「" + state + "」的样本。需在标注模式对该分类重新执行「汇总分析」，后续识别才会按新样本匹配。", "ok");
   } else {
     btn.disabled = false;
     btn.textContent = "存入分类";
@@ -2720,8 +2798,9 @@ async function execActNow(){
 function execOnModeChange(){
   if(appMode !== "exec") return;
   execSyncStatus().then(async () => {
-    await execLoadLatest();       // 先展示最近一帧画面（若有），避免空窗
-    await execRefreshOnce();      // 再按当前画面识别一次
+    const shown = await execLoadLatest();      // 先展示最近一帧画面（若有），避免空窗
+    if(!shown) execShowScanning();             // 无历史画面：显示「正在截图识别…」，等待下方首次自动识别返回
+    await execRefreshOnce();                   // 进入执行模式即自动截图识别一次（已有实现）
     setTimeout(execFitImage, 80);
   });
 }
@@ -2736,6 +2815,12 @@ function execPollTick(){
   const r = $("execRefresh"), a = $("execAct"), img = $("execImg");
   if(r) r.addEventListener("click", execRefreshOnce);
   if(a) a.addEventListener("click", execActNow);
+  document.querySelectorAll('input[name="execModeOpt"]').forEach(mode => mode.addEventListener("change", async () => {
+    if(!mode.checked) return;
+    const j = await execGet("/api/execute/click-mode", { method:"POST",
+        headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ mode: mode.value }) });
+    execApplyMode(j && j.clickMode ? j.clickMode : mode.value);
+  }));
   if(img) img.addEventListener("click", () => {
     if(execShownAt) openLightbox("/api/execute/frame?at=" + execShownAt,
         "执行模式最新画面（" + execClock(execShownAt) + "）");
