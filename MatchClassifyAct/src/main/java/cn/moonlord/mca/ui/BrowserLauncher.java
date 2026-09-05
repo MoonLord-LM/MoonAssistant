@@ -56,17 +56,22 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
             env("LOCALAPPDATA") + "\\Google\\Chrome\\Application\\chrome.exe",
     };
 
+    /**
+     * 启动就绪后是否自动打开控制台网页（{@code ui.auto-open}，默认 true）。
+     * 为 false 时不自动开网页，仅在日志打印访问地址。
+     */
     @Value("${ui.auto-open:true}")
     private boolean autoOpen;
 
+    /** 自动打开的网页路径（{@code ui.path}，默认 /annotate；根路径 / 亦会跳入该页） */
     @Value("${ui.path:/annotate}")
     private String path;
 
-    /** 控制台窗口尺寸，形如 {@code 宽x高}，例如 {@code 1776x999}；{@code 0x0} 表示不指定交给系统 */
-    @Value("${ui.window-size:1776x999}")
+    /** 控制台应用窗口尺寸（{@code ui.window-size}，默认 1760x990），形如 {@code 宽x高}；{@code 0x0} 表示不指定、交给系统 */
+    @Value("${ui.window-size:1760x990}")
     private String windowSize;
 
-    /** 控制台窗口是否在屏幕可用区域居中展示 */
+    /** 控制台应用窗口是否在屏幕可用区域内居中展示（{@code ui.center}，默认 true） */
     @Value("${ui.center:true}")
     private boolean center;
 

@@ -29,7 +29,7 @@ import java.util.Map;
  *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir）
  *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下七图）
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = same|max|avg|m16|a16|m64|a64；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = same|max|avg|m8|a8|m32|a32；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */
@@ -91,7 +91,7 @@ public class ThinkController {
         return ResponseEntity.ok(t);
     }
 
-    /** 读取分析产物 PNG（kind = same | max | avg | m16 | a16 | m64 | a64；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
+    /** 读取分析产物 PNG（kind = same | max | avg | m8 | a8 | m32 | a32；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
     @GetMapping("/img/{kind}")
     public ResponseEntity<?> image(@PathVariable String kind, @RequestParam String dir) {
         String folder = decodeDir(dir);

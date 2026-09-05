@@ -84,8 +84,8 @@ Java (MatchClassifyAct)
       ├─ AnnotateController            /api/annotate/*：列表 / 图片 / 标注读写
       ├─ AnnotatePageController        / 与 /annotate → static/annotate.html
       ├─ SystemController              POST /api/system/shutdown：退出程序（结束截图任务与服务）
-      ├─ ThinkController + ThinkService 汇总分析（仅供人工目检展示，不参与标注）：同「分类标注（动作一致）」自动分析 → 产物 summary/<分类标注>/same|max|avg|maj16|avg16|maj64|avg64.png + info.json
-      └─ static/annotate.html          标注单页：看图 / 填分类标注 / 定匹配动作(点坐标) / 汇总分析 → 同名 .json
+      ├─ ThinkController + ThinkService 汇总分析（仅供人工目检展示，不参与标注）：同「分类标注（动作一致）」自动分析 → 产物 summary/<分类标注>/same|max|avg|maj8|avg8|maj32|avg32.png + info.json
+      └─ static/annotate.html          标注单页：看图 / 填分类标注 / 定匹配动作(点坐标) / 汇总分析 → 中心表 data.json + 样本归属 json
 
 Native (native/windowcap/windowcap.cpp → WindowsCapture.exe，C++/WinRT /MT 静态链接)
  └─ WGC：按窗口创建 GraphicsCaptureItem → 等第一帧 → CopySubresourceRegion
@@ -149,38 +149,48 @@ Java 侧 `WindowFinder` 优先选择非 LAYERED 且面积最大的候选，仅�
 
 - **入口**：`mvn package` 起服后**自动打开**控制台网页（优先以 Edge/Chrome **应用窗口**方式，退出程序时页面可脚本自关；找不到浏览器时回退系统默认浏览器）。如需禁止自动打开：`java -jar … --ui.auto-open=false`，再手动访问 `http://localhost:8080/annotate`（根路径 `/` 亦跳入）。
 - **使用**：顶栏导航分四段 —— **全部 / 未标注 / 已标注 / 汇总分析**（前三种看普通截图列表）→ 中央看图 → 右侧编辑：
-  - **分类标注**（界面文本，JSON 字段 `state`）：当前画面的分类名（图形程序的画面状态，如 登录页 / 主界面 / 弹窗 / 无响应…）；**所有已使用过的分类标注**以可点击 chip 展示在输入框上方（带边框高亮，右侧数字 = 使用它的已标记图数量），点一下即填入；正在使用中的会绿色高亮。分类标注将作为汇总分析产物目录名（`summary/<分类标注>/`），故**不可包含 `\ / : * ? " < > |` 等无法作为文件名的符号、也不能以 `.` 结尾**（输入时非法符号自动剔除，保存前再次校验）；chip 内右侧 ✎ 可把该分类标注<b>整体重命名</b>——该分类下全部标注 json 的 `state` 批量改为新名，并清理旧 `summary/<旧分类标注>/` 产物目录（图片样本不动，下次汇总分析按需重算）；
-  - **匹配动作**（JSON 字段 `action`）：无动作 / 鼠标点击 —— 选"鼠标点击"后直接在图片上点一下即记录坐标；**一个分类标注只能对应一种匹配动作**（不同动作应视为不同分类）：动作选择下方有实时提示（该分类标注已被多少张图使用、统一动作是什么），与既有动作不一致会提示并阻止保存；
-  - 按钮：**保存并下一张 / 使用上次的标记 / 清除标记 / 重新加载**；保存时写入**图片同名 `.json`**，并把 PNG + json 一起移入 `classify/`，随后<b>随机跳到一张尚未标注</b>的截图（更快覆盖不同画面，全部标完会提示）；
+  - **分类标注**（界面文本，JSON 字段 `state`）：当前画面的分类名（图形程序的画面状态，如 登录页 / 主界面 / 弹窗 / 无响应…）；**所有已使用过的分类标注**以可点击 chip 展示在输入框上方（带边框高亮，右侧数字 = 使用它的已标记图数量），点一下即填入；正在使用中的会绿色高亮。分类标注将作为汇总分析产物目录名（`summary/<分类标注>/`），故**不可包含 `\ / : * ? " < > |` 等无法作为文件名的符号、也不能以 `.` 结尾**（输入时非法符号自动剔除，保存前再次校验）；chip 内右侧 ✎ 可把该分类标注<b>整体重命名</b>——中心表 `data.json` 的 key 与使用该分类的全部样本 json `state` 批量改新名，并清理旧 `summary/<旧分类标注>/` 产物目录（图片样本不动，下次汇总分析按需重算）；
+  - **匹配动作**（JSON 字段 `action`）：无动作 / 鼠标点击 —— 选"鼠标点击"后直接在图片上点一下即记录坐标；**一个分类标注只能对应一种匹配动作与一组坐标**（不同动作/坐标应视为不同分类）：该分类的「动作 + 坐标」是一份<b>分类级统一定义</b>，只存一份在 `classify/data.json`（样本 json 只记归属、不再逐张复制坐标）——分类<b>首次</b>打标时把所选动作与点击坐标固定为该分类定义；之后给同分类加样本，填上分类直接保存即可，坐标自动沿用统一定义（不必逐张再点）；在<b>已标注该分类的图</b>上改动作或重新点坐标再保存 = **重定义该分类**（全组同步，保存前会确认）。动作选择下方有实时提示（该分类统一定义的动作/坐标、已用张数），与统一定义不一致会提示并阻止保存；
+  - 按钮：**保存并下一张 / 使用上次的标记 / 清除标记 / 重新加载**；保存时把分类定义写入中心表 `classify/data.json`、图片同名 json 只写归属 `{"state":"…"}`，并把 PNG 移入 `classify/`，随后<b>随机跳到一张尚未标注</b>的截图（更快覆盖不同画面，全部标完会提示）；
   - **自动带入上次标记**：保存成功后该标记自动作为"上次标记"，切到未标注图时会自动带入编辑区，逐张确认后连续保存即可；
   - 快捷键 `↑`/`↓` 切换图片、`Enter` 保存并下一张；列表每 10 秒自动静默刷新（有新增/变化才重绘），编辑中或页面切后台不发请求。
   - **布局**：右侧标注编辑区在窗口内**纵向居中**，标注控件集中在视野中线附近，方便连续点击；顶栏中部为四段导航（全部 / 未标注 / 已标注 / 汇总分析），**右上角保留「开启截图 / 暂停截图」与「退出程序」两个按钮**；
   - **开启 / 暂停截图（默认不开启）**：截图任务启动后默认关闭、不自动保存任何图；点击「开启截图」（`POST /api/capture/resume`）才按间隔开始后台截图，按钮随之变绿并显示「暂停截图」；再点一次（`POST /api/capture/pause`）即暂停（不再查找窗口、不保存新截图，控制台其余功能不受影响）。页面打开时会先 `GET /api/capture/status` 同步真实状态；
   - **服务端版本自检（后端更新后前端自动刷新）**：前端每 5 秒轮询一次 `GET /api/app/meta`，与页面打开时记录的 `codeTs` 基线比对——该值是「代码构建时间」（`java -jar` 取 jar 文件 mtime，开发目录直接跑取 `static/annotate.html` mtime）。后端重新打包并重启后 `codeTs` 变化，前端自动刷新加载新版页面；若此刻正在编辑未保存，会先提示并挂起刷新，等保存/清除/重新加载成功后再执行，不丢标注。页面从后台切回时也会立刻复核一次。
   - **启动自动开网页 · 退出自动关页**：程序启动就绪后自动用 Edge/Chrome **应用窗口**打开控制台（找不到则回退系统默认浏览器；`--ui.auto-open=false` 可关），截图默认不开启（见上）。点击「退出程序」→ `POST /api/system/shutdown` 结束整个服务进程（若恰有抓帧中的 `WindowsCapture.exe`，关闭钩子会先强制结束它），页面随后自动 `window.close()` **自己关掉**（应用窗口下可被脚本关闭；普通标签页受浏览器策略限制时，页面会显示提示与手动关闭按钮兜底）。若程序被外部结束（崩溃/杀进程/关控制台），页面每 5 秒的心跳探测连续失败后也会触发同样的自动关页。
-  - **汇总分析（自动分组 · 仅供展示，不参与标注）**：顶栏第四段进入**分类标注工作台**——系统按「分类标注相同（匹配动作一致）」把已保存标注截图自动分组，统一一个队列展示。进入本段时，所有「样本 ≥2 且尚未生成对照图」的分组会被**自动异步分析**：逐像素比较后生成**七张对照图** —— `交集图`（每个像素取**覆盖大于 90%** 的值：覆盖率 = 该颜色出现的样本占比，>90% 才保留为不透明，其余透明）、`多数图`（每个像素取**覆盖率最多**的颜色）、`均值图`（每个像素取全部样本的 **RGB 均值**）、`1/16 多数图`（所有样本同一 16×16 块内全部像素合并，取出现次数最多的颜色）、`1/64 多数图`（同上按 64×64 块）、`1/16 均值图`（所有样本同一 16×16 块内全部像素合并，取全部像素的 RGB 均值）、`1/64 均值图`（同上按 64×64 块），主区同时显示覆盖率；结果<b>仅供人工目检参考、不参与标注决策</b>，不会写入任何图片标注或结论（画面标签一律以控制台的人工标注为准）。产物按分类标注落盘为 `summary/<分类标注>/same.png|max.png|avg.png|maj16.png|avg16.png|maj64.png|avg64.png`（分析信息：样本数 / 覆盖率 / 公共点击坐标 / 更新时间等写同目录 `info.json`），可随时整目录删除、下次分析按需重算。<b>单击任意一张图放大为原尺寸大图，再单击图片即还原</b>（按 Esc 也可关闭）。右栏信息精简为【分类标注】【匹配动作】【原始截图张数】【分辨率】四项（覆盖率改在各对照图标题与左侧列表展示）。样本 <2 张的分组不分析并明确提示。
+  - **汇总分析（自动分组 · 仅供展示，不参与标注）**：顶栏第四段进入**分类标注工作台**——系统按「分类标注相同（匹配动作一致）」把已保存标注截图自动分组，统一一个队列展示。进入本段时，所有「样本 ≥2 且尚未生成对照图」的分组会被**自动异步分析**：逐像素比较后生成**七张对照图** —— `交集图`（每个像素取**覆盖大于 90%** 的值：覆盖率 = 该颜色出现的样本占比，>90% 才保留为不透明，其余透明）、`多数图`（每个像素取**覆盖率最多**的颜色）、`均值图`（每个像素取全部样本的 **RGB 均值**）、`1/8 多数图`（所有样本同一 8×8 块内全部像素合并，取出现次数最多的颜色）、`1/32 多数图`（同上按 32×32 块）、`1/8 均值图`（所有样本同一 8×8 块内全部像素合并，取全部像素的 RGB 均值）、`1/32 均值图`（同上按 32×32 块），主区同时显示覆盖率；结果<b>仅供人工目检参考、不参与标注决策</b>，不会写入任何图片标注或结论（画面标签一律以控制台的人工标注为准）。产物按分类标注落盘为 `summary/<分类标注>/same.png|max.png|avg.png|maj8.png|avg8.png|maj32.png|avg32.png`（分析信息：样本数 / 覆盖率 / 公共点击坐标 / 更新时间等写同目录 `info.json`），可随时整目录删除、下次分析按需重算。<b>单击任意一张图放大为原尺寸大图，再单击图片即还原</b>（按 Esc 也可关闭）。右栏顶部有**状态横幅**（样本不足 / 待分析 / 样本有变 / 对照图已生成·覆盖率），下方为【分类标注】【匹配动作】【原始截图张数】【分辨率】四项信息；主区在样本不足或待分析时也会显示对应占位提示而非空白。样本 <2 张的分组不分析并明确提示。
 - **坐标语义**：截图是窗口物理像素内容 → **图片像素 = 窗口相对坐标（Left, Top）**，后续 Act 阶段可直接据此执行鼠标动作。
-- **数据布局**：图片与数据按“处理阶段”分三个目录（均相对程序运行目录，见 §四 目录结构）：
+- **数据布局**：图片与数据按“处理阶段”分目录（均相对程序运行目录，见 §四 目录结构）：
   - `capture/`：后台采集的**原始截图**（未标注，扁平存放，文件名 `IMG_yyyyMMdd_HHmmss.png`）；
-  - `classify/`：**保存标注的瞬间**，PNG 连同图片同名标注 `IMG_x.png → IMG_x.json` 一起移入（数据与图同目录、扁平存放；分类标注记在 `json.state`，供后续 Classify/Act 直接取用）；
+  - `classify/`：**保存标注的瞬间** PNG 移入；图旁同名 json（`IMG_x.png → IMG_x.json`）**只记该图归属的分类**（见下），供后续 Classify/Act 匹配画面取用；
+  - `classify/data.json`：**分类定义表（中心表）** —— 每个分类的动作与坐标只在此保存一份，是「分类 → 动作/坐标」的单一事实来源，后续 Act 阶段直接读它执行（读样本时由“样本 json 的 state + 表定义”合成完整标注，接口字段不变）：
+    ```json
+    { "schema": 1,
+      "states": { "登录页": { "action": "click", "left": 640, "top": 360 } } }
+    ```
   - `summary/<分类标注>/`：汇总分析产物（七张对照图 + `info.json`，样本取自 `classify/` 同标注组，可随时重算）。
-  标注 JSON 示例：
+
+  两张标注文件示例（动作坐标**只**在 `data.json`，样本 json 不重复）：
 
   ```json
-  { "state": "登录页", "action": "click", "left": 640, "top": 360 }
+  // classify/data.json   （states 中每个分类一条）
+  { "登录页": { "action": "click", "left": 640, "top": 360 } }
+  // classify/IMG_xxx.json（每张样本只写归属）
+  { "state": "登录页" }
   ```
 
-  `action`：`none`（无动作，仅分类标注）/ `click`（携带 `left/top`）；未点击时落盘不写 `left/top`。（JSON 字段沿用 `state/action`，界面统一称「分类标注 / 匹配动作」）
-- **API**：`GET /api/annotate/images`（列表含标注摘要）、`GET /api/annotate/image/{name}`（PNG）、
-  `GET / PUT / DELETE /api/annotate/mark/{name}`（标注 CRUD，PUT 校验 action 取值与 click 坐标）、
-  `POST /api/annotate/rename`（分类标注整体改名 `{from,to}`：批量更新该分类全部标注 json 的 `state`，并清掉旧 `summary/<旧分类标注>/` 产物目录；目标名已被其它分类使用或含非法文件名符号则 400）、
+  `action`：`none`（无动作，仅分类标注）/ `click`（携带 `left/top`）。（JSON 字段沿用 `state/action`，界面统一称「分类标注 / 匹配动作」）。**历史数据自动迁移**：老版本“每张 json 自带 action/left/top”的全量写法，在服务首次访问时自动归纳——每个分类按众数生成一条统一定义写入 `data.json`，旧样本 json 就地瘦身为仅 `{state}`（读取兼容旧文件，迁移失败不丢数据，仅日志告警）。
+- **API**：`GET /api/annotate/images`（列表含标注摘要，由“样本 state + 中心表定义”合成，同分类动作坐标一致）、`GET /api/annotate/image/{name}`（PNG）、
+  `GET /api/annotate/defs`（**分类定义表**：全部已定义分类 `{state,action,left,top}`，含暂无样本图的定义；前端填分类时直接带出统一定义）、
+  `GET / PUT / DELETE /api/annotate/mark/{name}`（标注 CRUD。PUT 语义：分类<b>首次</b>定义需提供动作与 click 坐标（写入 `data.json`）；该分类<b>已定义</b>则只登记样本归属、动作坐标一律以统一定义为准；在<b>已标注该分类的图</b>上改动作/坐标视为重定义该分类（全组同步））、
+  `POST /api/annotate/rename`（分类标注整体改名 `{from,to}`：中心表 key 与使用该分类的全部样本 json `state` 一并更新，并清掉旧 `summary/<旧分类标注>/` 产物目录；目标名已被其它分类定义/图片使用或含非法文件名符号则 400）、
   `GET /api/app/meta`（版本探针：返回 `codeTs`=代码构建时间、`startedAt`=本次启动时间，前端据此检测服务端更新并自动刷新）、
   `GET /api/capture/status` / `POST /api/capture/pause` / `POST /api/capture/resume`（右上角「开启/暂停截图」：截图默认关闭，手动开启/暂停后台周期截图，不影响控制台）、
   `POST /api/system/shutdown`（控制台「退出程序」按钮调用：先响应页面，再结束截图任务并关闭整个服务）、
   `GET /api/annotate/think/groups`（分组清单：state+action、样本数、可分析性、是否已分析（七张产物齐全）、覆盖率、产物目录名 `dir`）、
   `POST /api/annotate/think/analyze`（异步分析所有「未分析或样本有变且 ≥2 张」的分组 → 重算七张对照图到 `summary/<dir>/` 并刷新 `info.json`）、
   `GET /api/annotate/think/task/{id}`（轮询分析任务进度）、
-  `GET /api/annotate/think/img/{kind}?dir={dirB64}`（`kind = same | max | avg | m16 | a16 | m64 | a64`，分别对应交集图 / 多数图 / 均值图 / 1-16 多数图 / 1-16 均值图 / 1-64 多数图 / 1-64 均值图；`dirB64` = 分类标注产物目录名的「UTF-8 → Base64」，纯 ASCII 传输、不受容器字符集影响）、
+  `GET /api/annotate/think/img/{kind}?dir={dirB64}`（`kind = same | max | avg | m8 | a8 | m32 | a32`，分别对应交集图 / 多数图 / 均值图 / 1-8 多数图 / 1-8 均值图 / 1-32 多数图 / 1-32 均值图；`dirB64` = 分类标注产物目录名的「UTF-8 → Base64」，纯 ASCII 传输、不受容器字符集影响）、
   `POST /api/annotate/delete`（`{name: 截图文件名}`：把该 PNG 连同同名标注 `.json` 一起移入<b>系统回收站</b>（PowerShell `SendToRecycleBin` 软删除、可还原，控制台不再显示）；只允许删除本程序输出的 `img_*.png` 且写入已满 800ms，不存在则 404）。
 
 ---
@@ -210,20 +220,35 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 运行需**真实桌面会话**（入口已强制 `java.awt.headless=false`），不要用无桌面的服务/SSH 跑。
 启动后自动弹出控制台网页（Edge/Chrome 应用窗口，见 2.6；`--ui.auto-open=false` 可关），但**截图默认不开启**——需在页面点「开启截图」手动开始后台截图。
 
-### 3.3 配置项（application.properties，前缀 `capture.*` 与 `ui.*`）
+### 3.3 配置项（业务可调项默认值固化在 Java，可外部覆盖）
 
-| 配置 | 默认值 | 说明 |
+`application.properties` 只保留应用名与日志三项基础配置；**业务相关可调项不再写入该文件**，
+默认值与说明统一固化在代码里：
+
+- `capture.*` → `config/CaptureProperties`（`@ConfigurationProperties` 字段默认值）；
+- `ui.*` → `ui/BrowserLauncher`（`@Value` 注解里的默认值）；
+- 内嵌 Tomcat 的 URI / 查询串解码字符集（固定 UTF-8）→ `config/WebServerConfig`。
+
+需要覆盖时用 Spring 标准外部化配置即可（优先级高于代码默认值，**无需改代码**）：
+在 `application.properties` 追加同名键、设置环境变量（如 `CAPTURE_INTERVAL_MS`），
+或启动时加命令行参数（如 `java -jar … --capture.interval-ms=1000`，命令行优先级最高）。
+
+| 键 | 默认值 | 说明 |
 |------|--------|------|
-| `capture.window-keywords` | `MuMu模拟器,MuMu安卓设备,MuMu` | 目标图形程序窗口标题关键字（默认值即演示环境 MuMu 模拟器，改成你想操作的任意 GUI 程序标题即可），命中任一即候选，多窗口取面积最大 |
+| `capture.window-keywords` | `MuMu模拟器,MuMu安卓设备,MuMu` | 目标图形程序窗口标题关键字（默认即演示环境 MuMu，改成想自动化的任意 GUI 程序标题即可），命中任一即候选，多窗口取面积最大 |
 | `capture.interval-ms` | `3000` | 截图间隔（毫秒）；截图默认不开启，手动「开启截图」后按此间隔执行 |
 | `capture.capture-dir` | `capture` | 原始截图（未标注）保存目录（相对运行目录，自动创建，已被 .gitignore 忽略） |
-| `capture.classify-dir` | `classify` | 已标注截图 + 同名 `.json` 保存目录（扁平存放） |
+| `capture.classify-dir` | `classify` | 已标注样本（PNG + 归属 json `{state}`）目录；同目录 `data.json` 为分类定义表（每分类动作/坐标一份） |
 | `capture.summary-dir` | `summary` | 汇总分析产物保存目录（内部按「分类标注」分目录，样本取 classify/，可随时重算） |
 | `capture.output-dir` | `captures` | **旧版**单目录（截图/标注/汇总同根）：仅启动时自动迁移用，之后不再读写 |
 | `capture.capture-timeout-ms` | `5000` | 传给采集器的内部抓帧超时（毫秒） |
-| `capture.resize-width` | `1280` | 开启截图时把目标窗口**截图内容区（客户区）宽度**一次调整为该物理像素值：模拟拖动窗口右缘把宽度拖到目标、**高度交给窗口自身等比适配**（MuMu 等模拟器避免 SetWindowPos 硬塞宽高导致画面变形；位置不变；目标窗口最大化会自动还原后调整；窗口被完全遮挡/锁缩放时放弃并提示手动调整）。只在每次「开启截图」时执行一次；若当时窗口未开/最小化，截图任务开始后会自动补做。`0`=不调整 |
+| `capture.resize-width` | `1280` | 截图目标宽（物理像素）：开启截图后，凡是截出来不是「宽×高」的帧一律不保存，并自动用 `SetWindowPos` 把窗口**整体外框**缩放（最大化先还原）后重截验证，直到截出的 PNG 恰好等于目标宽×高才保存。与 `resize-height` 同时 `>0` 才启用（默认 1280×720）；任一设 `0` 则关闭尺寸校验、按旧行为原样保存。注意：需把目标程序内部分辨率/方向配置成同尺寸（如 MuMu 设 1280x720、16:9），否则画面可能变形/带黑边 |
+| `capture.resize-height` | `720` | 截图目标高（物理像素），与 `capture.resize-width` 配套 |
+| `capture.diff-threshold-percent` | `5` | 像素差异去重阈值（%，0~100）：开启后当前画面须与「已保存参考截图」中**每一张**的平均像素差异都 ≥ 该值才保存 PNG，否则视为重复帧丢弃（避免 capture/ 堆满几乎相同的图）；`0` 或负数 = 关闭去重 |
 | `ui.auto-open` | `true` | 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（找不到则回退系统默认浏览器） |
-| `ui.path` | `/annotate` | 自动打开的网页路径 |
+| `ui.path` | `/annotate` | 自动打开的网页路径（根路径 `/` 亦跳入） |
+| `ui.window-size` | `1760x990` | 控制台应用窗口尺寸（宽x高）；`0x0` = 不指定、交给系统 |
+| `ui.center` | `true` | 控制台应用窗口是否在屏幕可用区域内居中展示 |
 
 ---
 
@@ -238,10 +263,11 @@ MatchClassifyAct/
 └─ src/main/
    ├─ java/cn/moonlord/mca/
    │  ├─ MatchClassifyActApplication.java    入口：@EnableScheduling，强制非 headless + Per-Monitor DPI
-   │  ├─ config/CaptureProperties.java       capture.* 配置项绑定
+   │  ├─ config/CaptureProperties.java       capture.* 业务可调项默认值（Java 固化，可外部覆盖）
    │  ├─ config/StoragePaths.java            capture.* 目录配置求值：capture/ classify/ summary/ 三分区
+   │  ├─ config/WebServerConfig.java         内嵌 Tomcat 请求 URI/查询串统一按 UTF-8 解码（代码固化）
    │  ├─ config/LegacyStorageMigrator.java   ApplicationRunner：旧版 captures/ 单目录启动时自动迁移到三分区
-   │  ├─ ui/BrowserLauncher.java             ApplicationReadyEvent：自动以 Edge/Chrome 应用窗口打开控制台网页
+   │  ├─ ui/BrowserLauncher.java             ApplicationReadyEvent：自动以 Edge/Chrome 应用窗口打开控制台网页（ui.* 默认值）
    │  ├─ capture/
    │  │  ├─ WindowInfo.java                  窗口模型：句柄 / 标题 / 屏幕矩形 / 是否最小化
    │  │  ├─ WindowFinder.java                findTarget() 取"面积最大且优先非分层(WS_EX_LAYERED)"的窗口
@@ -251,16 +277,17 @@ MatchClassifyAct/
    │  │  ├─ CaptureControlController.java    /api/capture/status|pause|resume：开启/暂停周期截图（默认关闭）
    │  │  └─ WindowCaptureTask.java           ApplicationRunner + @Scheduled 周期截图（默认 paused=true 不截图，页面手动开启）
    │  └─ mark/
-   │     ├─ CaptureMark.java                 标注模型：state(分类标注) / action(匹配动作 none|click) / left / top
-   │     ├─ AnnotateController.java          REST /api/annotate/*：列图/PNG/标注 CRUD/rename/delete（列图跨 capture/ + classify/ 双根，读图片同名 .json）
+   │     ├─ CaptureMark.java                 标注模型：state(分类标注) / action(匹配动作 none|click) / left / top（API 字段形状）
+   │     ├─ ClassifyStore.java               分类定义中心表 classify/data.json：读样本=“归属 state + 表定义”合成；保存/改名；启动自动归纳旧数据迁移
+   │     ├─ AnnotateController.java          REST /api/annotate/*：列图/PNG/标注 CRUD/defs/rename/delete（列图跨 capture/ + classify/ 双根）
    │     ├─ RecycleBin.java                  PowerShell SendToRecycleBin：把 PNG+同名标注移入系统回收站（可还原）
    │     ├─ AnnotatePageController.java      / 与 /annotate → 转发 static/annotate.html
    │     ├─ SystemController.java            POST /api/system/shutdown：退出程序（结束截图任务与服务）
    │     ├─ AppMetaController.java           GET /api/app/meta：版本探针（codeTs=代码构建时间，前端据此自动刷新）
    │     ├─ ThinkController.java             /api/annotate/think/*：groups / analyze / task / img
-   │     └─ ThinkService.java                自动分组分析（产物落 summary/<分类标注>/：same|max|avg|maj16|avg16|maj64|avg64.png + info.json，单线程异步池，纯展示不参与标注）
+   │     └─ ThinkService.java                自动分组分析（产物落 summary/<分类标注>/：same|max|avg|maj8|avg8|maj32|avg32.png + info.json，单线程异步池，纯展示不参与标注）
    └─ resources/
-      ├─ application.properties              全部可调配置
+      ├─ application.properties              仅应用名与日志格式/级别等基础配置（业务调参默认值见代码）
       ├─ static/annotate.html                标注单页（无外部 CDN，离线可用）
       └─ native/win-x64/WindowsCapture.exe   采集器产物（随 jar 打包，运行时解压到 %TEMP%）
 
@@ -274,10 +301,10 @@ summary/                                     汇总分析产物（按「分类�
       ├─ same.png                            交集图（每个像素取覆盖 >90% 的主流颜色，不足则透明）
       ├─ max.png                             多数图（每个像素取覆盖率最多的颜色）
       ├─ avg.png                             均值图（每个像素取全部样本的 R/G/B 均值）
-      ├─ maj16.png                           1/16 多数图（全部样本同一 16×16 块内所有像素合并，取出现次数最多的颜色）
-      ├─ avg16.png                           1/16 均值图（全部样本同一 16×16 块内所有像素合并，取 RGB 均值）
-      ├─ maj64.png                           1/64 多数图（同上，块为 64×64）
-      ├─ avg64.png                           1/64 均值图（同上，块为 64×64）
+      ├─ maj8.png                            1/8 多数图（全部样本同一 8×8 块内所有像素合并，取出现次数最多的颜色）
+      ├─ avg8.png                            1/8 均值图（全部样本同一 8×8 块内所有像素合并，取 RGB 均值）
+      ├─ maj32.png                           1/32 多数图（同上，块为 32×32）
+      ├─ avg32.png                           1/32 均值图（同上，块为 32×32）
       └─ info.json                           分析记录（state/action、样本数、覆盖率、公共点击坐标、更新时间等）
 ```
 

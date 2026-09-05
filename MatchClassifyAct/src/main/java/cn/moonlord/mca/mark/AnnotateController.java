@@ -1,8 +1,5 @@
 package cn.moonlord.mca.mark;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import cn.moonlord.mca.config.StoragePaths;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.FileSystemResource;
@@ -37,7 +34,7 @@ import java.util.stream.Stream;
  * 控制台标注接口。图片按三个阶段分目录存放：
  * <pre>
  *   capture/   原始截图（未标注）
- *   classify/  标注后截图 + 同名 .json（保存标注时整体从 capture/ 移入）
+ *   classify/  已标注样本：PNG + 归属 json（仅 {state}）；同目录 data.json = 分类定义中心表（动作/坐标，每分类一份）
  *   summary/   汇总分析产物（见 ThinkService）
  * </pre>
  * 列表接口合并 capture/ 与 classify/ 两处（同一文件名优先取 classify/，即已标注版本）。
@@ -54,11 +51,6 @@ public class AnnotateController {
     private static final Set<String> ACTIONS =
         Set.of(CaptureMark.ACTION_NONE, CaptureMark.ACTION_CLICK);
 
-    /** 标注文件统一 UTF-8 + 缩进 + 忽略 null 字段（未点击就不落 left/top） */
-    private static final ObjectMapper JSON = new ObjectMapper()
-        .setSerializationInclusion(JsonInclude.Include.NON_NULL)
-        .enable(SerializationFeature.INDENT_OUTPUT);
-
     /** 截图目录列表项（含已标注内容的摘要，前端列表可直接展示） */
     public record ImageItem(String name, long size, long lastModified,
                             boolean marked, String state, String action,
@@ -67,10 +59,12 @@ public class AnnotateController {
 
     private final StoragePaths storage;
     private final ThinkService thinkService;
+    private final ClassifyStore classifyStore;
 
-    public AnnotateController(StoragePaths storage, ThinkService thinkService) {
+    public AnnotateController(StoragePaths storage, ThinkService thinkService, ClassifyStore classifyStore) {
         this.storage = storage;
         this.thinkService = thinkService;
+        this.classifyStore = classifyStore;
     }
 
     // ------------------------------------------------------------------ 列表
@@ -93,9 +87,9 @@ public class AnnotateController {
             Integer left = null;
             Integer top = null;
             boolean marked = false;
-            Path mark = companionJson(png);
-            if (mark != null && Files.isRegularFile(mark)) {
-                CaptureMark m = readMark(mark);
+            // classify/ 下的样本：动作与坐标以中心表定义为准（样本 json 只存 state 归属）
+            if (png.startsWith(storage.classify())) {
+                CaptureMark m = classifyStore.readSample(e.getKey());
                 if (m != null) {
                     marked = true;
                     state = m.getState();
@@ -170,13 +164,19 @@ public class AnnotateController {
         if (png == null) {
             return ResponseEntity.notFound().build();
         }
-        Path mark = companionJson(png);
-        CaptureMark result = (mark != null && Files.isRegularFile(mark)) ? readMark(mark) : null;
+        // 合成读取：样本 json 的 state + 中心表动作坐标；capture/（未标注）无 json 时返回空标注
+        CaptureMark result = classifyStore.readSample(name);
         return ResponseEntity.ok(result != null ? result : new CaptureMark());
     }
 
     /**
-     * 保存标注：写入 classify/ 下的同名 .json（原子替换）；
+     * 保存标注（分类定义表驱动）：
+     * <ul>
+     *   <li>样本 json 只记录分类归属 {@code {state}}，动作与坐标收敛到 classify/data.json 中心表；</li>
+     *   <li>该分类<b>尚无定义</b> → 以本次提交的 action/left/top 建立定义（首次固定，成为该分类唯一动作）；</li>
+     *   <li>该分类<b>已有定义</b> → 本图只登记归属，动作坐标一律以定义为准（提交的动作/坐标会被定义覆盖）；</li>
+     *   <li>对<b>已标注图</b>改自己的分类的动作/坐标（state 不变）→ 视为<b>重定义该分类</b>，同步到全组样本。</li>
+     * </ul>
      * 若截图还在 capture/（未标注），写入成功后整体移到 classify/（进入“已标注”数据集）。
      */
     @PutMapping("/mark/{name:.+}")
@@ -185,37 +185,84 @@ public class AnnotateController {
         if (png == null) {
             return ResponseEntity.notFound().build();
         }
-        String error = validate(mark);
-        if (error != null) {
-            return ResponseEntity.badRequest().body(error);
+        if (mark == null) {
+            mark = new CaptureMark();
         }
-        Path classify = storage.classify();
-        boolean alreadyClassified = png.startsWith(classify);
+        if (mark.getState() == null) {
+            mark.setState("");
+        }
+        String labelError = invalidDirChar(mark.getState());
+        if (labelError != null) {
+            return ResponseEntity.badRequest().body(labelError);
+        }
+        if (mark.getAction() == null || !ACTIONS.contains(mark.getAction())) {
+            return ResponseEntity.badRequest().body("action 必须是 none / click 之一");
+        }
+        String state = mark.getState().trim();
+        boolean alreadyClassified = png.startsWith(storage.classify());
+
+        // 已标注图当前的分类归属（用于判断“原分类内重定义”）
+        String oldState = null;
+        if (alreadyClassified) {
+            CaptureMark cur = classifyStore.readSample(name);
+            oldState = cur == null ? null : (cur.getState() == null ? "" : cur.getState().trim());
+        }
+        boolean redef = alreadyClassified && oldState != null && !oldState.isEmpty()
+            && oldState.equals(state);
+        CaptureMark existingDef = classifyStore.definitionOf(state);
+
+        CaptureMark adopted;
+        if (existingDef == null || redef) {
+            // 首次定义 / 原分类内重定义：以本次提交内容作为该分类的唯一动作
+            String action = mark.getAction();
+            Integer left = mark.getLeft();
+            Integer top = mark.getTop();
+            if (CaptureMark.ACTION_CLICK.equals(action)) {
+                if (left == null || top == null || left < 0 || top < 0) {
+                    return ResponseEntity.badRequest().body(
+                        "「" + state + "」是首次使用（或重定义），click 动作必须提供非负的点击坐标 left/top");
+                }
+            } else {
+                action = CaptureMark.ACTION_NONE;
+                left = null;
+                top = null;
+            }
+            try {
+                adopted = classifyStore.define(state, action, left, top);
+            } catch (IOException e) {
+                log.error("写分类定义表失败 {}: {}", state, e.toString());
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("写分类定义表失败: " + e.getMessage());
+            }
+        } else {
+            // 已有统一定义：样本归属即保存，动作坐标一律以定义为准（保持同分类动作坐标唯一）
+            adopted = existingDef;
+            log.debug("分类「{}」已有统一定义，采纳定义保存样本 {}", state, name);
+        }
+
         try {
-            Files.createDirectories(classify);
-            Path target = alreadyClassified ? companionJson(png)
-                : classify.resolve(jsonNameOf(png));
-            atomicWriteMark(target, mark);
+            classifyStore.saveSample(name, state);
             if (!alreadyClassified) {
-                // 标注已落盘，再把原始截图从 capture/ 移入 classify/
+                // 样本 json 已落盘 classify/，再把原始截图从 capture/ 移入 classify/
                 try {
-                    Files.move(png, classify.resolve(png.getFileName()));
+                    Files.createDirectories(storage.classify());
+                    Files.move(png, storage.classify().resolve(png.getFileName()));
                 } catch (IOException e) {
                     try {
-                        Files.deleteIfExists(target);   // 移动失败回滚：删掉孤儿 json，截图留在 capture/ 未标注状态
+                        Files.deleteIfExists(classifyStore.sampleJson(name));   // 移动失败回滚：删掉孤儿 json
                     } catch (IOException ignore) {
                     }
                     log.error("标注文件已写入但截图迁移失败，已回滚 {}: {}", png, e.toString());
                     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                         .body("标注数据已写入但截图移入 classify/ 失败，已自动回滚，请重试：" + e.getMessage());
                 }
-                log.debug("标注完成，截图 {}/ → {}/", storage.capture(), classify);
+                log.debug("标注完成，截图 {}/ → {}/", storage.capture(), storage.classify());
             }
-            return ResponseEntity.ok(mark);
+            return ResponseEntity.ok(adopted);
         } catch (IOException e) { // JsonProcessingException 是 IOException 子类
-            log.error("写标注文件失败 {}: {}", png, e.toString());
+            log.error("写样本标注失败 {}: {}", png, e.toString());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body("写标注文件失败: " + e.getMessage());
+                .body("写样本标注失败: " + e.getMessage());
         }
     }
 
@@ -230,7 +277,7 @@ public class AnnotateController {
         if (png == null) {
             return ResponseEntity.notFound().build();
         }
-        Path mark = companionJson(png);
+        Path mark = classifyStore.sampleJson(name);
         Path movedBack = null;
         try {
             if (png.startsWith(storage.classify())) {
@@ -240,7 +287,7 @@ public class AnnotateController {
                 Files.move(png, movedBack);
             }
             try {
-                if (mark != null && Files.exists(mark)) {
+                if (Files.exists(mark)) {
                     Files.delete(mark);
                 }
             } catch (IOException e) {
@@ -265,9 +312,9 @@ public class AnnotateController {
     }
 
     /**
-     * 分类标注整体改名：把 classify/ 下所有 state=from 的标注 json 改为 to，
+     * 分类标注整体改名：中心表 data.json 的 key 与全部使用该分类的样本 json 的 state 一并改为新名，
      * 并清理该分类旧的汇总分析产物目录（summary/&lt;from&gt;）。
-     * 目标名称若已被其它图片使用则拒绝（合并请先处理，避免动作语义混乱）。
+     * 目标名称若已有分类定义或被其它图片使用则拒绝（合并请先处理，避免动作语义混乱）。
      */
     @PostMapping("/rename")
     public ResponseEntity<?> renameState(@RequestBody Map<String, String> body) {
@@ -286,54 +333,17 @@ public class AnnotateController {
         if (labelError != null) {
             return ResponseEntity.badRequest().body(labelError);
         }
-        Path dir = storage.classify();
-        if (!Files.isDirectory(dir)) {
-            return ResponseEntity.ok(Map.of("updated", 0, "purged", 0));
-        }
-        List<Path> targets = new ArrayList<>();
-        try (Stream<Path> s = Files.list(dir)) {
-            for (Path p : (Iterable<Path>) s::iterator) {
-                if (!pngShape(p)) {
-                    continue;
-                }
-                Path mark = companionJson(p);
-                if (!Files.isRegularFile(mark)) {
-                    continue;
-                }
-                CaptureMark m = readMark(mark);
-                if (m == null) {
-                    continue;
-                }
-                String st = m.getState() == null ? "" : m.getState().trim();
-                if (from.equals(st)) {
-                    targets.add(mark);
-                } else if (to.equals(st)) {
-                    return ResponseEntity.badRequest().body("新名称「" + to + "」已被其他图片使用，无法直接改名（如需合并请先自行处理）");
-                }
-            }
+        int updated;
+        try {
+            updated = classifyStore.renameState(from, to);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (IOException e) {
-            log.error("改名时枚举标注目录失败: {}", e.toString());
+            log.error("改名失败 [{} → {}]: {}", from, to, e.toString());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("改名失败：" + e.getMessage());
         }
-        if (targets.isEmpty()) {
-            return ResponseEntity.badRequest().body("没有图片正在使用「" + from + "」，无需改名");
-        }
-        int updated = 0;
-        for (Path mark : targets) {
-            try {
-                CaptureMark m = readMark(mark);
-                if (m == null) {
-                    continue;
-                }
-                m.setState(to);
-                Files.writeString(mark, JSON.writeValueAsString(m));
-                updated++;
-            } catch (IOException e) {
-                log.error("改名写标注失败 {}: {}", mark, e.toString());
-            }
-        }
         int purged = thinkService.purgeArtifactsOfState(from);
-        log.info("分类标注改名「{}」→「{}」：更新 {} 张 json，清理旧产物目录 {} 个", from, to, updated, purged);
+        log.info("分类标注改名「{}」→「{}」：更新 {} 张样本 json，清理旧产物目录 {} 个", from, to, updated, purged);
         return ResponseEntity.ok(Map.of("updated", updated, "purged", purged));
     }
 
@@ -356,8 +366,8 @@ public class AnnotateController {
         }
         List<Path> targets = new ArrayList<>();
         targets.add(png);
-        Path mark = companionJson(png);
-        if (mark != null && Files.isRegularFile(mark)) {
+        Path mark = classifyStore.sampleJson(name);
+        if (Files.isRegularFile(mark)) {
             targets.add(mark);
         }
         try {
@@ -373,32 +383,18 @@ public class AnnotateController {
         }
     }
 
-    // ------------------------------------------------------------------ 校验与工具
+    // ------------------------------------------------------------------ 分类定义（中心表）
 
-    private String validate(CaptureMark m) {
-        if (m.getAction() == null || !ACTIONS.contains(m.getAction())) {
-            return "action 必须是 none / click 之一";
-        }
-        if (CaptureMark.ACTION_CLICK.equals(m.getAction())) {
-            if (m.getLeft() == null || m.getTop() == null || m.getLeft() < 0 || m.getTop() < 0) {
-                return "click 动作必须提供非负的窗口相对坐标 left/top";
-            }
-        } else {
-            // none 不关心坐标，落盘前清空避免历史残留误导
-            m.setLeft(null);
-            m.setTop(null);
-        }
-        if (m.getState() == null) {
-            m.setState("");
-        }
-        // 分类标注将作为汇总分析产物目录名（summary/<分类标注>/），
-        // 不允许包含无法作为文件名的符号，也不允许以 . 结尾（Windows 会裁掉尾部点导致不一致）
-        String labelError = invalidDirChar(m.getState());
-        if (labelError != null) {
-            return labelError;
-        }
-        return null;
+    /**
+     * 全部已定义分类（动作 + 坐标，含尚无样本图的定义），按分类名排序。
+     * 前端用它在“填入分类标注”时直接带出统一定义的动作/坐标，无需逐张统计。
+     */
+    @GetMapping("/defs")
+    public List<CaptureMark> listDefinitions() {
+        return classifyStore.definitions();
     }
+
+    // ------------------------------------------------------------------ 校验与工具
 
     /** 返回说明文字；null = 文本可安全用作产物目录名 */
     private String invalidDirChar(String label) {
@@ -413,26 +409,6 @@ public class AnnotateController {
             return "分类标注不能以 . 结尾（它将用作汇总分析产物目录名）";
         }
         return null;
-    }
-
-    private CaptureMark readMark(Path mark) {
-        try {
-            return JSON.readValue(mark.toFile(), CaptureMark.class);
-        } catch (IOException e) {
-            log.warn("读取标注文件 {} 失败，按未标注处理: {}", mark, e.toString());
-            return null;
-        }
-    }
-
-    private void atomicWriteMark(Path target, CaptureMark mark) throws IOException {
-        Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
-        Files.writeString(tmp, JSON.writeValueAsString(mark));
-        try {
-            Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-            Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        }
     }
 
     /** 校验图片名只落在 classify/ 或 capture/ 内且是 .png，返回其绝对路径；非法返回 null */
@@ -455,15 +431,5 @@ public class AnnotateController {
         }
         String lower = p.getFileName().toString().toLowerCase();
         return lower.endsWith(".png") ? p : null;
-    }
-
-    /** 同名 .json（IMG_x.png → IMG_x.json）；png 未验证时可能返回 null */
-    private Path companionJson(Path png) {
-        return png.getParent().resolve(jsonNameOf(png)).normalize();
-    }
-
-    private String jsonNameOf(Path png) {
-        String n = png.getFileName().toString();
-        return n.substring(0, n.length() - 4) + ".json";
     }
 }

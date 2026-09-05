@@ -46,18 +46,18 @@ import java.util.stream.Stream;
  *       取出现次数最多（同票取样本顺序靠前）的颜色作为该点颜色。</li>
  *   <li><b>均值图</b>（avg.png）：每个像素对全部样本的 R、G、B 分别取平均，
  *       得到一张“各点平均颜色”的合成画面（透明通道统一视为不透明）。</li>
- *   <li><b>1/16 多数图</b>（maj16.png）：按 16×16 网格把所有样本对齐切块，将「同位置的块内全部
+ *   <li><b>1/8 多数图</b>（maj8.png）：按 8×8 网格把所有样本对齐切块，将「同位置的块内全部
  *       像素」跨样本合并成一个集合，输出该集合中出现次数最多的颜色（覆盖率最多，同票取样本顺序
- *       靠前）；即一个输出像素 = 全部样本同一 16×16 块内所有原始像素的众数色，不分步压缩。</li>
- *   <li><b>1/64 多数图</b>（maj64.png）：同上，块为 64×64。</li>
- *   <li><b>1/16 均值图</b>（avg16.png）：按 16×16 网格把所有样本对齐切块，将「同位置的块内全部
+ *       靠前）；即一个输出像素 = 全部样本同一 8×8 块内所有原始像素的众数色，不分步压缩。</li>
+ *   <li><b>1/32 多数图</b>（maj32.png）：同上，块为 32×32。</li>
+ *   <li><b>1/8 均值图</b>（avg8.png）：按 8×8 网格把所有样本对齐切块，将「同位置的块内全部
  *       像素」跨样本合并成一个集合，输出该集合全部像素 R/G/B 的总平均色。</li>
- *   <li><b>1/64 均值图</b>（avg64.png）：同上，块为 64×64。</li>
+ *   <li><b>1/32 均值图</b>（avg32.png）：同上，块为 32×32。</li>
  * </ol>
  *
  * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
  * {@link StoragePaths}），七张图使用固定文件名：
- * {@code same.png / max.png / avg.png / maj16.png / avg16.png / maj64.png / avg64.png}，
+ * {@code same.png / max.png / avg.png / maj8.png / avg8.png / maj32.png / avg32.png}，
  * 分析信息（样本数、覆盖率、公共点击坐标等）
  * 写入同目录 {@code info.json}。产物仅供人工目检展示，<b>不参与任何标注 / 结论决策</b>，
  * 画面标签一律以控制台的人工标注为准。</p>
@@ -84,10 +84,10 @@ public class ThinkService {
     private static final String FILE_SAME = "same.png";   // 交集图（覆盖>90%）
     private static final String FILE_MAX = "max.png";     // 多数图
     private static final String FILE_AVG = "avg.png";     // 均值图
-    private static final String FILE_M16 = "maj16.png";   // 1/16 多数图（16×16 块）
-    private static final String FILE_A16 = "avg16.png";   // 1/16 均值图（16×16 块）
-    private static final String FILE_M64 = "maj64.png";   // 1/64 多数图（64×64 块）
-    private static final String FILE_A64 = "avg64.png";   // 1/64 均值图（64×64 块）
+    private static final String FILE_M8 = "maj8.png";     // 1/8 多数图（8×8 块）
+    private static final String FILE_A8 = "avg8.png";     // 1/8 均值图（8×8 块）
+    private static final String FILE_M32 = "maj32.png";   // 1/32 多数图（32×32 块）
+    private static final String FILE_A32 = "avg32.png";   // 1/32 均值图（32×32 块）
     private static final String FILE_INFO = "info.json";
 
     /** kind → 产物文件名 */
@@ -95,10 +95,10 @@ public class ThinkService {
         "same", FILE_SAME,
         "max", FILE_MAX,
         "avg", FILE_AVG,
-        "m16", FILE_M16,
-        "a16", FILE_A16,
-        "m64", FILE_M64,
-        "a64", FILE_A64);
+        "m8", FILE_M8,
+        "a8", FILE_A8,
+        "m32", FILE_M32,
+        "a32", FILE_A32);
 
     /** 逐行像素处理时的行带高，控制峰值内存 */
     private static final int BAND_H = 64;
@@ -107,7 +107,7 @@ public class ThinkService {
     private static final double SAME_AGREE_RATIO = 0.90;
 
     /** 产物生成规则版本：改动产物生成逻辑后递增，使旧产物自动判 stale 并重算 */
-    private static final int ART_RULE_VERSION = 4;
+    private static final int ART_RULE_VERSION = 5;
 
     /** 单线程池：像素比对较重，串行避免并发打满 CPU */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
@@ -117,6 +117,7 @@ public class ThinkService {
     });
 
     private final StoragePaths storage;
+    private final ClassifyStore classifyStore;
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
 
     /** 单图智能建议任务 */
@@ -129,8 +130,9 @@ public class ThinkService {
         }
     };
 
-    public ThinkService(StoragePaths storage) {
+    public ThinkService(StoragePaths storage, ClassifyStore classifyStore) {
         this.storage = storage;
+        this.classifyStore = classifyStore;
     }
 
     /* ---------------------------------------------------------------- 对外 API */
@@ -243,7 +245,7 @@ public class ThinkService {
                     }
                     sb.append(d.getFileName()).append('{');
                     for (String f : List.of(FILE_SAME, FILE_MAX, FILE_AVG,
-                        FILE_M16, FILE_A16, FILE_M64, FILE_A64, FILE_INFO)) {
+                        FILE_M8, FILE_A8, FILE_M32, FILE_A32, FILE_INFO)) {
                         Path p = d.resolve(f);
                         try {
                             sb.append(f).append('=').append(Files.size(p)).append(',')
@@ -407,14 +409,14 @@ public class ThinkService {
     /** kind 对应的块压缩参数：{块边长, 1=块内多数 / 0=块内均值}；same/max/avg（不压缩）返回边长 1 */
     private int[] kindDown(String kind) {
         switch (kind) {
-            case "m16":
-                return new int[]{16, 1};
-            case "m64":
-                return new int[]{64, 1};
-            case "a16":
-                return new int[]{16, 0};
-            case "a64":
-                return new int[]{64, 0};
+            case "m8":
+                return new int[]{8, 1};
+            case "m32":
+                return new int[]{32, 1};
+            case "a8":
+                return new int[]{8, 0};
+            case "a32":
+                return new int[]{32, 0};
             default:
                 return new int[]{1, 0};
         }
@@ -483,7 +485,7 @@ public class ThinkService {
     }
 
     /**
-     * 1/16、1/64 多数 / 均值图：按 block×block 网格把所有样本对齐切块，将「同位置的块内全部
+     * 1/8、1/32 多数 / 均值图：按 block×block 网格把所有样本对齐切块，将「同位置的块内全部
      * 像素」跨样本合并成一个像素集合（右侧 / 底部不足整块的余边忽略，产物尺寸 w/block × h/block）——
      * 多数图：输出该集合中出现次数最多的颜色（同票取样本顺序靠前的颜色）；
      * 均值图：输出该集合全部像素 R/G/B 的总平均色。即一个输出像素直接对应
@@ -564,7 +566,7 @@ public class ThinkService {
         Map<String, List<CaptureMark>> byKey = new LinkedHashMap<>();
         Map<String, Set<String>> actionsOf = new HashMap<>();
         for (Path p : pngs) {
-            CaptureMark m = readMark(p);
+            CaptureMark m = classifyStore.sampleOf(p);
             if (m == null || trim(m.getState()).isEmpty()) {
                 continue;
             }
@@ -628,7 +630,7 @@ public class ThinkService {
         return out;
     }
 
-    /** 读取分析产物 PNG（kind=same|max|avg|m16|a16|m64|a64，dir=产物目录名，禁止穿越）；非法返回 null */
+    /** 读取分析产物 PNG（kind=same|max|avg|m8|a8|m32|a32，dir=产物目录名，禁止穿越）；非法返回 null */
     public Path resolveArtifact(String kind, String dir) {
         String file = KIND_FILE.get(kind);
         if (file == null) {
@@ -693,7 +695,7 @@ public class ThinkService {
         List<Path> pngs = annotatedPngs();
         List<Path> group = new ArrayList<>();
         for (Path p : pngs) {
-            CaptureMark m = readMark(p);
+            CaptureMark m = classifyStore.sampleOf(p);
             if (m != null && trim(state).equals(trim(m.getState()))
                 && action.equals(m.getAction() == null ? CaptureMark.ACTION_NONE : m.getAction())) {
                 group.add(p);
@@ -710,7 +712,7 @@ public class ThinkService {
             long bestKey = 0;
             int best = 0;
             for (Path p : group) {
-                CaptureMark m = readMark(p);
+                CaptureMark m = classifyStore.sampleOf(p);
                 if (m == null || m.getLeft() == null || m.getTop() == null
                     || m.getLeft() < 0 || m.getTop() < 0) {
                     continue;
@@ -847,12 +849,12 @@ public class ThinkService {
         BufferedImage avgImg = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         avgImg.setRGB(0, 0, w, h, avgPx, 0, w);
 
-        // 1/16、1/64 多数 / 均值图：把所有样本按块对齐切分后，同一块内的全部原始像素跨样本合并统计——
+        // 1/8、1/32 多数 / 均值图：把所有样本按块对齐切分后，同一块内的全部原始像素跨样本合并统计——
         // 多数 = 合并集中出现次数最多的颜色；均值 = 合并集 R/G/B 的总平均（不再先逐张压缩再合成）
-        BufferedImage m16Img = lowSample(imgs, w, h, 16, true);
-        BufferedImage a16Img = lowSample(imgs, w, h, 16, false);
-        BufferedImage m64Img = lowSample(imgs, w, h, 64, true);
-        BufferedImage a64Img = lowSample(imgs, w, h, 64, false);
+        BufferedImage m8Img = lowSample(imgs, w, h, 8, true);
+        BufferedImage a8Img = lowSample(imgs, w, h, 8, false);
+        BufferedImage m32Img = lowSample(imgs, w, h, 32, true);
+        BufferedImage a32Img = lowSample(imgs, w, h, 32, false);
 
         boolean multiAction = stateActions().getOrDefault(state, Set.of()).size() > 1;
         String dir = dirNameOf(state, action, multiAction);
@@ -861,10 +863,10 @@ public class ThinkService {
         atomicWritePng(sameImg, gdir.resolve(FILE_SAME));
         atomicWritePng(maxImg, gdir.resolve(FILE_MAX));
         atomicWritePng(avgImg, gdir.resolve(FILE_AVG));
-        atomicWritePng(m16Img, gdir.resolve(FILE_M16));
-        atomicWritePng(a16Img, gdir.resolve(FILE_A16));
-        atomicWritePng(m64Img, gdir.resolve(FILE_M64));
-        atomicWritePng(a64Img, gdir.resolve(FILE_A64));
+        atomicWritePng(m8Img, gdir.resolve(FILE_M8));
+        atomicWritePng(a8Img, gdir.resolve(FILE_A8));
+        atomicWritePng(m32Img, gdir.resolve(FILE_M32));
+        atomicWritePng(a32Img, gdir.resolve(FILE_A32));
         Files.deleteIfExists(gdir.resolve("half.png"));   // 旧版半分辨率均值图产物已废弃，随重算清理
 
         // 分析记录文件（仅展示参考；不再存储带时间戳的文件名，产物名固定）
@@ -900,10 +902,10 @@ public class ThinkService {
         return Files.isRegularFile(gdir.resolve(FILE_SAME))
             && Files.isRegularFile(gdir.resolve(FILE_MAX))
             && Files.isRegularFile(gdir.resolve(FILE_AVG))
-            && Files.isRegularFile(gdir.resolve(FILE_M16))
-            && Files.isRegularFile(gdir.resolve(FILE_A16))
-            && Files.isRegularFile(gdir.resolve(FILE_M64))
-            && Files.isRegularFile(gdir.resolve(FILE_A64));
+            && Files.isRegularFile(gdir.resolve(FILE_M8))
+            && Files.isRegularFile(gdir.resolve(FILE_A8))
+            && Files.isRegularFile(gdir.resolve(FILE_M32))
+            && Files.isRegularFile(gdir.resolve(FILE_A32));
     }
 
     /** 读取产物目录下的 info.json；不存在/损坏返回空 map */
@@ -943,7 +945,7 @@ public class ThinkService {
     private Map<String, Set<String>> stateActions() {
         Map<String, Set<String>> map = new HashMap<>();
         for (Path p : annotatedPngs()) {
-            CaptureMark m = readMark(p);
+            CaptureMark m = classifyStore.sampleOf(p);
             if (m == null || trim(m.getState()).isEmpty()) {
                 continue;
             }
@@ -1070,26 +1072,6 @@ public class ThinkService {
             g.dispose();
         }
         return out;
-    }
-
-    /** 读取某张截图的标注；缺失或损坏返回 null */
-    private CaptureMark readMark(Path png) {
-        Path json = companionJson(png);
-        if (!Files.isRegularFile(json)) {
-            return null;
-        }
-        try {
-            return JSON.readValue(json.toFile(), CaptureMark.class);
-        } catch (IOException e) {
-            log.warn("读取标注 {} 失败: {}", json, e.toString());
-            return null;
-        }
-    }
-
-    /** 同名 .json */
-    private Path companionJson(Path png) {
-        String n = png.getFileName().toString();
-        return png.getParent().resolve(n.substring(0, n.length() - 4) + ".json").normalize();
     }
 
     /** classify/ 下 IMG_*.png：已标注数据集（文件由“保存标注”操作完整移入，无需 800ms 稳定等待） */

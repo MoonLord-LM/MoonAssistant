@@ -3,17 +3,12 @@ package cn.moonlord.mca.mark;
 import lombok.Data;
 
 /**
- * 单张截图的标注内容，保存为与图片同名的 {@code .json}（如 IMG_x.png → IMG_x.json）。
+ * 单张截图的标注内容（API / 页面统一形状：{@code state/action/left/top}）。
  *
- * <p>JSON 结构（{@code left/top} 仅在动作 click 时出现）：</p>
- * <pre>{@code
- * {
- *   "state":  "登录页",      // 当前画面状态标签（自由文本）
- *   "action": "click",      // none=无动作 | click=鼠标点击
- *   "left":   640,          // 动作 click 时的窗口相对坐标 X（图片像素）
- *   "top":    360           // 动作 click 时的窗口相对坐标 Y
- * }
- * }</pre>
+ * <p><b>存储已中心化</b>：动作与坐标是“分类级定义”，收敛在 {@code classify/data.json}
+ * （每分类一份，见 {@link ClassifyStore}）；图片旁同名 json（IMG_x.png → IMG_x.json）
+ * 只记分类归属 {@code { "state": "登录页" }}。读取时由 {@link ClassifyStore#readSample(String)}
+ * 以“样本 state + 中心表定义”合成本对象，因此对接口与页面保持原字段形状，数据不再逐图冗余。</p>
  *
  * <p>截图输出的是窗口自身的物理像素内容，因此“图片像素坐标”就是“窗口相对坐标”，
  * 后续 Match/Classify/Act 阶段可直接按此坐标执行鼠标动作。</p>
