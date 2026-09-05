@@ -156,9 +156,14 @@
   .toast{background:#20293d;color:#e8edf7;border:1px solid #33405e;border-left:3px solid var(--accent);padding:9px 14px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-width:420px;animation:fadein .18s ease}
   .toast.ok{border-left-color:var(--green)}
   .toast.err{border-left-color:var(--danger)}
-  /* 智能分析 · 未标注图下方的相似度建议条 */
-  .smartbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;border-top:1px solid var(--border);background:#111826;font-size:12px;line-height:1.55;color:var(--muted)}
+  .toast.skip{border-left-color:var(--amber)}
+  /* 智能分析 · 相似度建议条：dock 固定贴在主图区底部。dock 高度恒定占位（class=sugdock-on），
+     bar 的显隐 / 内容行数变化都不会改变主图可用区尺寸 → 截图始终稳定不上下“挤”动。
+     仅「全部 / 未标注」视图（可能出建议）展开占位，其余模式收起为 0。 */
+  .sugdock{flex:none;height:0;overflow:hidden;background:#111826;border-top:1px solid transparent}
+  .sugdock .smartbar{width:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 12px;font-size:12px;line-height:1.55;color:var(--muted);overflow-y:auto}
   .smartbar[hidden]{display:none}
+  body.sugdock-on .sugdock{height:52px;border-top-color:var(--border);display:grid;place-items:center}
   .smartbar .spin{width:13px;height:13px;flex:none;border:2px solid #33405e;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .smartbar .sb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
@@ -166,7 +171,7 @@
   .smartbar .cand b{color:#ffd24d}
   .smartbar .expl{font-size:11px;color:#5f6c88}
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
-  .sb-btn{border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
+  .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
   .sb-btn:hover{background:var(--accent);color:#fff}
   /* 汇总分析 · 对照图卡片：按“原图一半”对齐的网格（列宽由 openGroup 按组分辨率动态设定） */
   #thinkPane{display:none;gap:12px;align-content:start;justify-content:center;width:100%;padding:12px;margin:0}
@@ -241,7 +246,7 @@
   }
 </style>
 </head>
-<body data-mode="none" data-appmode="mark">
+<body data-mode="none" data-appmode="mark" class="sugdock-on">
 
 <header class="topbar">
   <!-- 左上角：工作模式选择（标注模式为默认；执行模式建设中）。合拢时下拉本身即显示当前模式 -->
@@ -325,7 +330,9 @@
         <div class="sub" id="teSub"></div>
       </div>
     </div>
-    <div class="smartbar" id="smartBar" hidden></div>
+    <div class="sugdock" id="smartDock">
+      <div class="smartbar" id="smartBar" hidden></div>
+    </div>
   </section>
 
   <aside class="editor">
@@ -353,8 +360,7 @@
       </div>
 
       <div class="coord" id="coordBox">
-        <span>点击坐标 <b id="coordText">—</b>（窗口相对坐标）</span><br>
-        <span style="color:var(--muted)">再点图片可改</span>
+        <span>点击坐标 <b id="coordText">—</b>，再点图片可改</span>
       </div>
     </div>
 
@@ -705,9 +711,7 @@ function updateHints(){
         msg = "冲突：「" + state + "」分类定义动作是「" + actLabel(def.action) + "」，同一分类只对应一种动作/坐标；请改动作或换分类标注（如需重定义，请打开一张已标注该分类的图修改并保存）。";
       } else {
         cls = "show ok";
-        msg = "「" + state + "」已定义动作「" + actLabel(def.action) + "」"
-          + (u.count > 0 ? "，已用于 " + u.count + " 张图" : "（尚无样本图，本次保存作为首张样本）")
-          + (def.action === "click" ? "；点击坐标 (" + def.left + "," + def.top + ")，直接保存即可（如需改动请重新点图并确认）" : "") + "。";
+        msg = "「" + state + "」已定义动作「" + actLabel(def.action) + "」。";
       }
     } else if(u.count === 0){
       cls = "show info";
@@ -1204,6 +1208,7 @@ let capBusy = false;
 let capIntervalMs = null;            // 后端真实截图间隔（毫秒），由 /api/capture/status 下发
 let capDiffThreshold = null;         // 后端像素去重阈值（%），0 = 关闭去重
 let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
+let lastDropNoticeAtShown = -1;   // 已 toast 提示过的「相似帧丢弃」通知时间戳（去重，同一通知只提示一次）
 
 /* 毫秒间隔 → 人类可读文案（整千显示整秒，否则保留一位小数秒） */
 function fmtCapInterval(ms){
@@ -1505,7 +1510,9 @@ function setStateBanner(g){
     cls = "warn";
     html = '<b>样本有变</b>：新增/改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
-    html = '<b>对照图已生成</b>' + (g.coverage != null ? ' · 覆盖率 <b class="kv">' + fmtCov(g.coverage) + '</b>' : '') + '，即下方七张合成图。';
+    html = g.coverage != null
+      ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>'
+      : '<b>对照图已生成</b>';
   }
   el.className = "tkstate " + cls;
   el.style.display = "";
@@ -1535,6 +1542,7 @@ function enterThink(){
   showZoomCtl(false);      // 汇总分析七图用各自的 lightbox 放大，隐藏主图缩放控件
   resetZoom();
   hideSmartTip();          // 汇总分析模式下不显示智能分析提示条
+  syncSugDock();           // 汇总分析无建议条：收起 dock 占位，主图区扩展到整栏
   $("lstTitle").textContent = "分类标注列表（按匹配度）";
   selKey = null;
   openGroup(null);
@@ -1718,7 +1726,7 @@ function openGroup(g){
   }
   $("tkInfo").innerHTML = info;
   $("tkExplain").innerHTML = g.analyzed
-    ? "七张图均为同一画面多次出现的合成：交集图只保留「覆盖率 &gt;90%」的像素（其余透明）；多数 / 均值图逐像素取覆盖率最多颜色 / RGB 均值；带 1/8、1/32 的图把所有样本对齐切块后，将同一 8×8 / 32×32 块内的全部像素合并，直接取合并集中覆盖率最多的颜色 / RGB 平均。列表默认展示为原图一半大小；单击任一对照图打开 80% 视口弹窗，弹窗内默认整幅可见地缩放（不足等比缩小、空间充足等比放大到尽量占满，四周留少量空白），单击弹窗内图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白或按 Esc 关闭。"
+    ? "单击弹窗内图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白或按 Esc 关闭。"
     : (g.canAnalyze ? "样本 ≥2 张，正在自动生成对照图…" : "样本不足 2 张，无法生成对照图；该分类标注继续增加到 2 张后会自动分析。");
 }
 
@@ -1838,6 +1846,15 @@ function hideSmartTip(){
   $("smartBar").hidden = true;
 }
 
+/* dock 占位是否展开：仅「全部 / 未标注」视图（可能给出建议）恒定占位，其余模式收起为 0。
+   返回是否发生状态变化——变化意味着主图可用区尺寸改变，调用方应重排主图 */
+function syncSugDock(){
+  const on = appMode === "mark" && (FILTER === "all" || FILTER === "unmarked");
+  const had = document.body.classList.contains("sugdock-on");
+  document.body.classList.toggle("sugdock-on", on);
+  return had !== on;
+}
+
 /* 仅当「当前图存在且未标注、且不在汇总分析模式」时展示 */
 function smartTipVisible(){
   return FILTER !== "think" && !!cur() && !cur().marked;
@@ -1937,6 +1954,8 @@ document.querySelectorAll("#filterSeg button").forEach(b=>{
     if(f === "think"){ enterThink(); return; }
     if(FILTER === "think"){ exitThink(); curName = null; }
     FILTER = f;
+    syncSugDock();                             // dock 占位随视图启用/收起：占位变化时立即按新可用区重排当前主图
+    if(naturalW && $("imgwrap").style.display !== "none") applyMainZoom();
     const name = cur() ? cur().name : null;
     if(name && listNow().some(i=>i.name===name)){ renderList(); updateNavButtons(); }
     else if(listNow().length){ selectTarget(listNow()[0].name); }
@@ -2035,9 +2054,10 @@ async function pollTick(){
 }
 
 /* ---------------- 服务端版本检测：后端重新打包/重启后自动刷新页面 ---------------- */
-const META_MS = 5000;
+const META_MS = 2000;      // 每 2 秒探一次：既做版本/存活探测，也借 savedSeq 感知“新截图已保存”以即时刷新列表
 const META_DOWN_LIMIT = 8; // 连续这么多次探不到后端即判定“程序已退出”（容忍快速重启的间隙）
 let baseCodeTs = null;     // 页面打开时记录的后端代码构建时间（基线）
+let lastSavedSeqShown = null;  // 已同步过的截图保存计数（基线；变化 = 有新截图落盘，需刷新列表）
 let pendingReload = false; // 编辑未保存时挂起的刷新（保存后再执行）
 let metaDown = 0;          // 连续探测失败计数
 let metaGone = false;      // 是否已判定程序退出（只触发一次）
@@ -2057,9 +2077,23 @@ async function checkAppVersion(){
       if(!capPaused){ capPaused = true; renderCapBtn(); }   // 后端已暂停：按钮恢复为「开启截图」
       showCapStopModal(stopReason);
     }
+    // 相似帧丢弃通知：画面与已保存参考截图差异过小被去重不保存 → toast 提示（后端已按 30s 节流，此处仅按时间戳去重）
+    const dn = j && j.dropNotice;
+    if(dn && dn.at && dn.at !== lastDropNoticeAtShown){
+      lastDropNoticeAtShown = dn.at;
+      toast(dn.text || "最新截图与已有画面差异较小，不做保存", "skip");
+    }
     const ts = Number(j && j.codeTs) || 0;
     if(!ts) return;
-    if(baseCodeTs === null){ baseCodeTs = ts; return; }   // 首次：只记基线，不做比对
+    if(baseCodeTs === null){ baseCodeTs = ts; lastSavedSeqShown = Number(j && j.savedSeq) || 0; return; }   // 首次：只记基线（含截图计数），不做比对
+    // 后端保存计数递增 = 刚有一张新截图落盘：立即静默刷新列表，无需等 10s 后台轮询；
+    // 编辑中或汇总分析/执行模式下不抢，避免打扰当前操作（保存成功那一步本来就会统一同步列表）
+    const saved = Number(j && j.savedSeq) || 0;
+    if(saved !== lastSavedSeqShown){
+      lastSavedSeqShown = saved;
+      // 保存采用「.tmp 写入 → 原子改名 .png」：.png 一旦出现即完整，列表按后缀即可即时列出，无需延迟补刷
+      if(!dirty && appMode === "mark" && FILTER !== "think") refreshSilent();
+    }
     if(ts === baseCodeTs) return;
     baseCodeTs = ts;                                       // 已变化：去重，避免反复提示
     if(dirty){
@@ -2109,6 +2143,7 @@ let appMode = "mark";                       // 当前工作模式：mark=默认�
 function setAppMode(m){
   appMode = m;
   document.body.setAttribute("data-appmode", m);
+  syncSugDock();
   if(m === "exec"){
     toast("已切换到「执行模式」——界面建设中，标注界面已隐藏。", "ok");
   } else {

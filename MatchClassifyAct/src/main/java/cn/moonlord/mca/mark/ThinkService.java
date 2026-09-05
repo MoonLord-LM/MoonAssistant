@@ -614,12 +614,23 @@ public class ThinkService {
             }
             out.add(g);
         }
-        // 便于浏览：未分析 / 待重分析的组合在前，其余按组合名排
+        // 按“匹配度”排序（对应前端列表标题「分类标注列表（按匹配度）」）：
+        // 汇总完成（产物齐全且样本未变）的组合排前，匹配度取交集图像素覆盖率（coverage），高者靠前；
+        // 匹配度相同按「分类标注 → 动作」文字升序；其余（未分析 / 样本有变待重算 / 不足）排后，同样按文字升序。
         out.sort((a, b) -> {
             boolean ad = Boolean.TRUE.equals(a.get("analyzed")) && !Boolean.TRUE.equals(a.get("stale"));
             boolean bd = Boolean.TRUE.equals(b.get("analyzed")) && !Boolean.TRUE.equals(b.get("stale"));
             if (ad != bd) {
-                return ad ? 1 : -1;
+                return ad ? -1 : 1;
+            }
+            if (ad) {
+                Object ca = a.get("coverage"), cb = b.get("coverage");
+                double x = ca instanceof Number na ? na.doubleValue() : -1d;
+                double y = cb instanceof Number nb ? nb.doubleValue() : -1d;
+                int c = Double.compare(y, x);   // 覆盖率（匹配度）降序
+                if (c != 0) {
+                    return c;
+                }
             }
             int c = String.valueOf(a.get("state")).compareTo(String.valueOf(b.get("state")));
             if (c != 0) {
@@ -1074,7 +1085,7 @@ public class ThinkService {
         return out;
     }
 
-    /** classify/ 下 IMG_*.png：已标注数据集（文件由“保存标注”操作完整移入，无需 800ms 稳定等待） */
+    /** classify/ 下 IMG_*.png：已标注数据集（保存标注时完整移入；写入端统一 .tmp→原子改名，半成品按后缀天然排除） */
     private List<Path> annotatedPngs() {
         List<Path> pngs = new ArrayList<>();
         Path dir = storage.classify();
@@ -1090,17 +1101,10 @@ public class ThinkService {
         return pngs;
     }
 
-    /** capture/（未标注）截图需同时满足命名规范且写入完成（>800ms），避免读半个文件 */
+    /** capture/（未标注）截图：命名规范且非空即可读。写入端是「.png.tmp → 原子改名 .png」，
+     *  `.png` 出现即完整落盘（写入中的 .png.tmp 不符合 img_*.png 命名），无需时间等待 */
     private boolean isCapturedPng(Path p) {
-        if (!pngShape(p)) {
-            return false;
-        }
-        try {
-            return nonEmpty(p)
-                && System.currentTimeMillis() - Files.getLastModifiedTime(p).toMillis() > 800;
-        } catch (IOException e) {
-            return false;
-        }
+        return pngShape(p) && nonEmpty(p);
     }
 
     private boolean pngShape(Path p) {

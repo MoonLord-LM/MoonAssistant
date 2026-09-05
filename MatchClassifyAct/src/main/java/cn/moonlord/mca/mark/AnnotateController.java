@@ -73,10 +73,10 @@ public class AnnotateController {
     public List<ImageItem> listImages() throws IOException {
         // 同一文件名可能跨目录，优先取 classify/（已标注）；capture/ 只在无同名时兜底
         Map<String, Path> byName = new TreeMap<>();
-        for (Path p : listPngs(storage.classify(), false)) {
+        for (Path p : listPngs(storage.classify())) {
             byName.put(p.getFileName().toString(), p);
         }
-        for (Path p : listPngs(storage.capture(), true)) {
+        for (Path p : listPngs(storage.capture())) {
             byName.putIfAbsent(p.getFileName().toString(), p);
         }
         List<ImageItem> items = new ArrayList<>(byName.size());
@@ -110,15 +110,16 @@ public class AnnotateController {
         return items;
     }
 
-    /** 枚举某目录下 IMG_*.png；stable=true 时要求写入已完成（未满 800ms 的半文件不列） */
-    private List<Path> listPngs(Path dir, boolean stable) {
+    /** 枚举某目录下 IMG_*.png。半成品过滤靠「后缀」而非时间窗：
+     *  所有 PNG 均由写端「先写 .png.tmp → 原子改名 .png」产生，`.png` 一旦出现即完整落盘；
+     *  仍在写入的 `.png.tmp` 不符合 img_*.png 命名，天然不会被列出来。 */
+    private List<Path> listPngs(Path dir) {
         List<Path> pngs = new ArrayList<>();
         if (!Files.isDirectory(dir)) {
             return pngs;
         }
         try (Stream<Path> s = Files.list(dir)) {
-            s.filter(p -> pngShape(p) && (!stable || settled(p)))
-             .forEach(pngs::add);
+            s.filter(this::pngShape).forEach(pngs::add);
         } catch (IOException e) {
             log.debug("枚举目录失败 {}: {}", dir, e.toString());
         }
@@ -131,16 +132,6 @@ public class AnnotateController {
         }
         String n = p.getFileName().toString().toLowerCase();
         return n.startsWith("img_") && n.endsWith(".png");
-    }
-
-    /** 过滤条件：刚写入未写完的 PNG 不列出，避免前端拿到半个文件 */
-    private boolean settled(Path p) {
-        try {
-            return Files.size(p) > 0
-                && System.currentTimeMillis() - Files.getLastModifiedTime(p).toMillis() > 800;
-        } catch (IOException e) {
-            return false;
-        }
     }
 
     // ------------------------------------------------------------------ 图片
@@ -360,10 +351,7 @@ public class AnnotateController {
         if (png == null || !pngShape(png)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("截图不存在");
         }
-        // capture/ 下可能还在写入的原图不允许删除；classify/ 里都是保存标注时完整移入的完成文件，不受限
-        if (!png.startsWith(storage.classify()) && !settled(png)) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("截图尚未写入完成");
-        }
+        // 文件命名 img_*.png 只会在「.tmp 写入完成、原子改名」后出现，因此能枚举/删除的都是完整文件，无需时间等待
         List<Path> targets = new ArrayList<>();
         targets.add(png);
         Path mark = classifyStore.sampleJson(name);

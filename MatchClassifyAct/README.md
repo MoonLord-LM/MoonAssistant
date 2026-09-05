@@ -191,7 +191,7 @@ Java 侧 `WindowFinder` 优先选择非 LAYERED 且面积最大的候选，仅�
   `POST /api/annotate/think/analyze`（异步分析所有「未分析或样本有变且 ≥2 张」的分组 → 重算七张对照图到 `summary/<dir>/` 并刷新 `info.json`）、
   `GET /api/annotate/think/task/{id}`（轮询分析任务进度）、
   `GET /api/annotate/think/img/{kind}?dir={dirB64}`（`kind = same | max | avg | m8 | a8 | m32 | a32`，分别对应交集图 / 多数图 / 均值图 / 1-8 多数图 / 1-8 均值图 / 1-32 多数图 / 1-32 均值图；`dirB64` = 分类标注产物目录名的「UTF-8 → Base64」，纯 ASCII 传输、不受容器字符集影响）、
-  `POST /api/annotate/delete`（`{name: 截图文件名}`：把该 PNG 连同同名标注 `.json` 一起移入<b>系统回收站</b>（PowerShell `SendToRecycleBin` 软删除、可还原，控制台不再显示）；只允许删除本程序输出的 `img_*.png` 且写入已满 800ms，不存在则 404）。
+  `POST /api/annotate/delete`（`{name: 截图文件名}`：把该 PNG 连同同名标注 `.json` 一起移入<b>系统回收站</b>（PowerShell `SendToRecycleBin` 软删除、可还原，控制台不再显示）；只允许删除本程序输出的 `img_*.png`——该类文件只经「`.tmp` 写入完成 → 原子改名」产生，出现即完整，`.tmp` 半成品不会出现在列表中，不存在则 404）。
 
 ---
 
@@ -244,7 +244,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `capture.capture-timeout-ms` | `5000` | 传给采集器的内部抓帧超时（毫秒） |
 | `capture.resize-width` | `1280` | 截图目标宽（物理像素）：开启截图后，凡是截出来不是「宽×高」的帧一律不保存，并自动用 `SetWindowPos` 把窗口**整体外框**缩放（最大化先还原）后重截验证，直到截出的 PNG 恰好等于目标宽×高才保存。与 `resize-height` 同时 `>0` 才启用（默认 1280×720）；任一设 `0` 则关闭尺寸校验、按旧行为原样保存。注意：需把目标程序内部分辨率/方向配置成同尺寸（如 MuMu 设 1280x720、16:9），否则画面可能变形/带黑边 |
 | `capture.resize-height` | `720` | 截图目标高（物理像素），与 `capture.resize-width` 配套 |
-| `capture.diff-threshold-percent` | `5` | 像素差异去重阈值（%，0~100）：开启后当前画面须与「已保存参考截图」中**每一张**的平均像素差异都 ≥ 该值才保存 PNG，否则视为重复帧丢弃（避免 capture/ 堆满几乎相同的图）；`0` 或负数 = 关闭去重 |
+| `capture.diff-threshold-percent` | `5` | 像素差异去重阈值（%，0~100）：开启后当前画面须与「已保存参考截图」中**每一张**的平均像素差异都 ≥ 该值才保存 PNG，否则视为重复帧丢弃（避免 capture/ 堆满几乎相同的图）；`0` 或负数 = 关闭去重。被丢弃时控制台右下角会低频弹出「最新截图和〔窗口名〕已有画面差异较小，不做保存」提示（画面静止后约 30 秒一条，附带已忽略张数） |
 | `ui.auto-open` | `true` | 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（找不到则回退系统默认浏览器） |
 | `ui.path` | `/annotate` | 自动打开的网页路径（根路径 `/` 亦跳入） |
 | `ui.window-size` | `1760x990` | 控制台应用窗口尺寸（宽x高）；`0x0` = 不指定、交给系统 |

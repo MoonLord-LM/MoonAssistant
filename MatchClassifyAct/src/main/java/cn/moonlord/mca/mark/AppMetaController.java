@@ -21,8 +21,14 @@ import java.util.Map;
  * ① 以单个 jar / 目录运行时取其 mtime；② 否则取 classpath 中
  * static/annotate.html 所在部署根（可执行 jar 取其外层 jar 的 mtime）；</p>
  *
- * <p>除版本探针外，meta 还携带截图任务的「自动暂停原因」：
- * 截图 resize 持续无法达标自动停止时，前端据此弹出错误提示。</p>
+ * <p>除版本探针外，meta 还携带截图任务的动态提示事件：
+ * <ul>
+ *   <li>{@code captureStopReason}：截图 resize 持续无法达标自动停止时，前端据此弹出错误提示；</li>
+ *   <li>{@code dropNotice}（{at, text}）：画面与已保存参考截图差异过小、相似帧被丢弃时，
+ *       前端据此 toast 提示「最新截图和窗口画面差异较小，不做保存」；</li>
+ *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
+ *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）。</li>
+ * </ul></p>
  */
 @Slf4j
 @RestController
@@ -39,9 +45,17 @@ public class AppMetaController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("codeTs", codeTs);
         m.put("startedAt", startedAt);
+        m.put("savedSeq", windowCaptureTask.getSavedSeq());
         String reason = windowCaptureTask.getAutoStopReason();
         if (reason != null) {
             m.put("captureStopReason", reason);   // 非空 = 截图任务刚因 resize 持续不成功而自动暂停
+        }
+        WindowCaptureTask.DropNotice notice = windowCaptureTask.getDropNotice();
+        if (notice != null) {
+            Map<String, Object> drop = new LinkedHashMap<>();
+            drop.put("at", notice.at);
+            drop.put("text", notice.text);
+            m.put("dropNotice", drop);            // 非空 = 最近一次因画面与参考图太像而丢弃了相似帧
         }
         return m;
     }
