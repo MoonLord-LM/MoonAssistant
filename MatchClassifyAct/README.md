@@ -15,7 +15,8 @@ Classify  —— 判定画面属于哪个分类标注（登录页 / 主界面 / 
 Act       —— 根据分类结果执行鼠标移动 / 点击（JNA SendInput）
 ```
 
-> 当前状态：已完成【后台画面采集（WGC）+ 控制台人工标注】阶段，Match / Classify / Act 待接入（见 §五 待办）。
+> 当前状态：已完成「后台画面采集（WGC）→ 控制台人工标注 → 执行模式（实时识别 + 一键执行点击）」三段主链路。
+> 控制台左上角「工作模式」下拉在 **标注模式 / 执行模式** 间切换，执行模式即 Act 阶段的运行端（见 §2.7）。
 
 ---
 
@@ -80,7 +81,11 @@ Java (MatchClassifyAct)
  ├─ WindowResizer                      截图尺寸 ≠ capture.resize-width×resize-height 时，SetWindowPos 把窗口外框强制缩放到截图恰好达标（不达标不保存，由任务循环自动一直调窗重试）
  ├─ CaptureControlController           /api/capture/status|pause|resume：右上角「开启/暂停截图」（默认关闭）
  ├─ ui/BrowserLauncher                 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台网页（ui.auto-open=false 可关）
- └─ 控制台（web，人工打标 → 喂给后续 Classify/Act 的样本数据，见 2.6）
+ ├─ act/（执行模式，见 2.7）ExecutionService 执行循环：周期「截图（与标注模式同一套调窗对齐）→ FrameClassifier 像素比对识别 → 发布 Snapshot」
+ │    ├─ ExecuteController              /api/execute/status|start|stop|refresh|latest|frame|act
+ │    ├─ FrameClassifier                当前画面与 classify/ 已标注样本逐张比对 → 最近似分类与差异度（≤ execute.match-threshold-percent 才判已识别）
+ │    └─ WindowClicker                  把「动作坐标（图片像素=窗口坐标）」发成鼠标左键点击：post=向窗口 PostMessage / screen=SetCursorPos+mouse_event
+ └─ 控制台（web，人工打标 → 喂给 Classify/Act 的样本数据，见 2.6；执行模式页见 2.7）
       ├─ AnnotateController            /api/annotate/*：列表 / 图片 / 标注读写
       ├─ AnnotatePageController        / 与 /annotate → static/annotate.html
       ├─ SystemController              POST /api/system/shutdown：退出程序（结束截图任务与服务）
@@ -148,7 +153,7 @@ Java 侧 `WindowFinder` 优先选择非 LAYERED 且面积最大的候选，仅�
 截图只是原料（画面来自你通过标题关键字指定的**任意图形程序窗口**），分类标注（分类名）与匹配动作需要人来确认。MCA 内置一个**零外部依赖**的网页控制台：
 
 - **入口**：`mvn package` 起服后**自动打开**控制台网页（优先以 Edge/Chrome **应用窗口**方式，退出程序时页面可脚本自关；找不到浏览器时回退系统默认浏览器）。如需禁止自动打开：`java -jar … --ui.auto-open=false`，再手动访问 `http://localhost:8080/annotate`（根路径 `/` 亦跳入）。
-- **使用**：顶栏导航分四段 —— **全部 / 未标注 / 已标注 / 汇总分析**（前三种看普通截图列表）→ 中央看图 → 右侧编辑：
+- **使用**：左上角「工作模式」下拉在 **标注模式 / 执行模式** 间切换（标注模式为默认；执行模式=实时识别 + 一键执行，见 §2.7）。标注模式顶栏导航分四段 —— **全部 / 未标注 / 已标注 / 汇总分析**（前三种看普通截图列表）→ 中央看图 → 右侧编辑：
   - **分类标注**（界面文本，JSON 字段 `state`）：当前画面的分类名（图形程序的画面状态，如 登录页 / 主界面 / 弹窗 / 无响应…）；**所有已使用过的分类标注**以可点击 chip 展示在输入框上方（带边框高亮，右侧数字 = 使用它的已标记图数量），点一下即填入；正在使用中的会绿色高亮。分类标注将作为汇总分析产物目录名（`summary/<分类标注>/`），故**不可包含 `\ / : * ? " < > |` 等无法作为文件名的符号、也不能以 `.` 结尾**（输入时非法符号自动剔除，保存前再次校验）；chip 内右侧 ✎ 可把该分类标注<b>整体重命名</b>——中心表 `data.json` 的 key 与使用该分类的全部样本 json `state` 批量改新名，并清理旧 `summary/<旧分类标注>/` 产物目录（图片样本不动，下次汇总分析按需重算）；
   - **匹配动作**（JSON 字段 `action`）：无动作 / 鼠标点击 —— 选"鼠标点击"后直接在图片上点一下即记录坐标；**一个分类标注只能对应一种匹配动作与一组坐标**（不同动作/坐标应视为不同分类）：该分类的「动作 + 坐标」是一份<b>分类级统一定义</b>，只存一份在 `classify/data.json`（样本 json 只记归属、不再逐张复制坐标）——分类<b>首次</b>打标时把所选动作与点击坐标固定为该分类定义；之后给同分类加样本，填上分类直接保存即可，坐标自动沿用统一定义（不必逐张再点）；在<b>已标注该分类的图</b>上改动作或重新点坐标再保存 = **重定义该分类**（全组同步，保存前会确认）。动作选择下方有实时提示（该分类统一定义的动作/坐标、已用张数），与统一定义不一致会提示并阻止保存；
   - 按钮：**保存并下一张 / 使用上次的标记 / 清除标记 / 重新加载**；保存时把分类定义写入中心表 `classify/data.json`、图片同名 json 只写归属 `{"state":"…"}`，并把 PNG 移入 `classify/`，随后<b>随机跳到一张尚未标注</b>的截图（更快覆盖不同画面，全部标完会提示）；
@@ -159,7 +164,7 @@ Java 侧 `WindowFinder` 优先选择非 LAYERED 且面积最大的候选，仅�
   - **截图结果右下角即时提示**：开启截图后每完成一轮（默认约 3 秒）都会即时提示——保存成功显示「已保存截图 `IMG_xx.png`」；画面与已保存参考截图差异小于 `capture.diff-threshold-percent`（默认 5%）被判定重复丢弃时显示「当前画面与截图「参考图名」差异小于 5%，本次不保存」。提示为**单条替换式**（新结果直接替换旧条、约 2 秒后自动淡出，不叠加刷屏）：后端每轮把结果写入 `/api/app/meta` 的 `shotNotice`（at/kind/name/pct），前端轮询取走按时间戳去重——截图默认 3 秒一轮、页面轮询 2 秒一次，故每个结果都不会漏；
   - **服务端版本自检（后端更新后前端自动刷新）**：前端每 5 秒轮询一次 `GET /api/app/meta`，与页面打开时记录的 `codeTs` 基线比对——该值是「代码构建时间」（`java -jar` 取 jar 文件 mtime，开发目录直接跑取 `static/annotate.html` mtime）。后端重新打包并重启后 `codeTs` 变化，前端自动刷新加载新版页面；若此刻正在编辑未保存，会先提示并挂起刷新，等保存/清除/重新加载成功后再执行，不丢标注。页面从后台切回时也会立刻复核一次。
   - **启动自动开网页 · 退出自动关页**：程序启动就绪后自动用 Edge/Chrome **应用窗口**打开控制台（找不到则回退系统默认浏览器；`--ui.auto-open=false` 可关），截图默认不开启（见上）。点击「退出程序」→ `POST /api/system/shutdown` 结束整个服务进程（若恰有抓帧中的 `WindowsCapture.exe`，关闭钩子会先强制结束它），页面随后自动 `window.close()` **自己关掉**（应用窗口下可被脚本关闭；普通标签页受浏览器策略限制时，页面会显示提示与手动关闭按钮兜底）。若程序被外部结束（崩溃/杀进程/关控制台），页面每 5 秒的心跳探测连续失败后也会触发同样的自动关页。
-  - **汇总分析（自动分组 · 仅供展示，不参与标注）**：顶栏第四段进入**分类标注工作台**——系统按「分类标注相同（匹配动作一致）」把已保存标注截图自动分组，统一一个队列展示。进入本段时，所有「样本 ≥2 且尚未生成对照图」的分组会被**自动异步分析**：逐像素比较后生成**七张对照图** —— `交集图`（每个像素取**覆盖大于 90%** 的值：覆盖率 = 该颜色出现的样本占比，>90% 才保留为不透明，其余透明）、`多数图`（每个像素取**覆盖率最多**的颜色）、`均值图`（每个像素取全部样本的 **RGB 均值**）、`1/8 多数图`（所有样本同一 8×8 块内全部像素合并，取出现次数最多的颜色）、`1/32 多数图`（同上按 32×32 块）、`1/8 均值图`（所有样本同一 8×8 块内全部像素合并，取全部像素的 RGB 均值）、`1/32 均值图`（同上按 32×32 块），主区同时显示覆盖率；结果<b>仅供人工目检参考、不参与标注决策</b>，不会写入任何图片标注或结论（画面标签一律以控制台的人工标注为准）。产物按分类标注落盘为 `summary/<分类标注>/same.png|max.png|avg.png|maj8.png|avg8.png|maj32.png|avg32.png`（分析信息：样本数 / 覆盖率 / 公共点击坐标 / 更新时间等写同目录 `info.json`），可随时整目录删除、下次分析按需重算。<b>单击任意一张图放大为原尺寸大图，再单击图片即还原</b>（按 Esc 也可关闭）。右栏顶部有**状态横幅**（样本不足 / 待分析 / 样本有变 / 对照图已生成·覆盖率），下方为【分类标注】【匹配动作】【原始截图张数】【分辨率】四项信息；主区在样本不足或待分析时也会显示对应占位提示而非空白。样本 <2 张的分组不分析并明确提示。
+  - **汇总分析（自动分组 · 仅供展示，不参与标注）**：顶栏第四段进入**分类标注工作台**——系统按「分类标注相同（匹配动作一致）」把已保存标注截图自动分组，统一一个队列展示。进入本段时，所有「样本 ≥2 且尚未生成对照图」的分组会被**自动异步分析**：逐像素比较后生成**七张对照图** —— `交集图`（每个像素取**覆盖大于 90%** 的值：覆盖率 = 该颜色出现的样本占比，>90% 才保留为不透明，其余透明）、`多数图`（每个像素取**覆盖率最多**的颜色）、`均值图`（每个像素取全部样本的 **RGB 均值**）、`1/8 多数图`（所有样本同一 8×8 块内全部像素合并，取出现次数最多的颜色）、`1/32 多数图`（同上按 32×32 块）、`1/8 均值图`（所有样本同一 8×8 块内全部像素合并，取全部像素的 RGB 均值）、`1/32 均值图`（同上按 32×32 块），主区同时显示覆盖率；结果<b>仅供人工目检参考、不参与标注决策</b>，不会写入任何图片标注或结论（画面标签一律以控制台的人工标注为准）。产物按分类标注落盘为 `summary/<分类标注>/same.png|max.png|avg.png|maj8.png|avg8.png|maj32.png|avg32.png`（分析信息：样本数 / 覆盖率 / 公共点击坐标 / 更新时间等写同目录 `info.json`），可随时整目录删除、下次分析按需重算。<b>单击任意一张图放大为原尺寸大图，再单击图片即还原</b>（按 Esc 也可关闭）。右栏顶部有**状态横幅**（样本不足 / 待分析 / 样本有变 / 对照图已生成·覆盖率），下方为【分类标注】【匹配动作】【原始截图张数】【分辨率】四项信息；主区在样本不足或待分析时也会显示对应占位提示而非空白。样本 <2 张的分组不分析并明确提示。列表（标题「分类标注列表（按匹配度）」）排序规则：**已分析分组按交集图像素覆盖率从低到高排列**——覆盖率越高说明该组截图彼此差异越小（多为同一画面反复截取、采样不足，参考价值反而低），放在前面的是截图差异更大、采样更充分的组合，便于优先目检 / 补采；同覆盖率按「分类标注 → 动作」文字升序；其余分组（未分析 / 样本有变待重算）随其后，其中样本 ≥2 的在前、**只有 1 张样本的分组恒排最后**。
 - **坐标语义**：截图是窗口物理像素内容 → **图片像素 = 窗口相对坐标（Left, Top）**，后续 Act 阶段可直接据此执行鼠标动作。
 - **数据布局**：图片与数据按“处理阶段”分目录（均相对程序运行目录，见 §四 目录结构）：
   - `capture/`：后台采集的**原始截图**（未标注，扁平存放，文件名 `IMG_yyyyMMdd_HHmmss.png`）；
@@ -193,6 +198,40 @@ Java 侧 `WindowFinder` 优先选择非 LAYERED 且面积最大的候选，仅�
   `GET /api/annotate/think/task/{id}`（轮询分析任务进度）、
   `GET /api/annotate/think/img/{kind}?dir={dirB64}`（`kind = same | max | avg | m8 | a8 | m32 | a32`，分别对应交集图 / 多数图 / 均值图 / 1-8 多数图 / 1-8 均值图 / 1-32 多数图 / 1-32 均值图；`dirB64` = 分类标注产物目录名的「UTF-8 → Base64」，纯 ASCII 传输、不受容器字符集影响）、
   `POST /api/annotate/delete`（`{name: 截图文件名}`：把该 PNG 连同同名标注 `.json` 一起移入<b>系统回收站</b>（PowerShell `SendToRecycleBin` 软删除、可还原，控制台不再显示）；只允许删除本程序输出的 `img_*.png`——该类文件只经「`.tmp` 写入完成 → 原子改名」产生，出现即完整，`.tmp` 半成品不会出现在列表中，不存在则 404）。
+
+### 2.7 执行模式：实时画面识别 + 一键执行（Act 阶段已接入）
+
+执行模式把工程最终链路接起来：**后台截图 → 实时识别画面分类 → 人工确认后向目标窗口发送鼠标点击**。
+它复用标注阶段同一套「找窗口 → WGC 截图 → resize 把窗口对齐到样本尺寸」机制，但**截图只用于识别与展示、不写盘**。
+识别方式：把当前画面与 `classify/` 里每一张已标注样本做逐像素比较（横纵每隔 4 像素抽 1 点，约 1/16 画面，样本带 mtime 缓存），
+按「分类标注」聚合、每个分类只留差异最小的一张样本，**差异最小者 = 最近似分类**；仅当最小差异
+≤ `execute.match-threshold-percent`（默认 25%）才判定为「已识别」，否则界面展示最近似分类作参考、**不执行动作**（防误点）。
+
+- **入口与切换**：控制台左上角「工作模式」下拉在「标注模式 ⇄ 执行模式」间切换（默认标注模式）。执行模式下仅显示执行界面
+  （标注筛选/列表/汇总分析等隐藏，右上角「完全退出」保留）；有未保存标注时需先「保存并下一张」或「清除标记」才能切走。
+- **画面区（左，实时最新帧）**：显示最近一次识别对应的**整幅窗口截图**（`GET /api/execute/frame`）。截图 = 窗口内容物理像素，
+  与标注样本逐像素对齐（截出来不是 `capture.resize-width×height` 会自动用 `SetWindowPos` 调窗后重截验证，最多 3 次）。
+  **命中「鼠标点击」动作时，识别出的点击点直接叠加标在图上**——绿色圆点 + 十字参考线，左下角角标显示
+  「分类已识别 · 点击 (x,y)」；单击图片可放大查看大图。画面会随执行循环周期刷新（页面 1.5 秒轮询取快照，快照变化才重取帧）。
+- **识别信息（右栏）**：识别时间（快照时刻）、截图/识别耗时、**分类标注**（已识别绿显；未识别红显「未识别 · 最近似「xx」」）、
+  **匹配动作**（鼠标点击 / 无动作）、点击坐标、差异度（与阈值对照是否达标）、样本规模（同尺寸 / 全部张数）、目标窗口标题；
+  下方另列**候选分类**（差异度由小到大，带命中样本文件名），便于人工核对识别可信度。
+- **执行循环（默认关闭）**：「▶ 开始执行循环」后按 `execute.interval-ms`（默认 2 秒）周期「截图 → 识别 → 刷新画面与结果」；
+  停止循环时也可用「立即识别一次」手动触发单轮。循环状态与截图任务相互独立，可同时开启（各自调度、都朝同一目标尺寸收敛）。
+- **触发执行（按钮）**：识别出「鼠标点击」动作（已识别 + 坐标完整）后「触发执行」按钮才可用。点击后后端
+  **先按最新画面复核识别一次**（避免界面停留期间画面已变化），确认仍命中且坐标完整后向目标窗口发送一次鼠标左键点击：
+  默认 `post` —— 直接向目标窗口 `PostMessage WM_LBUTTONDOWN / WM_LBUTTONUP`（坐标 = 窗口客户区相对坐标 = 图片像素，
+  不要求窗口在前台、不抢占用户鼠标）；`execute.click-mode=screen` 时改为 `SetForegroundWindow + SetCursorPos + mouse_event`
+  模拟真实输入（要求窗口可见、不被遮挡）。执行结果（成功/失败原因、动作坐标、换算后的屏幕坐标）即时提示在界面。
+- **API**：`GET /api/execute/status`（运行开关与参数 intervalMs / thresholdPercent / clickMode）、
+  `POST /api/execute/start` / `stop`（开/关执行循环）、`POST /api/execute/refresh`（立即截图并识别一轮）、
+  `GET /api/execute/latest`（最近一次识别快照 JSON：`at` 识别时间、窗口信息、`recognized`、`state` 分类标注、`action` 动作、
+  `left/top` 点击坐标、`bestDiffPercent` 差异度、样本规模、候选分类、截图/识别耗时；尚未识别时为占位快照）、
+  `GET /api/execute/frame?at=…`（快照对应 PNG，`at` 仅作浏览器缓存去抖，未命中时返回最新画面；无画面 404）、
+  `POST /api/execute/act`（**触发执行**：复核最新画面后向目标窗口发送鼠标点击；业务未就绪也返回 200 + `ok:false` + 原因，
+  便于前端直接提示）。
+- **依赖前提**：识别要求 `classify/` 里有「与目标窗口同尺寸 + 已标注分类（动作=鼠标点击带坐标）」的样本——
+  请先在标注模式把目标程序各画面状态标注好（resize 已让窗口与样本尺寸逐像素对齐）。样本不足/尺寸不符时界面会给出明确提示。
 
 ---
 
@@ -250,6 +289,9 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `ui.path` | `/annotate` | 自动打开的网页路径（根路径 `/` 亦跳入） |
 | `ui.window-size` | `1760x990` | 控制台应用窗口尺寸（宽x高）；`0x0` = 不指定、交给系统 |
 | `ui.center` | `true` | 控制台应用窗口是否在屏幕可用区域内居中展示 |
+| `execute.interval-ms` | `2000` | 执行模式「截图 → 识别」循环间隔（毫秒）；执行循环默认不开启，页面「开始执行循环」后按此周期运行 |
+| `execute.match-threshold-percent` | `25` | 画面识别阈值（平均像素差异百分比，0~100）：与 classify/ 样本逐张比对后取差异最小的分类为最近似；≤ 阈值才判定「已识别」，否则视为未识别（界面展示最近似参考、不执行动作） |
+| `execute.click-mode` | `post` | 鼠标点击执行方式：`post`=向目标窗口 PostMessage WM_LBUTTONDOWN/UP（后台，不需前台）；`screen`=SetForegroundWindow + SetCursorPos + mouse_event 真实输入（要求窗口可见、不被遮挡） |
 
 ---
 
@@ -265,6 +307,7 @@ MatchClassifyAct/
    ├─ java/cn/moonlord/mca/
    │  ├─ MatchClassifyActApplication.java    入口：@EnableScheduling，强制非 headless + Per-Monitor DPI
    │  ├─ config/CaptureProperties.java       capture.* 业务可调项默认值（Java 固化，可外部覆盖）
+   │  ├─ config/ExecuteProperties.java      execute.* 执行模式可调项默认值（Java 固化，可外部覆盖）
    │  ├─ config/StoragePaths.java            capture.* 目录配置求值：capture/ classify/ summary/ 三分区
    │  ├─ config/WebServerConfig.java         内嵌 Tomcat 请求 URI/查询串统一按 UTF-8 解码（代码固化）
    │  ├─ config/LegacyStorageMigrator.java   ApplicationRunner：旧版 captures/ 单目录启动时自动迁移到三分区
@@ -277,6 +320,11 @@ MatchClassifyAct/
    │  │  ├─ WindowResizer.java               截图尺寸 ≠ 目标宽×高时按尺寸差用 SetWindowPos 强制缩放窗口（最大化先还原、越界平移回屏幕内），由任务循环重截验证直至 PNG 恰好达标
    │  │  ├─ CaptureControlController.java    /api/capture/status|pause|resume：开启/暂停周期截图（默认关闭）
    │  │  └─ WindowCaptureTask.java           ApplicationRunner + @Scheduled 周期截图（默认 paused=true 不截图，页面手动开启）
+   │  ├─ act/                               执行模式（实时识别 + 一键执行，见 §2.7）
+   │  │  ├─ ExecuteController.java          REST /api/execute/*：status|start|stop|refresh|latest|frame|act
+   │  │  ├─ ExecutionService.java           执行循环主轴：找窗 → 截图（尺寸不符自动调窗重截）→ FrameClassifier 识别 → Snapshot（画面仅内存缓存、不写盘）；act() 复核最新画面后交 WindowClicker 发送鼠标点击
+   │  │  ├─ FrameClassifier.java            画面识别：当前帧与 classify/ 样本（每 4 像素取 1 点、带缓存）逐张比对，最近似分类 ≤ execute.match-threshold-percent 判定已识别
+   │  │  └─ WindowClicker.java              鼠标左键点击：post=向目标窗口 PostMessage WM_LBUTTONDOWN/UP；screen=SetForegroundWindow+SetCursorPos+mouse_event
    │  └─ mark/
    │     ├─ CaptureMark.java                 标注模型：state(分类标注) / action(匹配动作 none|click) / left / top（API 字段形状）
    │     ├─ ClassifyStore.java               分类定义中心表 classify/data.json：读样本=“归属 state + 表定义”合成；保存/改名；启动自动归纳旧数据迁移
@@ -289,7 +337,7 @@ MatchClassifyAct/
    │     └─ ThinkService.java                自动分组分析（产物落 summary/<分类标注>/：same|max|avg|maj8|avg8|maj32|avg32.png + info.json，单线程异步池，纯展示不参与标注）
    └─ resources/
       ├─ application.properties              仅应用名与日志格式/级别等基础配置（业务调参默认值见代码）
-      ├─ static/annotate.html                标注单页（无外部 CDN，离线可用）
+      ├─ static/annotate.html                控制台单页（标注 / 执行双模式，无外部 CDN，离线可用）
       └─ native/win-x64/WindowsCapture.exe   采集器产物（随 jar 打包，运行时解压到 %TEMP%）
 
 capture/                                     原始截图目录（自动创建；未标注前只在这里，扁平存放）
@@ -326,4 +374,5 @@ summary/                                     汇总分析产物（按「分类�
 **真待办**：
 1. 同时开多个相同目标程序（如多开几个 MuMu 模拟器）时按标题取"面积最大"，无法区分指定实例。
 2. 每 3 秒一张 PNG 持续占用磁盘：`capture.diff-threshold-percent` 去重可挡掉“画面静止”的重复帧，但画面持续变化时仍会不断积累；长跑注意清理 `capture/`（`classify/` 是要保留的样本；`summary/` 可随时重算后整目录删掉）。后续方向：磁盘配额/自动滚动清理、或对“新画面才保存”做更细的变化判断。
-3. 后续阶段（Match/Classify/Act）接入 `ImageMatcher` / `DecisionEngine` / `MouseController`。
+3. 执行模式的画面识别目前是「整帧像素抽样比对（约 1/16）」：同一画面状态需与样本像素高度一致，轻微光照 / 色偏 / 动态区域都会推高差异度判为未识别；带明显动画或环境变化的分类需更多样本覆盖，后续可升级局部 ROI / 特征匹配提高鲁棒性。
+4. 「识别后执行」目前由人在执行页点「触发执行」确认（安全优先、防误点）；尚未做「识别即自动执行」的策略链与执行历史记录，可按需扩展。

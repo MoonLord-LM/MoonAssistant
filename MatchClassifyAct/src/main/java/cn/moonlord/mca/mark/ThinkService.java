@@ -614,9 +614,12 @@ public class ThinkService {
             }
             out.add(g);
         }
-        // 按“匹配度”排序（对应前端列表标题「分类标注列表（按匹配度）」）：
-        // 汇总完成（产物齐全且样本未变）的组合排前，匹配度取交集图像素覆盖率（coverage），高者靠前；
-        // 匹配度相同按「分类标注 → 动作」文字升序；其余（未分析 / 样本有变待重算 / 不足）排后，同样按文字升序。
+        // 按“匹配度”排序（对应前端列表标题「分类标注列表（按匹配度）」）。
+        // 覆盖率 = 交集图 ≥90% 样本同色的像素占比。覆盖率越高说明该组截图彼此差异越小——多为同一画面反复
+        // 截取（采样不足，可信度反而低）；覆盖率越低说明采到了该状态不同时刻的真实差异（采样更充分）。
+        // 故已分析（产物齐全且样本未变）组合：覆盖率低的靠前、高的靠后；同覆盖率按「分类标注 → 动作」文字升序。
+        // 其余（未分析 / 样本有变待重算）排后：其中样本 ≥2（尚可自动分析）在前，只有 1 张图的继续排在最后，
+        // 段内同样按「分类标注 → 动作」文字升序。
         out.sort((a, b) -> {
             boolean ad = Boolean.TRUE.equals(a.get("analyzed")) && !Boolean.TRUE.equals(a.get("stale"));
             boolean bd = Boolean.TRUE.equals(b.get("analyzed")) && !Boolean.TRUE.equals(b.get("stale"));
@@ -627,9 +630,16 @@ public class ThinkService {
                 Object ca = a.get("coverage"), cb = b.get("coverage");
                 double x = ca instanceof Number na ? na.doubleValue() : -1d;
                 double y = cb instanceof Number nb ? nb.doubleValue() : -1d;
-                int c = Double.compare(y, x);   // 覆盖率（匹配度）降序
+                int c = Double.compare(x, y);   // 覆盖率（截图差异小 = 采样不足）降序 → 升序：低者靠前
                 if (c != 0) {
                     return c;
+                }
+            } else {
+                // 仅 1 张图的组合（不可分析）恒排最后；样本 ≥2 但未分析 / 待重算的在前
+                int sa = ((Number) a.get("sampleCount")).intValue() >= 2 ? 0 : 1;
+                int sb = ((Number) b.get("sampleCount")).intValue() >= 2 ? 0 : 1;
+                if (sa != sb) {
+                    return Integer.compare(sa, sb);
                 }
             }
             int c = String.valueOf(a.get("state")).compareTo(String.valueOf(b.get("state")));

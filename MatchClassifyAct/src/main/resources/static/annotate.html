@@ -33,12 +33,56 @@
   body[data-appmode="exec"] .mark-only{display:none!important}
   body[data-appmode="exec"] .layout{display:none!important}
   body[data-appmode="mark"] #execPane{display:none!important}
-  #execPane{display:flex;align-items:center;justify-content:center;height:calc(100vh - 54px);padding:12px;min-height:0}
-  .exec-inner{max-width:520px;width:100%;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:44px 28px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
-  .exec-ico{width:58px;height:58px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px dashed rgba(79,140,255,.55);color:var(--accent);font-size:18px;line-height:1;margin-bottom:2px}
-  .exec-inner h2{margin:0;font-size:17px;color:var(--text);letter-spacing:.5px}
-  .exec-inner p{margin:0;color:var(--muted);font-size:13px;line-height:1.9}
-  .exec-inner .tag{display:inline-block;margin-top:6px;font-size:11px;color:#9db4ff;border:1px solid rgba(79,140,255,.4);border-radius:20px;padding:2px 12px;background:rgba(79,140,255,.08)}
+  /* 执行模式：实时画面识别 + 动作执行（左右两栏布局；左侧画面区、右侧识别信息与触发按钮） */
+  #execPane{display:flex;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0;box-sizing:border-box}
+  .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .exec-stage .stagebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-height:42px}
+  .exec-stage .fname{font-size:14px;font-weight:600;white-space:nowrap}
+  .exec-live{flex:none;font-size:12px;color:var(--muted);border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:2px 10px;white-space:nowrap}
+  .exec-live.on{color:var(--green);border-color:rgba(47,191,113,.5);background:rgba(47,191,113,.1)}
+  .exec-stage .dims{font-size:12px;color:var(--muted);border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .exec-stage .spacer{flex:1}
+  .exec-area .imgplaceholder{display:flex;align-items:center;justify-content:center}
+  .exec-side .hint,.exec-area .hint{display:block;margin:0}
+  .exec-area{flex:1;min-height:0;display:flex;overflow:auto;padding:12px}
+  .exec-wrap{position:relative;display:inline-block;line-height:0;margin:auto}
+  #execImg{display:block;cursor:zoom-in}
+  #execDot{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;
+    background:radial-gradient(circle,rgba(47,191,113,.9) 0 28%,rgba(47,191,113,.3) 62%,transparent 75%);
+    border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.8);pointer-events:none;display:none;z-index:2}
+  #execVline,#execHline{position:absolute;background:rgba(47,191,113,.55);pointer-events:none;display:none;z-index:1}
+  #execVline{top:0;bottom:0;width:1px}
+  #execHline{left:0;right:0;height:1px}
+  .execTag{position:absolute;left:8px;bottom:8px;z-index:2;pointer-events:none}
+  .execTag span{display:inline-block;max-width:min(64vw,560px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:12px;font-weight:600;padding:3px 10px;border-radius:14px;background:rgba(10,14,22,.74);color:var(--green);
+    border:1px solid rgba(47,191,113,.55);backdrop-filter:blur(2px)}
+  .execTag span.warn{color:var(--amber);border-color:rgba(240,168,60,.6)}
+  .exec-side{width:338px;flex:none;display:flex;flex-direction:column;gap:12px;overflow-y:auto;
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;min-height:0}
+  .exec-side .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:11px 12px}
+  .exec-side .edhead{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;margin-bottom:8px;text-transform:uppercase}
+  .kvrow{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:3px 0}
+  .kvrow .k{flex:none;width:70px;color:var(--muted)}
+  .kvrow .v{flex:1;min-width:0;word-break:break-all;color:var(--text)}
+  .kvrow .v.ok{color:var(--green);font-weight:600}
+  .kvrow .v.err{color:var(--danger)}
+  .exec-side .btnrow{display:flex;gap:8px;margin-top:6px}
+  .exec-side .btnrow .btn{flex:1;justify-content:center}
+  #execAct{width:100%;margin-top:2px;padding:10px 12px;font-size:14px;font-weight:700;border-radius:10px;
+    background:linear-gradient(180deg,#37c97c,#2fbf71);border:1px solid #2fbf71;color:#04120a}
+  #execAct:hover:not(:disabled){filter:brightness(1.07)}
+  #execAct:disabled{opacity:.45;cursor:not-allowed;filter:saturate(.3)}
+  .cand{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px dashed var(--border);font-size:12.5px}
+  .cand:last-child{border-bottom:0}
+  .cand .cst{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+  .cand .cd{flex:none;color:var(--muted);font-variant-numeric:tabular-nums}
+  .cand.top .cst{color:var(--green);font-weight:600}
+  @media (max-width:1000px){
+    #execPane{flex-direction:column;overflow-y:auto}
+    .exec-side{width:auto;flex:none}
+    .exec-area{min-height:260px}
+  }
   .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px}
   .seg button{border:0;background:transparent;color:var(--muted);padding:4px 16px;border-radius:6px;min-width:64px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
   .seg button.on{background:var(--accent);color:#fff}
@@ -269,8 +313,8 @@
 <body data-mode="none" data-appmode="mark">
 
 <header class="topbar">
-  <!-- 左上角：工作模式选择（标注模式为默认；执行模式建设中）。合拢时下拉本身即显示当前模式 -->
-  <div class="modeCtl" title="控制台工作模式：标注模式=截图标注/汇总分析；执行模式=自动化执行界面（建设中）">
+  <!-- 左上角：工作模式选择（标注模式为默认；执行模式=实时画面识别 + 一键执行点击）。合拢时下拉本身即显示当前模式 -->
+  <div class="modeCtl" title="控制台工作模式：标注模式=截图标注/汇总分析；执行模式=实时识别当前画面并一键向目标窗口发送鼠标点击">
     <select id="modeSel" aria-label="控制台模式">
       <option value="mark">标注模式</option>
       <option value="exec">执行模式</option>
@@ -421,14 +465,82 @@
   </aside>
 </main>
 
-<!-- 执行模式占位页（后续版本设计执行元素；标注模式主体 .layout 带 .mark-only，切换时整体隐藏） -->
-<section id="execPane" aria-label="执行模式（建设中）">
-  <div class="exec-inner">
-    <div class="exec-ico">▶</div>
-    <h2>执行模式</h2>
-    <p>执行（自动运行匹配动作）界面正在设计中，将在后续版本开放。<br>当前请切换到「标注模式」使用截图标注与汇总分析功能。</p>
-    <span class="tag">建设中 · Coming Soon</span>
+<!-- 执行模式：实时画面识别 + 匹配动作执行（驱动 /api/execute/*；切换模式时整体显隐） -->
+<section id="execPane" aria-label="执行模式（实时画面识别与动作执行）">
+  <div class="exec-stage">
+    <div class="stagebar">
+      <span class="fname">执行模式 · 实时画面识别</span>
+      <span class="dims" id="execMetaChip">—</span>
+      <span class="spacer"></span>
+      <span class="exec-live" id="execLive">未运行</span>
+    </div>
+    <div class="exec-area" id="execArea">
+      <div class="imgplaceholder" id="execPlaceholder">
+        <div style="text-align:center;padding:24px">
+          <div style="font-size:26px;line-height:1;margin-bottom:12px;opacity:.7">▶</div>
+          <div>尚未显示画面。点击右侧「<b style="color:var(--text)">开始执行循环</b>」后会周期性截图并自动识别，
+            <br>或点「立即识别一次」马上识别当前画面。</div>
+          <div style="margin-top:10px;font-size:12px;color:#5b6577;line-height:1.7">
+            提示：请先确认目标窗口标题包含 capture.window-keywords（默认 MuMu 系列）；<br>
+            并在「标注模式」给同尺寸画面标注过分类（动作=鼠标点击、带坐标），识别才会命中。</div>
+        </div>
+      </div>
+      <div class="exec-wrap" id="execWrap" style="display:none">
+        <img id="execImg" alt="最新画面（点击可放大）">
+        <div id="execVline"></div>
+        <div id="execHline"></div>
+        <div id="execDot" title="识别出的点击点"></div>
+        <div class="execTag"><span id="execTagState"></span></div>
+      </div>
+    </div>
   </div>
+
+  <aside class="exec-side">
+    <div class="edsec">
+      <div class="edhead">执行循环</div>
+      <div class="kvrow"><span class="k">状态</span><span class="v" id="execRunText">—</span></div>
+      <div class="btnrow">
+        <button type="button" class="btn" id="execToggle">▶ 开始执行循环</button>
+        <button type="button" class="btn ghost" id="execRefresh">立即识别一次</button>
+      </div>
+      <div class="hint" style="font-size:12px;margin-top:6px">循环开启后按后端间隔（默认 2 秒）自动截图并识别；
+        截图仅用于识别与展示，不写入 capture/。</div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">识别结果</div>
+      <div class="kvrow"><span class="k">识别时间</span><span class="v" id="execAt">—</span></div>
+      <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
+      <div class="kvrow"><span class="k">分类标注</span><span class="v" id="execState">—</span></div>
+      <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
+      <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
+      <div class="kvrow"><span class="k">差异度</span><span class="v" id="execDiff">—</span></div>
+      <div class="kvrow"><span class="k">样本规模</span><span class="v" id="execSamples">—</span></div>
+      <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">候选分类（差异度由小到大）</div>
+      <div id="execCandidates"><div class="hint">—</div></div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">触发执行</div>
+      <button type="button" id="execAct" disabled>等待识别出「鼠标点击」动作…</button>
+      <div class="hint" id="execActHint" style="font-size:12px;margin-top:6px">
+        命中「鼠标点击」动作后按钮可用。点击时先按最新画面复核识别一次，再向目标窗口发送鼠标左键点击事件。
+      </div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">说明</div>
+      <div class="hint" style="font-size:12px;line-height:1.75">
+        坐标语义：截图 = 窗口内容物理像素 → 图片像素 = 窗口相对坐标 (Left,Top)，识别出的点击点已直接标在画面上。
+        点击默认「后台发送」（向目标窗口 PostMessage WM_LBUTTONDOWN/UP，不抢前台）；需要真实输入时用
+        <code>--execute.click-mode=screen</code>（要求窗口可见、不被遮挡）。
+      </div>
+    </div>
+  </aside>
 </section>
 
 <div id="toasts"></div>
@@ -2319,15 +2431,16 @@ document.addEventListener("visibilitychange", ()=>{
   if(baseCodeTs !== null) checkAppVersion();   // 切回页面立刻复核一次
 });
 
-/* ---------------- 标注 / 执行 模式切换（执行界面后续版本设计） ---------------- */
-let appMode = "mark";                       // 当前工作模式：mark=默认标注模式 / exec=执行模式（占位）
+/* ---------------- 标注 / 执行 模式切换 ---------------- */
+let appMode = "mark";                       // 当前工作模式：mark=默认标注模式 / exec=执行模式（实时画面识别 + 动作执行）
 
 function setAppMode(m){
   appMode = m;
   document.body.setAttribute("data-appmode", m);
   syncSugDock();
   if(m === "exec"){
-    toast("已切换到「执行模式」——界面建设中，标注界面已隐藏。", "ok");
+    toast("已切换到「执行模式」：实时画面识别 + 一键执行点击。", "ok");
+    if(typeof execOnModeChange === "function") execOnModeChange();
   } else {
     toast("已回到「标注模式」。", "ok");
     refreshSilent();     // 隐藏期间可能新增了截图：切回时同步一次列表
@@ -2349,6 +2462,283 @@ $("modeSel").addEventListener("change", ()=>{
   }
   setAppMode(want);
 });
+
+/* ---------------- 执行模式：实时画面识别 + 动作执行（驱动 /api/execute/*） ---------------- */
+let execRunning = false;        // 后端执行循环开关（/api/execute/status.running）
+let execClickMode = "post";     // 后端配置的点击方式（/api/execute/status.clickMode：post=后台消息 / screen=真实输入）
+let execLatest = null;          // 最近一次 /api/execute/latest 的返回
+let execShownAt = 0;            // 当前画面对应快照的 at（与 /api/execute/frame 配对）
+let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
+let execImgReady = false;       // 当前是否已有可展示的画面
+let execActBusy = false;        // “执行动作”进行中（防连点）
+const execPollMs = 1500;
+
+const execEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const execClock = t => { const d = new Date(t); const p = n => String(n).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()); };
+
+async function execGet(url, opt){
+  try{
+    const r = await fetch(url, Object.assign({ cache:"no-store" }, opt || {}));
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(_){ return null; }
+}
+
+/* ---- 状态 / 开关 ---- */
+async function execSyncStatus(){
+  const j = await execGet("/api/execute/status");
+  if(j){
+    execRunning = !!j.running;
+    if(j.clickMode === "screen" || j.clickMode === "post") execClickMode = j.clickMode;
+  }
+  renderExecRunUI();
+}
+function renderExecRunUI(){
+  const t = $("execToggle"), live = $("execLive"), rt = $("execRunText");
+  if(t){ t.textContent = execRunning ? "■ 停止执行循环" : "▶ 开始执行循环";
+        t.classList.toggle("green", execRunning); }
+  if(live){ live.textContent = execRunning ? "循环运行中" : "未运行";
+           live.classList.toggle("on", execRunning); }
+  if(rt){ rt.textContent = execRunning ? "运行中" : "未运行";
+          rt.className = "v " + (execRunning ? "ok" : "err"); }
+}
+async function execToggleLoop(){
+  const t = $("execToggle");
+  if(!t || t.disabled) return;
+  t.disabled = true;
+  const j = await execGet("/api/execute/" + (execRunning ? "stop" : "start"), { method:"POST" });
+  execRunning = !!j && !!j.running;
+  t.disabled = false;
+  renderExecRunUI();
+  toast(execRunning ? "执行循环已开始（周期性截图并识别画面）" : "执行循环已停止", "ok");
+  if(execRunning) await execLoadLatest(true);
+}
+async function execRefreshOnce(){
+  const b = $("execRefresh");
+  if(!b || b.disabled) return;
+  b.disabled = true;
+  const j = await execGet("/api/execute/refresh", { method:"POST" });
+  b.disabled = false;
+  if(!j){ toast("识别失败：接口不可用", "err"); return; }
+  execLatest = j;
+  renderExecAll();
+  toast("已按当前画面完成一次识别", "ok");
+}
+
+/* ---- 拉取并渲染最新快照 ---- */
+async function execLoadLatest(){
+  const j = await execGet("/api/execute/latest");
+  if(!j) return;
+  execLatest = j;
+  renderExecAll();
+}
+function execSetVal(id, txt, cls){
+  const e = $(id); if(!e) return;
+  e.textContent = txt;
+  e.className = "v" + (cls ? " " + cls : "");
+}
+
+function renderExecAll(){
+  const j = execLatest;
+  if(!j) return;
+  const meta = $("execMetaChip");
+  if(meta) meta.textContent = (j.imageWidth > 0 && j.imageHeight > 0)
+      ? (j.imageWidth + "×" + j.imageHeight + " · " + execClock(j.at)) : "—";
+  renderExecRunUI();
+
+  execSetVal("execAt", j.at ? execClock(j.at) : "—");
+  execSetVal("execCost", (j.captureMs >= 0 && j.classifyMs >= 0)
+      ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
+
+  if(j.error && j.imageWidth <= 0 && !j.windowFound){
+    execSetVal("execState", "—", "err");
+  } else if(j.recognized){
+    execSetVal("execState", j.state || "已识别", "ok");
+  } else if(j.state){
+    execSetVal("execState", "未识别 · 最近似「" + j.state + "」", "err");
+  } else {
+    execSetVal("execState", "—", "");
+  }
+
+  const clickable = !!(j.recognized && j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
+  if(j.action === "click"){
+    execSetVal("execAction", clickable ? "鼠标点击" : "鼠标点击（坐标缺失，请回标注模式修正）", clickable ? "ok" : "err");
+  } else {
+    execSetVal("execAction", "无动作", "");
+  }
+  execSetVal("execPos", clickable ? "(" + j.left + ", " + j.top + ")" : "—");
+  execSetVal("execDiff", (typeof j.bestDiffPercent === "number" && j.bestDiffPercent >= 0)
+      ? (j.bestDiffPercent.toFixed(2) + "%" + (j.recognized ? "（达标）" : "（超阈值）")) : "—",
+      j.recognized ? "ok" : (j.state ? "err" : ""));
+  execSetVal("execSamples", "同尺寸 " + (j.scannedSamples || 0) + " / 全部 " + (j.totalSamples || 0) + " 张", "");
+  execSetVal("execWin", j.windowFound
+      ? (j.windowTitle || "已找到窗口")
+      : (j.error || "未找到目标窗口"), j.windowFound ? "" : "err");
+
+  renderExecCandidates(j.candidates || []);
+  renderExecActBtn(j, clickable);
+
+  if(j.imageWidth > 0 && j.at !== execShownAt){
+    execShownAt = j.at;
+    execLoadFrame();
+  } else if(j.imageWidth > 0){
+    renderExecMarkers();      // 同一帧：只刷新标记/缩放
+  } else {
+    execSetPlaceholder(j.error || "当前没有可显示的画面");
+  }
+}
+
+function renderExecActBtn(j, clickable){
+  const b = $("execAct"), hint = $("execActHint");
+  if(!b) return;
+  b.disabled = !clickable || execActBusy;
+  b.textContent = clickable ? ("执行动作：鼠标点击 (" + j.left + ", " + j.top + ")") : "等待识别出「鼠标点击」动作…";
+  if(hint){
+    hint.textContent = clickable
+      ? (execClickMode === "screen"
+          ? "将按最新画面复核识别后，把窗口带到前台并在屏幕坐标模拟一次真实的鼠标左键点击（screen 模式，要求窗口可见、不被遮挡）。"
+          : "将按最新画面复核识别后，向目标窗口后台发送一次鼠标左键点击消息（post 模式，不需窗口在前台、不抢鼠标焦点）。")
+      : "识别到「鼠标点击」动作后按钮可用。";
+  }
+}
+
+function renderExecCandidates(list){
+  const box = $("execCandidates"); if(!box) return;
+  box.innerHTML = "";
+  if(!list || !list.length){
+    box.innerHTML = '<div class="hint">暂无可用比对样本：请先在标注模式为该尺寸画面保存至少一个带坐标的分类。</div>';
+    return;
+  }
+  list.forEach((it, i) => {
+    const row = document.createElement("div");
+    row.className = "cand" + (i === 0 ? " top" : "");
+    const stateTxt = execEsc(it.state || "—");
+    const diffTxt = (typeof it.diffPercent === "number" && it.diffPercent >= 0) ? it.diffPercent.toFixed(2) + "%" : "—";
+    const fileTxt = it.matchedFile ? ' <span style="color:#556;font-size:11px">' + execEsc(it.matchedFile) + "</span>" : "";
+    row.innerHTML = '<span class="cst">' + stateTxt + fileTxt + "</span>" +
+                    '<span class="cd">差异 ' + diffTxt + "</span>";
+    box.appendChild(row);
+  });
+}
+
+/* ---- 画面展示 / 点击点标记 ---- */
+function execSetPlaceholder(msg){
+  const ph = $("execPlaceholder"), w = $("execWrap");
+  if(ph){
+    ph.innerHTML = '<div style="text-align:center;padding:24px"><div class="hint">' + execEsc(msg) + "</div></div>";
+    ph.style.display = "";
+  }
+  if(w) w.style.display = "none";
+  execImgReady = false;
+}
+
+function execLoadFrame(){
+  const img = $("execImg"), ph = $("execPlaceholder"), w = $("execWrap");
+  if(!img || !ph || !w) return;
+  img.onload = () => {
+    ph.style.display = "none";
+    w.style.display = "inline-block";
+    execShownW = img.naturalWidth || 0;
+    execShownH = img.naturalHeight || 0;
+    execImgReady = execShownW > 0;
+    execFitImage();
+  };
+  img.onerror = () => execSetPlaceholder("最新画面加载失败（快照刚被替换时短暂出现，会自动重试）");
+  img.src = "/api/execute/frame?at=" + execShownAt + "&t=" + Date.now();
+}
+
+function execFitImage(){
+  const img = $("execImg"), area = $("execArea");
+  if(!img || !area || !execShownW || !execImgReady) return;
+  const pad = 24;
+  const aw = Math.max(120, area.clientWidth - pad);
+  const ah = Math.max(120, area.clientHeight - pad);
+  let s = Math.min(aw / execShownW, ah / execShownH);
+  if(s > 1) s = 1;                       // 默认不放大，保持原图清晰
+  img.style.width  = Math.max(1, Math.round(execShownW * s)) + "px";
+  img.style.height = Math.max(1, Math.round(execShownH * s)) + "px";
+  renderExecMarkers();
+}
+
+function renderExecMarkers(){
+  const j = execLatest, img = $("execImg");
+  if(!j || !img || !execShownW || !execImgReady){ return; }
+  const clickable = !!(j.recognized && j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
+  const dot = $("execDot"), vl = $("execVline"), hl = $("execHline"), tag = $("execTagState");
+  const sx = img.clientWidth / execShownW;
+  const sy = img.clientHeight / execShownH;
+  const show = (el, on) => { if(el) el.style.display = on ? "" : "none"; };
+  show(vl, clickable); show(hl, clickable); show(dot, clickable);
+  if(clickable && dot && vl && hl){
+    const x = (j.left + 0.5) * sx;
+    const y = (j.top + 0.5) * sy;
+    dot.style.left = x + "px";
+    dot.style.top = y + "px";
+    vl.style.left = x + "px";
+    hl.style.top = y + "px";
+  }
+  if(tag){
+    if(j.recognized && j.state){
+      tag.textContent = "「" + j.state + "」已识别" + (clickable ? " · 点击 (" + j.left + "," + j.top + ")" : " · 无动作");
+      tag.className = "";
+    } else if(j.state){
+      tag.textContent = "未识别（最近似「" + j.state + "」）";
+      tag.className = "warn";
+    } else {
+      tag.textContent = "";
+    }
+  }
+}
+
+/* ---- 触发执行（发送鼠标点击） ---- */
+async function execActNow(){
+  const b = $("execAct");
+  if(!b || b.disabled || execActBusy) return;
+  execActBusy = true;
+  b.disabled = true;
+  b.textContent = "正在复核并发送点击…";
+  const j = await execGet("/api/execute/act", { method:"POST" });
+  execActBusy = false;
+  b.disabled = false;
+  if(!j){ toast("执行请求失败（后端不可用）", "err"); }
+  else if(j.ok){ toast("已执行：" + j.message, "ok"); }
+  else { toast("无法执行：" + (j.message || "未知原因"), "err"); }
+  renderExecActBtn(execLatest || { recognized:false }, false);
+  await execLoadLatest();       // 执行后立刻刷新一帧画面/结果
+}
+
+/* ---- 模式切换 / 轮询入口 ---- */
+function execOnModeChange(){
+  if(appMode !== "exec") return;
+  execSyncStatus().then(() => {
+    renderExecRunUI();
+    return execLoadLatest();
+  }).then(() => setTimeout(execFitImage, 80));
+}
+
+function execPollTick(){
+  if(appMode !== "exec" || document.hidden) return;
+  execSyncStatus();
+  execLoadLatest();
+}
+
+/* ---- 控件绑定与启动 ---- */
+(function execBoot(){
+  const t = $("execToggle"), r = $("execRefresh"), a = $("execAct"), img = $("execImg");
+  if(t) t.addEventListener("click", execToggleLoop);
+  if(r) r.addEventListener("click", execRefreshOnce);
+  if(a) a.addEventListener("click", execActNow);
+  if(img) img.addEventListener("click", () => {
+    if(execShownAt) openLightbox("/api/execute/frame?at=" + execShownAt,
+        "执行模式最新画面（" + execClock(execShownAt) + "）");
+  });
+  let rs = 0;
+  window.addEventListener("resize", () => { clearTimeout(rs); rs = setTimeout(execFitImage, 120); });
+  setInterval(execPollTick, execPollMs);
+  execSyncStatus();     // 页面打开即同步后端执行循环状态（重启/其它标签页可能已开启）
+})();
 
 /* ---------------- 启动 ---------------- */
 loadList(null);
