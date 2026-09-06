@@ -115,7 +115,7 @@ public class ThinkService {
     private static final String FILE_INFO = "info.json";
 
     /** 7 张基础图的 kind（每张基础图都对应一张「kind + "-unique"」的独有区图） */
-    private static final List<String> BASE_KINDS = List.of("same", "max", "avg", "m8", "a8", "m32", "a32");
+    private static final List<String> BASE_KINDS = List.of("same", "max", "avg", "major8", "avg8", "major32", "avg32");
 
     /** kind → 产物文件名：14 张图（7 基础 + 7 -unique）全部可经 /img/{kind} 读取 */
     private static final Map<String, String> KIND_FILE = Map.ofEntries(
@@ -125,14 +125,21 @@ public class ThinkService {
         Map.entry("max-unique", FILE_MAX_UNIQUE),
         Map.entry("avg", FILE_AVG),
         Map.entry("avg-unique", FILE_AVG_UNIQUE),
-        Map.entry("m8", FILE_M8),
-        Map.entry("m8-unique", FILE_M8_UNIQUE),
-        Map.entry("a8", FILE_A8),
-        Map.entry("a8-unique", FILE_A8_UNIQUE),
-        Map.entry("m32", FILE_M32),
-        Map.entry("m32-unique", FILE_M32_UNIQUE),
-        Map.entry("a32", FILE_A32),
-        Map.entry("a32-unique", FILE_A32_UNIQUE));
+        Map.entry("major8", FILE_M8),
+        Map.entry("major8-unique", FILE_M8_UNIQUE),
+        Map.entry("avg8", FILE_A8),
+        Map.entry("avg8-unique", FILE_A8_UNIQUE),
+        Map.entry("major32", FILE_M32),
+        Map.entry("major32-unique", FILE_M32_UNIQUE),
+        Map.entry("avg32", FILE_A32),
+        Map.entry("avg32-unique", FILE_A32_UNIQUE));
+
+    /** 旧版 kind 短码（uniqueCov 落盘键）→ 现 kind 全名：历史产物读取时迁移 */
+    private static final Map<String, String> UNIQ_KIND_ALIAS = Map.of(
+        "m8-unique", "major8-unique",
+        "a8-unique", "avg8-unique",
+        "m32-unique", "major32-unique",
+        "a32-unique", "avg32-unique");
 
     /** 逐行像素处理时的行带高，控制峰值内存 */
     private static final int BAND_H = 64;
@@ -186,8 +193,8 @@ public class ThinkService {
     private final Map<String, SuggestTask> suggestTasks = new ConcurrentHashMap<>();
     /** 最新一次建议请求：供排队中的旧建议任务启动时自检作废 */
     private final AtomicReference<SuggestTask> latestSuggest = new AtomicReference<>();
-    /** 建议结果缓存：key = 目标图|产物签名，避免同一张图反复重算（最多留 60 条，按访问序淘汰） */
-    private final Map<String, List<Map<String, Object>>> suggestCache = new LinkedHashMap<>() {
+    /** 建议结果缓存：key = 目标图|产物签名，避免同一张图反复重算；取访问序淘汰（再命中=用户还在来回比对该图，应续命留驻），上限 60 条 */
+    private final Map<String, List<Map<String, Object>>> suggestCache = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, List<Map<String, Object>>> eldest) {
             return size() > 60;
@@ -331,7 +338,7 @@ public class ThinkService {
         }
     }
 
-    /** 启动单图智能建议。与批量分析共用后台串行池，新请求使旧建议任务作废，只分析用户最新停留的一张图 */
+    /** 启动单图智能建议。走独立建议池，新请求使排队中的旧建议任务作废，只计算最新停留的一张图 */
     public String startSuggest(String file) {
         String id = UUID.randomUUID().toString();
         if (suggestTasks.size() > 100) {
@@ -602,7 +609,7 @@ public class ThinkService {
                 boolean hasUnique = uniqueArtifactsComplete(gdir);   // 7 张 -unique 独有区图是否已随重算全部生成
                 g.put("hasUnique", hasUnique);
                 // 各独有区图剩余独有像素占各自全图的比例（kind → 百分数值，与 coverage 同口径）；未生成时为 null
-                g.put("uniqueCov", hasUnique ? info.get("uniqueCov") : null);
+                g.put("uniqueCov", hasUnique ? normUniqueCov(info.get("uniqueCov")) : null);
                 g.put("coverage", info.get("coverage"));
                 g.put("width", info.get("width"));
                 g.put("height", info.get("height"));
@@ -662,7 +669,7 @@ public class ThinkService {
         return out;
     }
 
-    /** 读取分析产物 PNG（kind=14 图之一：7 基础 + 7 -unique，如 same|same-unique|max|max-unique|avg|m8|a8|m32|a32…，dir=产物目录名，禁止穿越）；非法返回 null */
+    /** 读取分析产物 PNG（kind=14 图之一：7 基础 + 7 -unique，如 same|same-unique|max|max-unique|avg|major8|avg8|major32|avg32…，dir=产物目录名，禁止穿越）；非法返回 null */
     public Path resolveArtifact(String kind, String dir) {
         String file = KIND_FILE.get(kind);
         if (file == null) {
@@ -671,12 +678,16 @@ public class ThinkService {
         if (dir == null || dir.isEmpty() || dir.indexOf('/') >= 0 || dir.indexOf('\\') >= 0) {
             return null;
         }
-        Path root = storage.summary();
-        Path p = root.resolve(dir).resolve(file).normalize();
-        if (!p.startsWith(root) || !Files.isRegularFile(p)) {
-            return null;
+        try {
+            Path root = storage.summary();
+            Path p = root.resolve(dir).resolve(file).normalize();
+            if (!p.startsWith(root) || !Files.isRegularFile(p)) {
+                return null;
+            }
+            return p;
+        } catch (RuntimeException e) {
+            return null;   // dir 解码结果含非法字符（NUL/控制符等）导致路径无法解析
         }
-        return p;
     }
 
     /* ---------------------------------------------------------------- 后台分析 */
@@ -900,10 +911,10 @@ public class ThinkService {
 
         // 1/8、1/32 多数 / 均值图：把所有样本按块对齐切分后，同一块内的全部原始像素跨样本合并统计——
         // 多数 = 合并集中出现次数最多的颜色；均值 = 合并集 R/G/B 的总平均（不再先逐张压缩再合成）
-        BufferedImage m8Img = lowSample(imgs, w, h, 8, true);
-        BufferedImage a8Img = lowSample(imgs, w, h, 8, false);
-        BufferedImage m32Img = lowSample(imgs, w, h, 32, true);
-        BufferedImage a32Img = lowSample(imgs, w, h, 32, false);
+        BufferedImage major8Img = lowSample(imgs, w, h, 8, true);
+        BufferedImage avg8Img = lowSample(imgs, w, h, 8, false);
+        BufferedImage major32Img = lowSample(imgs, w, h, 32, true);
+        BufferedImage avg32Img = lowSample(imgs, w, h, 32, false);
 
         boolean multiAction = stateActions().getOrDefault(state, Set.of()).size() > 1;
         String dir = dirNameOf(state, action, multiAction);
@@ -912,10 +923,10 @@ public class ThinkService {
         atomicWritePng(sameImg, gdir.resolve(FILE_SAME));
         atomicWritePng(maxImg, gdir.resolve(FILE_MAX));
         atomicWritePng(avgImg, gdir.resolve(FILE_AVG));
-        atomicWritePng(m8Img, gdir.resolve(FILE_M8));
-        atomicWritePng(a8Img, gdir.resolve(FILE_A8));
-        atomicWritePng(m32Img, gdir.resolve(FILE_M32));
-        atomicWritePng(a32Img, gdir.resolve(FILE_A32));
+        atomicWritePng(major8Img, gdir.resolve(FILE_M8));
+        atomicWritePng(avg8Img, gdir.resolve(FILE_A8));
+        atomicWritePng(major32Img, gdir.resolve(FILE_M32));
+        atomicWritePng(avg32Img, gdir.resolve(FILE_A32));
         Files.deleteIfExists(gdir.resolve("half.png"));   // 旧版半分辨率均值图产物已废弃，随重算清理
 
         // 分析记录文件（仅展示参考；不再存储带时间戳的文件名，产物名固定）
@@ -943,7 +954,7 @@ public class ThinkService {
 
     /**
      * 刷新「classify/ 中当前有样本（≥ 1 张）的全部分组」的各 -unique 独有区图（每张基础图一张：
-     * same-unique / max-unique / avg-unique / maj8-unique / avg8-unique / maj32-unique / avg32-unique）。
+     * same-unique / max-unique / avg-unique / major8-unique / avg8-unique / major32-unique / avg32-unique）。
      *
      * <p>基础合成图只刻画“本分类稳定出现的画面”，而独有区图进一步要求该稳定像素<b>只属于本分类</b>：
      * 以本分类某张基础图（kind）为起点，逐个与其它分类标注（同尺寸的已汇总分组）的<b>同 kind 基础图</b>
@@ -1422,12 +1433,24 @@ public class ThinkService {
             case "same" -> "交集图";
             case "max" -> "多数图";
             case "avg" -> "均值图";
-            case "m8" -> "多数块 8×8";
-            case "a8" -> "均值块 8×8";
-            case "m32" -> "多数块 32×32";
-            case "a32" -> "均值块 32×32";
+            case "major8" -> "多数块 8×8";
+            case "avg8" -> "均值块 8×8";
+            case "major32" -> "多数块 32×32";
+            case "avg32" -> "均值块 32×32";
             default -> kind;
         };
+    }
+
+    /** 历史产物 info.json 的 uniqueCov 键为旧 kind 短码 → 迁移为 kind 全名；非 map / 空返回 null */
+    private static Map<String, Object> normUniqueCov(Object raw) {
+        if (!(raw instanceof Map<?, ?> m)) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+            out.put(UNIQ_KIND_ALIAS.getOrDefault(String.valueOf(e.getKey()), String.valueOf(e.getKey())), e.getValue());
+        }
+        return out.isEmpty() ? null : out;
     }
 
     /** 一组标注中最常见的点击坐标；无有效坐标返回 {-1,-1} */
@@ -1509,12 +1532,14 @@ public class ThinkService {
 
     private void atomicWriteJson(Path json, Map<String, Object> m) throws IOException {
         Path tmp = json.resolveSibling(json.getFileName() + ".tmp");
+        Files.deleteIfExists(tmp);
         Files.writeString(tmp, JSON.writeValueAsString(m));
         moveReplace(tmp, json);
     }
 
     private void atomicWritePng(BufferedImage img, Path target) throws IOException {
         Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
+        Files.deleteIfExists(tmp);
         boolean ok = ImageIO.write(img, "png", tmp.toFile());
         if (!ok) {
             Files.deleteIfExists(tmp);

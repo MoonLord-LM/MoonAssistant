@@ -23,8 +23,9 @@ import java.util.Map;
 
 /**
  * 汇总分析（同「分类标注（state）+ 匹配动作」截图像素分析）展示接口：
- * 生成 14 张对照图供人工目检——7 张基础合成图（交集 same / 多数 max / 均值 avg / maj8 / avg8 / maj32 / avg32）
- * 加每张对应的 -unique 独有区图（same-unique / max-unique / avg-unique / maj8-unique / avg8-unique / maj32-unique / avg32-unique）；
+ * 生成 14 张对照图供人工目检——7 张基础合成图（交集 same / 多数 max / 均值 avg /
+ * major8·avg8·major32·avg32 块降采样）加每张对应的 -unique 独有区图
+ * （same-unique / max-unique / avg-unique / major8-unique·avg8-unique·major32-unique·avg32-unique）；
  * 独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，是跨分类产物、等全部分组的
  * 7 张基础图生成完后才统一计算，并与基础图一起构成 14 个固定比对维度参与执行模式 / 智能分析的匹配。
  *
@@ -33,7 +34,7 @@ import java.util.Map;
  *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下七图，随后补 -unique 独有区图）
  *   POST /api/annotate/think/rebuild                        一键重建：清空 summary/ 全部产物后全量重算 → {taskId}
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|m8|m8-unique|a8|a8-unique|m32|m32-unique|a32|a32-unique；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|major8|major8-unique|avg8|avg8-unique|major32|major32-unique|avg32|avg32-unique；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */
@@ -78,7 +79,7 @@ public class ThinkController {
         ThinkService.Task t = thinkService.task(taskId);
         if (t == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(Map.of("error", "任务不存在或已过期"));
+                .body(Map.of("error", "任务不存在"));
         }
         return ResponseEntity.ok(t);
     }
@@ -97,12 +98,12 @@ public class ThinkController {
         ThinkService.SuggestTask t = thinkService.suggestTask(taskId);
         if (t == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(Map.of("error", "任务不存在或已过期"));
+                .body(Map.of("error", "任务不存在"));
         }
         return ResponseEntity.ok(t);
     }
 
-    /** 读取分析产物 PNG（kind = same | same-unique | max | avg | m8 | a8 | m32 | a32；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
+    /** 读取分析产物 PNG（kind = 14 图之一，与类头说明一致；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
     @GetMapping("/img/{kind}")
     public ResponseEntity<?> image(@PathVariable String kind, @RequestParam String dir) {
         String folder = decodeDir(dir);

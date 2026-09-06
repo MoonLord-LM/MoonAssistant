@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -50,6 +51,14 @@ public class AnnotateController {
 
     private static final Set<String> ACTIONS =
         Set.of(CaptureMark.ACTION_NONE, CaptureMark.ACTION_CLICK);
+
+    /** Windows 保留设备名：不可用作分类标注（会作为产物目录名） */
+    private static final Set<String> WIN_RESERVED = Set.of(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5",
+        "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+        "LPT6", "LPT7", "LPT8", "LPT9");
 
     /** 截图目录列表项（含已标注内容的摘要，前端列表可直接展示） */
     public record ImageItem(String name, long size, long lastModified,
@@ -183,7 +192,7 @@ public class AnnotateController {
         if (mark.getState() == null) {
             mark.setState("");
         }
-        String labelError = invalidDirChar(mark.getState());
+        String labelError = invalidDirChar(mark.getState().trim());
         if (labelError != null) {
             return ResponseEntity.badRequest().body(labelError);
         }
@@ -401,14 +410,25 @@ public class AnnotateController {
     /** 返回说明文字；null = 文本可安全用作产物目录名 */
     private String invalidDirChar(String label) {
         int len = label.length();
+        if (len == 0) {
+            return "分类标注不能为空";
+        }
+        if (len > 64) {
+            return "分类标注过长（最多 64 字）";
+        }
         for (int i = 0; i < len; i++) {
             char c = label.charAt(i);
             if (c < 0x20 || "\\/:*?\"<>|".indexOf(c) >= 0) {
                 return "分类标注不能包含 \\ / : * ? \" < > | 等无法作为文件名的符号";
             }
         }
-        if (len > 0 && label.charAt(len - 1) == '.') {
+        if (label.charAt(len - 1) == '.') {
             return "分类标注不能以 . 结尾（它将用作汇总分析产物目录名）";
+        }
+        int dot = label.indexOf('.');
+        String head = dot < 0 ? label : label.substring(0, dot);
+        if (WIN_RESERVED.contains(head.toUpperCase(Locale.ROOT))) {
+            return "分类标注不能使用 Windows 保留设备名（如 CON、NUL、AUX、COM1 等）";
         }
         return null;
     }

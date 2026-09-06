@@ -27,8 +27,8 @@ import java.util.stream.Stream;
  *
  * <p>匹配源是汇总分析产物，而不是 classify/ 的散装样本：每个分类标注（state）经「汇总分析」
  * 会生成 14 张对照图——7 张基础合成图（same 交集 / max 多数 / avg 均值 /
- * maj8·avg8·maj32·avg32 块降采样）加每张基础图对应的 -unique 独有区图
- * （same-unique / max-unique / avg-unique / maj8-unique·avg8-unique·maj32-unique·avg32-unique），
+ * major8·avg8·major32·avg32 块降采样）加每张基础图对应的 -unique 独有区图
+ * （same-unique / max-unique / avg-unique / major8-unique·avg8-unique·major32-unique·avg32-unique），
  * 它们把同一分类的多张样本合成成一张张“该状态的代表画面”。每张 -unique 独有区图在该基础图基础上
  * 剔除了「其它分类同 kind 基础图同位同色」的像素——那些区域对区分本分类没有贡献，只在独有区上统计
  * 差异相当于专门考察“该状态独有的画面区域”，能进一步拉开相近分类的差距；基础图覆盖整幅画面、
@@ -37,7 +37,7 @@ import java.util.stream.Stream;
  *
  * <p>匹配口径：14 张图按「代表色的来源」分两套逐点判据——
  * <ul>
- * <li><b>交集/多数类</b>（same 交集、max 多数、maj8/maj32 多数块图及各自的 -unique 独有区图，
+ * <li><b>交集/多数类</b>（same 交集、max 多数、major8/major32 多数块图及各自的 -unique 独有区图，
  * 共 8 张）：对照颜色来自样本中<b>真实出现过的像素</b>（交集 = 多数样本一致的原始色，多数 = 出现最多的原始色）。
  * 工程靠 resize 让窗口截图与标注逐像素对齐，同一状态重截的画面应当<b>逐像素完全重现</b>该画面——
  * 因此要求两像素 R、G、B 三通道差值<b>全部为 0</b>（差值 > 0 即判「不匹配」）；</li>
@@ -78,13 +78,13 @@ public class FrameClassifier {
     private static final int EXACT_MATCH_DIST = 0;
 
     /** 逐像素「完全一致」判据的维度（交集/多数类，颜色来自样本真实像素）：same / max(major) /
-     *  maj8 / maj32 及各自的 -unique 独有区图，共 8 张；其余 6 张均值类（avg/avg8/avg32 及各自
+     *  major8 / major32 及各自的 -unique 独有区图，共 8 张；其余 6 张均值类（avg/avg8/avg32 及各自
      *  -unique，颜色是样本平均色）走逐通道容差 {@code execute.rgb-dist-threshold}。 */
     private static final Set<String> EXACT_KINDS = Set.of(
             "same", "same-unique",
             "max", "max-unique",
-            "m8", "m8-unique",
-            "m32", "m32-unique");
+            "major8", "major8-unique",
+            "major32", "major32-unique");
 
     /** 各产物维度参与比对时的压缩口径：{块边长, 1=块内多数 / 0=块内均值}；全幅图不压缩。
      *  -unique 独有区图与各自基础图同口径。 */
@@ -95,14 +95,14 @@ public class FrameClassifier {
             Map.entry("max-unique", new int[]{1, 0}),
             Map.entry("avg", new int[]{1, 0}),
             Map.entry("avg-unique", new int[]{1, 0}),
-            Map.entry("m8", new int[]{8, 1}),
-            Map.entry("m8-unique", new int[]{8, 1}),
-            Map.entry("a8", new int[]{8, 0}),
-            Map.entry("a8-unique", new int[]{8, 0}),
-            Map.entry("m32", new int[]{32, 1}),
-            Map.entry("m32-unique", new int[]{32, 1}),
-            Map.entry("a32", new int[]{32, 0}),
-            Map.entry("a32-unique", new int[]{32, 0}));
+            Map.entry("major8", new int[]{8, 1}),
+            Map.entry("major8-unique", new int[]{8, 1}),
+            Map.entry("avg8", new int[]{8, 0}),
+            Map.entry("avg8-unique", new int[]{8, 0}),
+            Map.entry("major32", new int[]{32, 1}),
+            Map.entry("major32-unique", new int[]{32, 1}),
+            Map.entry("avg32", new int[]{32, 0}),
+            Map.entry("avg32-unique", new int[]{32, 0}));
 
     /** 全部对照图（7 基础 + 7 -unique 独有区）的文件名（与 ThinkService 产物保持一致）。 */
     private static final Map<String, String> KIND_FILE = Map.ofEntries(
@@ -112,29 +112,29 @@ public class FrameClassifier {
             Map.entry("max-unique", "major-unique.png"),
             Map.entry("avg", "avg.png"),
             Map.entry("avg-unique", "avg-unique.png"),
-            Map.entry("m8", "major8.png"),
-            Map.entry("m8-unique", "major8-unique.png"),
-            Map.entry("a8", "avg8.png"),
-            Map.entry("a8-unique", "avg8-unique.png"),
-            Map.entry("m32", "major32.png"),
-            Map.entry("m32-unique", "major32-unique.png"),
-            Map.entry("a32", "avg32.png"),
-            Map.entry("a32-unique", "avg32-unique.png"));
+            Map.entry("major8", "major8.png"),
+            Map.entry("major8-unique", "major8-unique.png"),
+            Map.entry("avg8", "avg8.png"),
+            Map.entry("avg8-unique", "avg8-unique.png"),
+            Map.entry("major32", "major32.png"),
+            Map.entry("major32-unique", "major32-unique.png"),
+            Map.entry("avg32", "avg32.png"),
+            Map.entry("avg32-unique", "avg32-unique.png"));
 
     /** -unique 独有区图维度：无任何独有像素时按差异度 0 计（不存在可判“不匹配”的独有点）。 */
     private static final Set<String> UNIQUE_KINDS = Set.of(
             "same-unique", "max-unique", "avg-unique",
-            "m8-unique", "a8-unique", "m32-unique", "a32-unique");
+            "major8-unique", "avg8-unique", "major32-unique", "avg32-unique");
 
     /** 14 张对照图的固定展示/比较顺序（每张基础图紧跟其 -unique 独有区图：交集 → 多数 → 均值 → 8 块 → 32 块）。 */
     private static final List<String> KIND_ORDER = List.of(
             "same", "same-unique",
             "max", "max-unique",
             "avg", "avg-unique",
-            "m8", "m8-unique",
-            "a8", "a8-unique",
-            "m32", "m32-unique",
-            "a32", "a32-unique");
+            "major8", "major8-unique",
+            "avg8", "avg8-unique",
+            "major32", "major32-unique",
+            "avg32", "avg32-unique");
 
     /** 参与比对必需的全部 14 张产物对照图：任一缺失 = 该分类产物未齐，整目录跳过不参与识别
      *  （差异度按交集/独有交集/其余平均加权聚合，缺图无法保证口径）。 */
@@ -185,8 +185,8 @@ public class FrameClassifier {
     private static final class FrameWork {
         final int fw, fh;
         final int[] sampled;    // 全幅 FULL_SAMPLE_STEP 抽样（same/max/avg 及各自 -unique 六张共用）
-        final int[] b8M, b8A;   // 8×8 块多数/均值（m8·a8 及各自 -unique 共用）
-        final int[] b32M, b32A; // 32×32 块多数/均值（m32·a32 及各自 -unique 共用）
+        final int[] b8M, b8A;   // 8×8 块多数/均值（major8·avg8 及各自 -unique 共用）
+        final int[] b32M, b32A; // 32×32 块多数/均值（major32·avg32 及各自 -unique 共用）
         final int wb8, hb8, wb32, hb32;
 
         FrameWork(int[] full, int w, int h) {
@@ -405,7 +405,7 @@ public class FrameClassifier {
     /**
      * 把画面预计算序列（{@link FrameWork}：全幅抽样 / 8·32 多数·均值块压缩，全部分类目录共用同一份）与
      * 某张对照图产物（ref 缓存里已是同口径的抽样/压缩序列）逐点比对，返回该图「不匹配点占比」百分比（0~100）。
-     * 判据按维度类别分两套：交集/多数类（same/max/maj8/maj32 及各自的 -unique）对照颜色是样本真实像素，
+     * 判据按维度类别分两套：交集/多数类（same/max/major8/major32 及各自的 -unique）对照颜色是样本真实像素，
      * 同一状态画面应能逐像素重现 → <b>逐像素完全一致</b>（R/G/B 三通道差都须为 0）才算匹配；
      * 均值类（avg/avg8/avg32 及各自的 -unique）对照颜色是样本平均值 → 走逐通道容差
      * {@code execute.rgb-dist-threshold}（三通道差都 ≤ 阈值才算匹配）。

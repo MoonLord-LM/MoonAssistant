@@ -79,7 +79,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `same.png` 交集图 | 每像素取「覆盖率 >90%」的主流颜色，不足则透明 = 样本间公共（稳定）区 |
 | `major.png` 多数图 / `avg.png` 均值图 | 每像素取出现最多的颜色 / 全部样本 RGB 平均 |
 | `major8.png` `avg8.png` `major32.png` `avg32.png` | 8×8、32×32 块内「多数色 / 均值色」的降采样合成 |
-| 7 张 `-unique` 独有区图（`same-unique` / `major-unique` / `avg-unique` / `major8-unique` / `avg8-unique` / `major32-unique` / `avg32-unique`） | 每张对应一种基础图：在**该 kind 基础图**上去掉「**其它分类同 kind 基础图**同位置同色」的像素，剩本分类独有区域，用来观察相近分类差在哪。均为跨分类产物：**要等全部分组的 7 张基础图都生成完才开始算**；**必须 14 张齐全**该分组才参与执行识别——基础图看整幅画面、独有区图只盯本分类独占区，两者互补拉开相近分类的差距。接口 kind 短码与文件名对应：`m8`=`major8`、`m32`=`major32`、`a8`=`avg8`、`a32`=`avg32`，其余同基础图名 |
+| 7 张 `-unique` 独有区图（`same-unique` / `major-unique` / `avg-unique` / `major8-unique` / `avg8-unique` / `major32-unique` / `avg32-unique`） | 每张对应一种基础图：在**该 kind 基础图**上去掉「**其它分类同 kind 基础图**同位置同色」的像素，剩本分类独有区域，用来观察相近分类差在哪。均为跨分类产物：**要等全部分组的 7 张基础图都生成完才开始算**；**必须 14 张齐全**该分组才参与执行识别——基础图看整幅画面、独有区图只盯本分类独占区，两者互补拉开相近分类的差距。接口 kind 与文件名一致（块图无短码，kind 即 `major8/avg8/major32/avg32`），仅多数图 kind=`max` 对应磁盘名 `major` |
 
 已分析分组在列表中按交集图覆盖率**从低到高**排列：覆盖率越低 = 采到了该状态不同时刻的真实差异（样本更充分），排在前面；覆盖率越高 = 多为同一画面反复截取（采样不足），排在后面提示补采不同状态的画面。未分析 / 待重算分组排在其后（其中样本多的靠前）。单击任一图放大查看，Esc 还原。
 
@@ -157,7 +157,7 @@ src/main/resources/static/                控制台前端（标注 / 执行双�
 ### A. REST API 摘要
 
 - 标注：`GET /api/annotate/images`（列图）、`image/{name}`（PNG）、`defs`（分类定义表）、`PUT/DELETE /api/annotate/mark/{name}`、`POST /api/annotate/rename`（分类整体改名）、`POST /api/annotate/delete`（移入系统回收站）。
-- 汇总分析：`GET /api/annotate/think/groups`、`POST /api/annotate/think/analyze`、`POST …/rebuild`（一键重建全部产物）、`GET …/task/{id}`、`GET …/img/{kind}?dir={dirB64}`（`kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|m8|m8-unique|a8|a8-unique|m32|m32-unique|a32|a32-unique`，`dir` 为分类目录名 UTF-8 → Base64）。
+- 汇总分析：`GET /api/annotate/think/groups`、`POST /api/annotate/think/analyze`、`POST …/rebuild`（一键重建全部产物）、`GET …/task/{id}`、`GET …/img/{kind}?dir={dirB64}`（`kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|major8|major8-unique|avg8|avg8-unique|major32|major32-unique|avg32|avg32-unique`，`dir` 为分类目录名 UTF-8 → Base64）。
 - 截图：`GET /api/capture/status`、`POST /api/capture/pause|resume`。
 - 执行：`GET /api/execute/status`、`POST …/start|stop|refresh|act`、`GET …/latest|frame`。
 - 其它：`GET /api/app/meta`（版本探针 `codeTs`/最近截图结果）、`POST /api/system/shutdown`。

@@ -46,7 +46,7 @@ public class CaptureProperties {
 
     /**
      * 汇总分析产物保存目录（相对程序运行目录）：每个分类标注一个子目录，
-     * 内含 14 张对照图（7 张基础图 same / max / avg / maj8 / avg8 / maj32 / avg32
+     * 内含 14 张对照图（7 张基础图 same / max / avg / major8 / avg8 / major32 / avg32
      * + 各自 -unique 独有区图）与 info.json；
      * 样本取自 classifyDir，可随时整目录删除后重算。
      */

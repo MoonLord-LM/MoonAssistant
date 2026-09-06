@@ -1516,7 +1516,7 @@ function showThinkEmpty(cls, title){
 }
 const THINK_EMPTY = "没有分类标注";
 /* 汇总分析对照图（顺序：每张基础图与其 -unique 独有区图成对出现：
-   same/same-unique → max/max-unique → avg/avg-unique → maj8/maj8-unique → maj32/maj32-unique → avg8/avg8-unique → avg32/avg32-unique；
+   same/same-unique → max/max-unique → avg/avg-unique → major8/major8-unique → major32/major32-unique → avg8/avg8-unique → avg32/avg32-unique；
    14 张都参与执行模式比对：差异度 = (独有交集图×50 + 交集图×30 + 其余 12 张平均×20)/100；
    -unique 图须等全部分组的 7 张基础图都生成完后由后台统一补算，未生成前本组先不展示独有区图卡片） */
 const IMG_IDS = ["imgSame","imgUnique","imgMax","imgMaxU","imgAvg","imgAvgU","imgM8","imgM8U","imgM32","imgM32U","imgA8","imgA8U","imgA32","imgA32U"];
@@ -1743,14 +1743,14 @@ function openGroup(g){
                    ["max-unique","imgMaxU","tcsMaxU", uc("max-unique")],
                    ["avg","imgAvg","tcsAvg", W + "×" + H],
                    ["avg-unique","imgAvgU","tcsAvgU", uc("avg-unique")],
-                   ["m8","imgM8","tcsM8", sz8(W) + "×" + sz8(H) + " · 多数"],
-                   ["m8-unique","imgM8U","tcsM8U", uc("m8-unique")],
-                   ["m32","imgM32","tcsM32", sz32(W) + "×" + sz32(H) + " · 多数"],
-                   ["m32-unique","imgM32U","tcsM32U", uc("m32-unique")],
-                   ["a8","imgA8","tcsA8", sz8(W) + "×" + sz8(H) + " · 均值"],
-                   ["a8-unique","imgA8U","tcsA8U", uc("a8-unique")],
-                   ["a32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"],
-                   ["a32-unique","imgA32U","tcsA32U", uc("a32-unique")]];
+                   ["major8","imgM8","tcsM8", sz8(W) + "×" + sz8(H) + " · 多数"],
+                   ["major8-unique","imgM8U","tcsM8U", uc("major8-unique")],
+                   ["major32","imgM32","tcsM32", sz32(W) + "×" + sz32(H) + " · 多数"],
+                   ["major32-unique","imgM32U","tcsM32U", uc("major32-unique")],
+                   ["avg8","imgA8","tcsA8", sz8(W) + "×" + sz8(H) + " · 均值"],
+                   ["avg8-unique","imgA8U","tcsA8U", uc("avg8-unique")],
+                   ["avg32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"],
+                   ["avg32-unique","imgA32U","tcsA32U", uc("avg32-unique")]];
     for(const [kind,imgId,tcsId,label] of kinds){
       const el = $(imgId), card = el.closest(".tcard");
       if(kind.endsWith("-unique") && !g.hasUnique){
@@ -2237,7 +2237,7 @@ async function checkAppVersion(){
     // 后端重启后 seq 会从 1 重新计数（历史已清空）：本页基线若已越过它则说明计数跳变，下一轮改为全量回填，避免提示静默中断
     const maxSeq = Number(j && j.shotMaxSeq) || 0;
     if(maxSeq > 0 && lastShotLogSeq > maxSeq) lastShotLogSeq = -1;
-    // 启动历史重复清理结果：后端每次启动按差异阈值（默认 3%）重扫 capture/ + classify/ 全部截图、
+    // 启动历史重复清理结果：后端每次启动按差异阈值（默认 0.3%）重扫 capture/ + classify/ 全部截图、
     // 删除差异低于阈值的重复图（只保留最早一张）。不论是否删除了图片都右下角提示一次清理完成
     const dedup = j && j.startupDedupNotice;
     if(dedup && dedup.at && Number(dedup.at) !== lastDedupNoticeAt){
@@ -2616,23 +2616,23 @@ function openKindScores(it){
   const zh = { same:"交集图", "same-unique":"独有交集图",
                max:"多数图", "max-unique":"独有多数图",
                avg:"均值图", "avg-unique":"独有均值图",
-               m8:"多数块 8×8", "m8-unique":"独有多数块 8×8",
-               a8:"均值块 8×8", "a8-unique":"独有均值块 8×8",
-               m32:"多数块 32×32", "m32-unique":"独有多数块 32×32",
-               a32:"均值块 32×32", "a32-unique":"独有均值块 32×32" };
-  // kind → 磁盘文件名（多数系列在磁盘上是 major 名：major / major8 / major32 及各自 -unique）
+               major8:"多数块 8×8", "major8-unique":"独有多数块 8×8",
+               avg8:"均值块 8×8", "avg8-unique":"独有均值块 8×8",
+               major32:"多数块 32×32", "major32-unique":"独有多数块 32×32",
+               avg32:"均值块 32×32", "avg32-unique":"独有均值块 32×32" };
+  // kind → 磁盘文件名（仅 max/max-unique 映射 major 名，其余与 kind 同名 + ".png"）
   const kf = { same:"same.png", "same-unique":"same-unique.png",
                max:"major.png", "max-unique":"major-unique.png",
                avg:"avg.png", "avg-unique":"avg-unique.png",
-               m8:"major8.png", "m8-unique":"major8-unique.png",
-               a8:"avg8.png", "a8-unique":"avg8-unique.png",
-               m32:"major32.png", "m32-unique":"major32-unique.png",
-               a32:"avg32.png", "a32-unique":"avg32-unique.png" };
+               major8:"major8.png", "major8-unique":"major8-unique.png",
+               avg8:"avg8.png", "avg8-unique":"avg8-unique.png",
+               major32:"major32.png", "major32-unique":"major32-unique.png",
+               avg32:"avg32.png", "avg32-unique":"avg32-unique.png" };
   const rows = it.kinds.map(ks => {
     const nm = zh[ks.kind] || ks.kind;
-    const isBlock = ks.kind === "m8" || ks.kind === "m8-unique" || ks.kind === "a8"
-      || ks.kind === "a8-unique" || ks.kind === "m32" || ks.kind === "m32-unique"
-      || ks.kind === "a32" || ks.kind === "a32-unique";
+    const isBlock = ks.kind === "major8" || ks.kind === "major8-unique" || ks.kind === "avg8"
+      || ks.kind === "avg8-unique" || ks.kind === "major32" || ks.kind === "major32-unique"
+      || ks.kind === "avg32" || ks.kind === "avg32-unique";
     const grid = (typeof ks.w === "number" && ks.w > 0 && typeof ks.h === "number" && ks.h > 0)
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
