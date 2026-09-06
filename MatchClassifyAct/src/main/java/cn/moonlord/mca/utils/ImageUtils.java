@@ -10,7 +10,7 @@ public final class ImageUtils {
         return similarColorCount(a, b, 0);
     }
 
-    // 两图相近的像素数（ARGB 4 个值的差距都小于 maxDiff）
+    // 两图相近的像素数（ARGB 4 个值的差距都小于等于 maxDiff）
     public static int similarColorCount(BufferedImage a, BufferedImage b, int maxDiff) {
         if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight()) {
             throw new IllegalArgumentException("图片分辨率不一致，无法比对: a=" + a.getWidth() + "x" + a.getHeight() + ", b=" + b.getWidth() + "x" + b.getHeight());
@@ -23,7 +23,7 @@ public final class ImageUtils {
         return similarColorCount(pa, pb, 0);
     }
 
-    // 两段等长像素序列相近的像素数（ARGB 4 个值的差距都小于 maxDiff）
+    // 两段等长像素序列相近的像素数（ARGB 4 个值的差距都小于等于 maxDiff）
     public static int similarColorCount(int[] pa, int[] pb, int maxDiff) {
         if (pa.length != pb.length) {
             throw new IllegalArgumentException("像素序列长度不一致，无法比对: a=" + pa.length + ", b=" + pb.length);

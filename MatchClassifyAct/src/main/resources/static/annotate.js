@@ -1998,7 +1998,7 @@ function renderSuggest(list){
       (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都小于 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 ≥ 它判「不匹配」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2594,7 +2594,7 @@ function openKindScores(it){
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
         ? '<b style="color:' + (ks.score <= 25 ? "var(--green)" : "#e0a04e") + '">' + ks.score.toFixed(2) + "%</b>"
-        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或基础图有效比对区域过小（信噪比低）。本轮未计入差异度（按 0 计，不报错）。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
+        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或基础图公共区全空（无有效比对像素）。本轮未计入差异度（按 0 计，不报错）。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:12.5px">' +
       '<span>' + escHtml(nm) +
         '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml((kf[ks.kind] || ks.kind + ".png") + " · " + grid) + "</span></span>" +
@@ -2609,7 +2609,7 @@ function openKindScores(it){
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "标注分类：" + escHtml(it.state || "—") + "<br>" +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/均值块图及各自 -unique）走逐通道容差（三通道差都小于 execute.rgb-dist-threshold（默认 255/3=85）才一致）</div>" +
+        "色差按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致）</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";
