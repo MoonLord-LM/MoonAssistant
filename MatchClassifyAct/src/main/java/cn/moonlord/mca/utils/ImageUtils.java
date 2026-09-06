@@ -50,7 +50,7 @@ public final class ImageUtils {
         if (img1.getWidth() != img2.getWidth() || img1.getHeight() != img2.getHeight()) {
             throw new IllegalArgumentException("图片分辨率不一致，无法比对: img1=" + img1.getWidth() + "x" + img1.getHeight() + ", img2=" + img2.getWidth() + "x" + img2.getHeight());
         }
-        return similarColorNotTransparentCount(img1.getRGB(0, 0, img1.getWidth(), img1.getHeight(), null, 0, img1.getWidth()), img2.getRGB(0, 0, img2.getWidth(), img2.getHeight(), null, 0, img2.getWidth()), maxDiff);
+        return compareNotTransparent(img1.getRGB(0, 0, img1.getWidth(), img1.getHeight(), null, 0, img1.getWidth()), img2.getRGB(0, 0, img2.getWidth(), img2.getHeight(), null, 0, img2.getWidth()), maxDiff);
     }
 
     // 比较两图不透明区的像素
@@ -90,14 +90,14 @@ public final class ImageUtils {
         // 两图均不透明的像素数
         public final int notTransparentCount;
         // 两图不透明区的 RGB 完全一致的像素数
-        public final int sameColorCount;
+        public final int notTransparentSameCount;
         // 两图不透明区的 RGB 值的差距都小于等于 maxDiff 的像素数
-        public final int similarColorCount;
+        public final int notTransparentSimilarCount;
 
-        private CompareResult(int notTransparentCount, int sameColorCount, int similarColorCount) {
+        private CompareResult(int notTransparentCount, int notTransparentSameCount, int notTransparentSimilarCount) {
             this.notTransparentCount = notTransparentCount;
-            this.sameColorCount = sameColorCount;
-            this.similarColorCount = similarColorCount;
+            this.notTransparentSameCount = notTransparentSameCount;
+            this.notTransparentSimilarCount = notTransparentSimilarCount;
         }
     }
 
