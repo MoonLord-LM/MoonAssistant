@@ -44,31 +44,37 @@ import java.util.stream.Stream;
  *
  * <p>界面语言里：分类标注 = 界面上的文本标签（数据字段 state），匹配动作 = none/click
  * （数据字段 action）；同一分类标注只允许一种匹配动作（控制台已按此规则约束）。
- * 本服务对每组截图逐像素分析，产出八张对照图：</p>
+ * 本服务对每组截图逐像素分析，产出 14 张对照图（7 张基础图 + 7 张 -unique 独有区图）：</p>
  * <ol>
  *   <li><b>交集图</b>（same.png）：每个像素取“覆盖大于 90%”的值——统计所有样本在该像素的
  *       颜色，覆盖率 = 该颜色出现的样本占比；覆盖 &gt;90%（达标样本数向上取整）时该像素以该
  *       主流颜色保留为不透明，否则透明。不透明区 = 样本间公共（稳定）画面。</li>
- *   <li><b>多数图</b>（max.png）：每个像素取“覆盖率最多”的颜色——逐像素统计所有样本的颜色，
+ *   <li><b>多数图</b>（major.png）：每个像素取“覆盖率最多”的颜色——逐像素统计所有样本的颜色，
  *       取出现次数最多（同票取样本顺序靠前）的颜色作为该点颜色。</li>
  *   <li><b>均值图</b>（avg.png）：每个像素对全部样本的 R、G、B 分别取平均，
  *       得到一张“各点平均颜色”的合成画面（透明通道统一视为不透明）。</li>
- *   <li><b>1/8 多数图</b>（maj8.png）：按 8×8 网格把所有样本对齐切块，将「同位置的块内全部
+ *   <li><b>1/8 多数图</b>（major8.png）：按 8×8 网格把所有样本对齐切块，将「同位置的块内全部
  *       像素」跨样本合并成一个集合，输出该集合中出现次数最多的颜色（覆盖率最多，同票取样本顺序
  *       靠前）；即一个输出像素 = 全部样本同一 8×8 块内所有原始像素的众数色，不分步压缩。</li>
- *   <li><b>1/32 多数图</b>（maj32.png）：同上，块为 32×32。</li>
+ *   <li><b>1/32 多数图</b>（major32.png）：同上，块为 32×32。</li>
  *   <li><b>1/8 均值图</b>（avg8.png）：按 8×8 网格把所有样本对齐切块，将「同位置的块内全部
  *       像素」跨样本合并成一个集合，输出该集合全部像素 R/G/B 的总平均色。</li>
  *   <li><b>1/32 均值图</b>（avg32.png）：同上，块为 32×32。</li>
- *   <li><b>独有交集图</b>（same-unique.png）：在<b>交集图</b>基础上，把「其它分类标注（同尺寸的已汇总分组）的
- *       交集图在同一像素位置颜色完全相同」的像素剔除（那些位置对“区分本分类”没有贡献），只保留本分类独有的
- *       画面区域，便于快速观察两两相近的分类到底差在哪里；同时作为执行 / 智能比对的第 8 张对照图
- *       参与匹配计算——只在本分类独有区域计分，专为拉开相近分类的差异度。</li>
  * </ol>
  *
+ * <p>每张基础图还额外合成一张对应的 <b>-unique 独有区图</b>（same-unique.png / major-unique.png /
+ * avg-unique.png / major8-unique.png / avg8-unique.png / major32-unique.png / avg32-unique.png）：
+ * 以该基础图为起点，把「其它分类标注（同尺寸的已汇总分组）的<b>同 kind 基础图</b>在同一像素位置
+ * 颜色完全相同」的像素剔除（那些位置对“区分本分类”没有贡献），只保留本分类独有的画面区域，
+ * 便于快速观察两两相近的分类到底差在哪里；同时作为执行 / 智能比对中与基础图互补的正式比对维度——
+ * 独有区图只在本分类独有区域计分，专为拉开相近分类的差异度。独有区图是跨分类产物：
+ * <b>要等全部分组的 7 张基础图都生成完才开始算</b>（全集门禁），且 14 张图必须齐全该分类
+ * 才参与执行识别（见 {@link cn.moonlord.mca.act.FrameClassifier}）。</p>
+ *
  * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
- * {@link StoragePaths}），八张图使用固定文件名：
- * {@code same.png / max.png / avg.png / same-unique.png / maj8.png / avg8.png / maj32.png / avg32.png}，
+ * {@link StoragePaths}），14 张图使用固定文件名：
+ * {@code same.png / same-unique.png / major.png / major-unique.png / avg.png / avg-unique.png /
+ * major8.png / major8-unique.png / avg8.png / avg8-unique.png / major32.png / major32-unique.png / avg32.png / avg32-unique.png}，
  * 分析信息（样本数、覆盖率、公共点击坐标等）
  * 写入同目录 {@code info.json}。产物仅供人工目检展示，<b>不参与任何标注 / 结论决策</b>，
  * 画面标签一律以控制台的人工标注为准。</p>
@@ -91,27 +97,43 @@ public class ThinkService {
     private static final DateTimeFormatter TS_FORMAT =
         DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
-    /** 每组合（一个分类标注目录）内固定文件名 */
-    private static final String FILE_SAME = "same.png";   // 交集图（覆盖>90%）
-    private static final String FILE_MAX = "max.png";     // 多数图
-    private static final String FILE_AVG = "avg.png";     // 均值图
-    private static final String FILE_M8 = "maj8.png";     // 1/8 多数图（8×8 块）
-    private static final String FILE_A8 = "avg8.png";     // 1/8 均值图（8×8 块）
-    private static final String FILE_M32 = "maj32.png";   // 1/32 多数图（32×32 块）
-    private static final String FILE_A32 = "avg32.png";   // 1/32 均值图（32×32 块）
-    private static final String FILE_UNIQUE = "same-unique.png"; // 独有交集图（same-unique）：交集图里剔除“其它分类交集图同像素同色”后剩下的区域
+    /** 每组合（一个分类标注目录）内固定文件名：7 张基础合成图（major 系列 = 多数色合成，8/32 为块边长） */
+    private static final String FILE_SAME = "same.png";      // 交集图（覆盖>90%）
+    private static final String FILE_MAX = "major.png";      // 多数图
+    private static final String FILE_AVG = "avg.png";        // 均值图
+    private static final String FILE_M8 = "major8.png";      // 1/8 多数图（8×8 块）
+    private static final String FILE_A8 = "avg8.png";        // 1/8 均值图（8×8 块）
+    private static final String FILE_M32 = "major32.png";    // 1/32 多数图（32×32 块）
+    private static final String FILE_A32 = "avg32.png";      // 1/32 均值图（32×32 块）
+    /** 7 张基础图各自的 -unique 独有区图（基础图里剔除“其它分类同 kind 基础图同像素同色”后剩下的区域） */
+    private static final String FILE_UNIQUE = "same-unique.png";
+    private static final String FILE_MAX_UNIQUE = "major-unique.png";
+    private static final String FILE_AVG_UNIQUE = "avg-unique.png";
+    private static final String FILE_M8_UNIQUE = "major8-unique.png";
+    private static final String FILE_A8_UNIQUE = "avg8-unique.png";
+    private static final String FILE_M32_UNIQUE = "major32-unique.png";
+    private static final String FILE_A32_UNIQUE = "avg32-unique.png";
     private static final String FILE_INFO = "info.json";
 
-    /** kind → 产物文件名（same-unique 独有交集图是参与执行 / 智能比对的第 8 张可选维度，缺失或独有区过小时自动跳过该图） */
-    private static final Map<String, String> KIND_FILE = Map.of(
-        "same", FILE_SAME,
-        "max", FILE_MAX,
-        "avg", FILE_AVG,
-        "m8", FILE_M8,
-        "a8", FILE_A8,
-        "m32", FILE_M32,
-        "a32", FILE_A32,
-        "same-unique", FILE_UNIQUE);
+    /** 7 张基础图的 kind（每张基础图都对应一张「kind + "-unique"」的独有区图） */
+    private static final List<String> BASE_KINDS = List.of("same", "max", "avg", "m8", "a8", "m32", "a32");
+
+    /** kind → 产物文件名：14 张图（7 基础 + 7 -unique）全部可经 /img/{kind} 读取 */
+    private static final Map<String, String> KIND_FILE = Map.ofEntries(
+        Map.entry("same", FILE_SAME),
+        Map.entry("same-unique", FILE_UNIQUE),
+        Map.entry("max", FILE_MAX),
+        Map.entry("max-unique", FILE_MAX_UNIQUE),
+        Map.entry("avg", FILE_AVG),
+        Map.entry("avg-unique", FILE_AVG_UNIQUE),
+        Map.entry("m8", FILE_M8),
+        Map.entry("m8-unique", FILE_M8_UNIQUE),
+        Map.entry("a8", FILE_A8),
+        Map.entry("a8-unique", FILE_A8_UNIQUE),
+        Map.entry("m32", FILE_M32),
+        Map.entry("m32-unique", FILE_M32_UNIQUE),
+        Map.entry("a32", FILE_A32),
+        Map.entry("a32-unique", FILE_A32_UNIQUE));
 
     /** 逐行像素处理时的行带高，控制峰值内存 */
     private static final int BAND_H = 64;
@@ -122,7 +144,7 @@ public class ThinkService {
     /** 产物生成规则版本：改动产物生成逻辑后递增，使旧产物自动判 stale 并重算 */
     private static final int ART_RULE_VERSION = 6;
 
-    /** 独有交集图全量刷新时，同一尺寸类的交集图像素总量（约 4 字节/像素）上限：超过则本轮跳过，避免瞬时内存过高 */
+    /** -unique 独有区图全量刷新时，同一尺寸类单一 kind 基础图文件总量上限：超过则本轮跳过，避免瞬时内存过高 */
     private static final long UNIQUE_CLASS_BYTES_LIMIT = 250L * 1024 * 1024;
 
     /** 单线程池：像素比对较重，串行避免并发打满 CPU（手动分析任务 / 单图智能建议 / 自动重算共用） */
@@ -191,6 +213,24 @@ public class ThinkService {
         return id;
     }
 
+    /**
+     * 一键重建（前端「重新生成全部对照图」按钮）：先清空 `summary/` 下全部产物目录，再全量重跑一轮分析。
+     *
+     * <p>等价于“手动删掉整个 summary/ 再触发自动生成”，但删除动作放进本服务的串行计算池执行，
+     * 不会与自动重算 / 其它手动分析互踩；清场同时带走历史遗留文件（旧命名、孤儿图）。
+     * 产物由 classify/ 已标注样本派生，删除不影响原始截图与标注。
+     */
+    public String startRebuild() {
+        if (tasks.size() > 32) {
+            tasks.entrySet().removeIf(e -> !"running".equals(e.getValue().status));   // 只留运行中的任务，防止 map 无限膨胀
+        }
+        String id = UUID.randomUUID().toString();
+        Task t = new Task(id, true, true);
+        tasks.put(id, t);
+        pool.submit(() -> runAnalyze(t));
+        return id;
+    }
+
     /** 任务快照；不存在返回 null */
     public Task task(String taskId) {
         return taskId == null ? null : tasks.get(taskId);
@@ -201,7 +241,7 @@ public class ThinkService {
      * 把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
-     * 只要样本变化，summary/ 下的对照图（含跨分类的独有交集图）就会自动保持与最新样本一致，
+     * 只要样本变化，summary/ 下的 14 张对照图（含跨分类的 -unique 独有区图）就会自动保持与最新样本一致，
      * 供执行模式随时取用。与前端手动分析共用同一计算池，串行执行互不并发。
      */
     public void requestRecompute() {
@@ -336,7 +376,7 @@ public class ThinkService {
         }
     }
 
-    /** 建议结果签名：目标图 + 每个已分析分类产物目录内四图/info 的尺寸与修改时间（任一产物重算即失效） */
+    /** 建议结果签名：目标图 + 每个「14 图齐全」分类产物目录内全部对照图/info 的尺寸与修改时间（任一产物重算即失效） */
     private String suggestSig(Path png, BufferedImage target) {
         StringBuilder sb = new StringBuilder();
         try {
@@ -351,12 +391,14 @@ public class ThinkService {
             try (Stream<Path> ds = Files.list(sum)) {
                 for (Path d : (Iterable<Path>) ds.filter(Files::isDirectory)
                         .sorted(Comparator.comparing(p -> p.getFileName().toString()))::iterator) {
-                    if (!artifactsComplete(d)) {
-                        continue;
+                    if (!artifactsAllComplete(d)) {
+                        continue;   // 与执行模式识别器同口径：14 张图齐全的分类才参与
                     }
                     sb.append(d.getFileName()).append('{');
-                    for (String f : List.of(FILE_SAME, FILE_MAX, FILE_AVG,
-                        FILE_M8, FILE_A8, FILE_M32, FILE_A32, FILE_INFO)) {
+                    for (String f : List.of(FILE_SAME, FILE_UNIQUE, FILE_MAX, FILE_MAX_UNIQUE,
+                        FILE_AVG, FILE_AVG_UNIQUE, FILE_M8, FILE_M8_UNIQUE,
+                        FILE_A8, FILE_A8_UNIQUE, FILE_M32, FILE_M32_UNIQUE,
+                        FILE_A32, FILE_A32_UNIQUE, FILE_INFO)) {
                         Path p = d.resolve(f);
                         try {
                             sb.append(f).append('=').append(Files.size(p)).append(',')
@@ -388,10 +430,10 @@ public class ThinkService {
 
     /**
      * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
-     * 每个分类的 8 张对照图（交集 / 独有交集 / 多数 / 均值 / 1-8、1-32 块图）分别同尺度逐像素比对
-     * （单像素 RGB 三维距离 ≥ execute.rgb-dist-threshold 判为不匹配点），分类得分 = 各图「不匹配点占比」
-     * 的均方根 RMS = √(Σ占比²/图数)（差异度，越小越像，各维差值向量的欧氏长度按维数归一，任一张图
-     * 差得远都会抬高总分；独有交集图缺失或独有区过小时该图自动跳过），并按 execute
+     * 每个分类的 14 张对照图（交集 / 独有交集 / 多数 / 均值 / 1-8、1-32 块图及其各自的 -unique 独有区图）
+     * 分别同尺度逐像素比对（单像素 RGB 三维距离 ≥ execute.rgb-dist-threshold 判为不匹配点），
+     * 分类得分 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/14)（差异度，越小越像，
+     * 各维差值向量的欧氏长度按固定 14 维归一，任一张图差得远都会抬高总分），并按 execute
      * 识别阈值（match-threshold-percent）判定是否「已识别」。不再维护“像素一致率 / 平均色差”的平行口径，
      * 避免标注模式的建议与执行模式的真实判定不一致。
      */
@@ -539,12 +581,12 @@ public class ThinkService {
             Path gdir = groupDir(dir);
             Map<String, Object> info = readInfo(gdir);
             boolean complete = artifactsComplete(gdir);
-            g.put("analyzed", complete);   // 七张产物齐全才算完成
+            g.put("analyzed", complete);   // 7 张基础产物齐全才算完成（基础图是 -unique 独有区图的前置）
             if (complete) {
-                boolean hasUnique = Files.isRegularFile(gdir.resolve(FILE_UNIQUE));   // 独有交集图是否已随重算生成
+                boolean hasUnique = uniqueArtifactsComplete(gdir);   // 7 张 -unique 独有区图是否已随重算全部生成
                 g.put("hasUnique", hasUnique);
-                // 独有像素占全图的比例（与交集图 coverage 同口径的百分数值），旧产物未补算时为 null
-                g.put("uniqueCoverage", hasUnique ? info.get("uniqueCoverage") : null);
+                // 各独有区图剩余独有像素占各自全图的比例（kind → 百分数值，与 coverage 同口径）；未生成时为 null
+                g.put("uniqueCov", hasUnique ? info.get("uniqueCov") : null);
                 g.put("coverage", info.get("coverage"));
                 g.put("width", info.get("width"));
                 g.put("height", info.get("height"));
@@ -560,7 +602,7 @@ public class ThinkService {
                 g.put("stale", ruleChanged || (fc != null && !fc.equals(marks.size())) || defChanged);
             } else {
                 g.put("hasUnique", false);
-                g.put("uniqueCoverage", null);
+                g.put("uniqueCov", null);
                 g.put("coverage", null);
                 g.put("width", null);
                 g.put("height", null);
@@ -604,7 +646,7 @@ public class ThinkService {
         return out;
     }
 
-    /** 读取分析产物 PNG（kind=same|max|avg|m8|a8|m32|a32，dir=产物目录名，禁止穿越）；非法返回 null */
+    /** 读取分析产物 PNG（kind=14 图之一：7 基础 + 7 -unique，如 same|same-unique|max|max-unique|avg|m8|a8|m32|a32…，dir=产物目录名，禁止穿越）；非法返回 null */
     public Path resolveArtifact(String kind, String dir) {
         String file = KIND_FILE.get(kind);
         if (file == null) {
@@ -625,6 +667,10 @@ public class ThinkService {
 
     private void runAnalyze(Task t) {
         try {
+            if (t.rebuild) {
+                wipeSummary();
+                log.info("一键重建：summary/ 已清空，开始全量重建全部对照图");
+            }
             List<Map<String, Object>> groups = groups();
             List<Map<String, Object>> todo = new ArrayList<>();
             for (Map<String, Object> g : groups) {
@@ -651,13 +697,13 @@ public class ThinkService {
                     t.errors++;
                 }
             }
-            // 全部分组的基础 7 图生成完成后，再刷新跨分类依赖的 same-unique 独有交集图：
+            // 全部分组的基础 7 图生成完成后，再刷新跨分类依赖的各 -unique 独有区图：
             // refreshUniqueArtifacts 内部带全集门禁（任一有样本分组的基础图未齐则整轮跳过），
-            // 门禁通过后再按交集图 mtime 签名增量检查（签名未变则跳过，成本只有 stat）
+            // 门禁通过后再按「各成员 7 张基础图 mtime 签名」增量检查（签名未变则跳过，成本只有 stat）
             try {
                 refreshUniqueArtifacts(groups);
             } catch (Exception e) {
-                log.warn("刷新独有交集图异常（不影响本轮分析结果）：{}", e.toString());
+                log.warn("刷新 -unique 独有区图异常（不影响本轮分析结果）：{}", e.toString());
             }
             t.status = "done";
             t.message = todo.isEmpty()
@@ -672,7 +718,7 @@ public class ThinkService {
         }
     }
 
-    /** 计算单个分类（state+action）的七张对照图并刷新产物目录（固定文件名原子替换） */
+    /** 计算单个分类（state+action）的 7 张基础对照图并刷新产物目录（固定文件名原子替换；-unique 独有区图由跨分类刷新统一生成） */
     private void computeGroup(String state, String action) throws IOException {
         List<Path> pngs = annotatedPngs();
         List<Path> group = new ArrayList<>();
@@ -873,24 +919,27 @@ public class ThinkService {
             trim(state), action, S, Math.round(coverage * 10000) / 100.0d, dir);
     }
 
-    /* ---------------------------------------------------------------- 独有交集图（same-unique.png） */
+    /* ----------------------------------------------- -unique 独有区图（7 张基础图 → 7 张独有区图） */
 
     /**
-     * 刷新「classify/ 中当前有样本（≥ 1 张）的全部分组」的 same-unique 独有交集图。
+     * 刷新「classify/ 中当前有样本（≥ 1 张）的全部分组」的各 -unique 独有区图（每张基础图一张：
+     * same-unique / max-unique / avg-unique / maj8-unique / avg8-unique / maj32-unique / avg32-unique）。
      *
-     * <p>交集图只刻画“本分类稳定出现的画面”，而独有交集图进一步要求该稳定像素<b>只属于本分类</b>：
-     * 逐个与其它分类标注（同尺寸的已汇总分组）的交集图同位比较，凡其它分类交集图在该像素
-     * 颜色完全相同的点都从本图剔除（它们无助于区分分类），保留下来的即本分类独有的画面区域。
+     * <p>基础合成图只刻画“本分类稳定出现的画面”，而独有区图进一步要求该稳定像素<b>只属于本分类</b>：
+     * 以本分类某张基础图（kind）为起点，逐个与其它分类标注（同尺寸的已汇总分组）的<b>同 kind 基础图</b>
+     * 同位比较，凡其它分类该图在该像素颜色完全相同的点都从本图剔除（它们无助于区分分类），
+     * 保留下来的即本分类独有的画面区域。7 个 kind 逐张独立生成、互不干扰。
      *
-     * <p><b>全集门禁</b>：独有交集图是跨分类产物——少算一个分类，其它分类“哪些像素独有”的判定
-     * 就不完整。因此只有「当前有样本的全部分组」的 7 张基础对照图都生成完毕，本方法才真正开始计算；
-     * 任一分组基础图尚未齐备（本轮新增样本的分组还没轮到、或该分组本轮生成失败留下残图），整轮直接跳过，
-     * 等下一轮补齐后再算——不允许在“分类集合不完整”的状态下过早生成。互比对象以 classify/ 有样本的
-     * 分组为准，而非简单枚举 summary/ 磁盘目录（历史遗留的孤儿目录不参与现行分类判定）。
+     * <p><b>全集门禁</b>：独有区图是跨分类产物——少算一个分类，其它分类“哪些像素独有”的判定就不完整。
+     * 因此只有「当前有样本的全部分组」的 7 张基础对照图都生成完毕，本方法才真正开始计算；任一分组基础图
+     * 尚未齐备（本轮新增样本的分组还没轮到、或该分组本轮生成失败留下残图），整轮直接跳过，等下一轮补齐后再算
+     * ——不允许在“分类集合不完整”的状态下过早生成。互比对象以 classify/ 有样本的分组为准，
+     * 而非简单枚举 summary/ 磁盘目录（历史遗留的孤儿目录不参与现行分类判定）。
      *
-     * <p>尺寸不同的分组无法逐像素对齐，彼此不参与比较；同一尺寸类按“交集图文件 mtime 序列签名”
-     * 增量更新——自身或任一其它分类的交集图更新过、或 same-unique.png 缺失时才真正重算该尺寸类，
-     * 因此自动重算频繁触发时成本仅为 stat。</p>
+     * <p>尺寸不同的分组无法逐像素对齐，彼此不参与比较；同一尺寸类按“各成员 7 张基础图 mtime 序列签名”
+     * 增量更新——自身或任一其它分类的基础图更新过、或任一 -unique 图缺失 / 无独有覆盖率字段时才真正重算
+     * 该尺寸类，因此自动重算频繁触发时成本仅为 stat。内存上逐 kind 单独处理：任一时点只保留一个 kind 的
+     * 逐成员像素，且每种 kind 的文件总量超限即整类跳过本轮（签名不落盘，下轮自动重算会再尝试）。</p>
      */
     private void refreshUniqueArtifacts(List<Map<String, Object>> groups) {
         Path root = storage.summary();
@@ -905,7 +954,7 @@ public class ThinkService {
             }
             Path d = groupDir(String.valueOf(g.get("dir")));
             if (!artifactsComplete(d)) {
-                log.warn("分组 {} 的 7 张基础对照图尚未齐备，本轮跳过 same-unique 独有交集图刷新，等补齐后重算",
+                log.warn("分组 {} 的 7 张基础对照图尚未齐备，本轮跳过 -unique 独有区图刷新，等补齐后重算",
                     d.getFileName());
                 return;
             }
@@ -927,21 +976,37 @@ public class ThinkService {
             try {
                 refreshUniqueClass(cls);
             } catch (Exception e) {
-                log.warn("刷新独有交集图失败（{} 个同尺寸分类）：{}", cls.size(), e.toString());
+                log.warn("刷新 -unique 独有区图失败（{} 个同尺寸分类）：{}", cls.size(), e.toString());
             }
         }
     }
 
-    /** 重算一个“同尺寸类”的独有交集图；签名未变且 same-unique.png 齐全时整类跳过 */
+    /** 重算一个“同尺寸类”的全部 -unique 独有区图；签名未变且各 -unique 图齐全时整类跳过 */
     private void refreshUniqueClass(List<Path> cls) throws IOException {
         String sig = classSig(cls);
         boolean need = false;
         for (Path d : cls) {
             Map<String, Object> info = readInfo(d);
-            if (!Files.isRegularFile(d.resolve(FILE_UNIQUE))
-                || !sig.equals(String.valueOf(info.get("uniqueSig")))
-                || info.get("uniqueCoverage") == null) {   // 旧产物缺独有像素占比字段 → 一并补算
+            if (!sig.equals(String.valueOf(info.get("uniqueSig")))) {
                 need = true;
+                break;
+            }
+            Object covObj = info.get("uniqueCov");
+            if (!(covObj instanceof Map)) {
+                need = true;   // 旧产物没有分 kind 的独有覆盖率 map → 一并补算
+                break;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> cov = (Map<String, Object>) covObj;
+            for (String kind : BASE_KINDS) {
+                String uniqKind = kind + "-unique";
+                if (!Files.isRegularFile(d.resolve(KIND_FILE.get(uniqKind)))
+                    || cov.get(uniqKind) == null) {
+                    need = true;
+                    break;
+                }
+            }
+            if (need) {
                 break;
             }
         }
@@ -949,39 +1014,70 @@ public class ThinkService {
             return;
         }
         int[] wh = pngSize(cls.get(0).resolve(FILE_SAME));
-        int w = wh[0];
-        int h = wh[1];
-        // 内存防护：交集图总量超限（同尺寸分类过多或图过大）时本轮跳过且不记录签名，
+        // 内存防护：按 kind 单独处理，每种 kind 的文件总量都要在限内；任一种超限本轮跳过且不记录签名，
         // 之后每轮自动重算会再尝试，避免瞬时峰值内存过高
-        long bytes = 0;
-        for (Path d : cls) {
-            try {
-                bytes += Files.size(d.resolve(FILE_SAME));
-            } catch (IOException ignore) {
-                // 文件刚被重算替换：按 0 计，让签名差异触发下一轮重试
+        for (String kind : BASE_KINDS) {
+            long bytes = 0;
+            for (Path d : cls) {
+                try {
+                    bytes += Files.size(d.resolve(KIND_FILE.get(kind)));
+                } catch (IOException ignore) {
+                    // 文件刚被重算替换：按 0 计，让签名差异触发下一轮重试
+                }
+            }
+            if (bytes > UNIQUE_CLASS_BYTES_LIMIT) {
+                log.warn("同尺寸 {} 基础图共约 {}MB，超过 {}MB 上限，本轮跳过 -unique 独有区图刷新",
+                    kind, bytes >> 20, UNIQUE_CLASS_BYTES_LIMIT >> 20);
+                return;
             }
         }
-        if (bytes > UNIQUE_CLASS_BYTES_LIMIT) {
-            log.warn("同尺寸交集图共约 {}MB，超过 {}MB 上限，本轮跳过独有交集图刷新",
-                bytes >> 20, UNIQUE_CLASS_BYTES_LIMIT >> 20);
-            return;
+        // 逐 kind 计算：以本分类该 kind 基础图为起点，剔除“其它分类同 kind 基础图同位同色”的像素
+        Map<Path, Map<String, Double>> covOf = new LinkedHashMap<>();
+        for (String kind : BASE_KINDS) {
+            Map<Path, Double> cov = refreshUniqueKind(cls, kind);
+            for (Path d : cls) {
+                covOf.computeIfAbsent(d, k -> new LinkedHashMap<>()).put(kind + "-unique", cov.get(d));
+            }
         }
-        int n = w * h;
+        // 全部 kind 算完才统一写签名与覆盖率，避免写一半造成信息不一致
+        for (Path d : cls) {
+            Map<String, Object> info = readInfo(d);
+            info.put("uniqueSig", sig);
+            info.put("uniqueCov", covOf.get(d));
+            info.remove("uniqueCoverage");   // 旧版单一覆盖率字段清理
+            atomicWriteJson(d.resolve(FILE_INFO), info);
+        }
+        log.info("-unique 独有区图已刷新：{} 个同尺寸分类（{}×{}），每分类 7 张",
+            cls.size(), wh == null ? 0 : wh[0], wh == null ? 0 : wh[1]);
+    }
+
+    /** 计算并落盘某一 kind 的 -unique 独有区图：把本分类该 kind 基础图中「其它分类同 kind 基础图同位同色」的点清透明 */
+    private Map<Path, Double> refreshUniqueKind(List<Path> cls, String kind) throws IOException {
+        String baseFile = KIND_FILE.get(kind);
+        String uniqKind = kind + "-unique";
+        Path first = cls.get(0).resolve(baseFile);
+        int[] wh = pngSize(first);
+        if (wh == null) {
+            throw new IOException("PNG 尺寸读取失败：" + first);
+        }
+        int w = wh[0];
+        int h = wh[1];
         Map<Path, int[]> pxOf = new LinkedHashMap<>();
         Map<Path, String> stateOf = new HashMap<>();
         for (Path d : cls) {
-            BufferedImage img = ImageIO.read(d.resolve(FILE_SAME).toFile());
+            BufferedImage img = ImageIO.read(d.resolve(baseFile).toFile());
             if (img == null || img.getWidth() != w || img.getHeight() != h) {
-                log.warn("交集图读取失败/尺寸不一致，跳过该尺寸类的独有交集图刷新：{}", d.getFileName());
-                return;
+                throw new IOException(baseFile + " 读取失败/尺寸不一致：" + d.getFileName());
             }
             pxOf.put(d, img.getRGB(0, 0, w, h, null, 0, w));
             Object st = readInfo(d).get("state");
             stateOf.put(d, st == null ? "" : String.valueOf(st));
         }
+        int n = w * h;
+        Map<Path, Double> cov = new LinkedHashMap<>();
         for (Path me : cls) {
             int[] own = pxOf.get(me);
-            int[] uniq = own.clone();   // 起点 = 交集图本身；命中“其它分类同像素同色”的点逐个清透明
+            int[] uniq = own.clone();   // 起点 = 本 kind 基础图；命中“其它分类同 kind 同位同色”的点逐个清透明
             String myState = stateOf.get(me);
             for (Path other : cls) {
                 if (other.equals(me) || myState.equals(stateOf.get(other))) {
@@ -990,11 +1086,11 @@ public class ThinkService {
                 int[] op = pxOf.get(other);
                 for (int i = 0; i < n; i++) {
                     if (uniq[i] == 0) {
-                        continue;                       // 自身交集图透明，或已被判定非独有
+                        continue;                       // 自身基础图透明，或已被判定非独有
                     }
                     int oc = op[i];
                     if (oc != 0 && (oc & 0xffffff) == (uniq[i] & 0xffffff)) {
-                        uniq[i] = 0;                    // 其它分类交集图同位同色 → 非本分类独有
+                        uniq[i] = 0;                    // 其它分类同 kind 基础图同位同色 → 非本分类独有
                     }
                 }
             }
@@ -1006,27 +1102,28 @@ public class ThinkService {
             }
             BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
             out.setRGB(0, 0, w, h, uniq, 0, w);
-            atomicWritePng(out, me.resolve(FILE_UNIQUE));
-            Map<String, Object> info = readInfo(me);
-            info.put("uniqueSig", sig);
-            // 独有像素占全图的比例（百分数值，口径与交集图 coverage 一致：0.5 = 0.5%）
-            info.put("uniqueCoverage", Math.round(uniqueCount * 1000000.0 / n) / 10000.0);
-            atomicWriteJson(me.resolve(FILE_INFO), info);
+            atomicWritePng(out, me.resolve(KIND_FILE.get(uniqKind)));
+            // 独有像素占该图全图的比例（百分数值，口径与 coverage 一致：0.5 = 0.5%）
+            cov.put(me, Math.round(uniqueCount * 1000000.0 / n) / 10000.0);
         }
-        log.info("独有交集图已刷新：{} 个同尺寸分类（{}×{}）", cls.size(), w, h);
+        return cov;
     }
 
-    /** 尺寸类签名 = 各成员目录“目录名=交集图最后修改时刻”排序后拼接：任一成员更新即变化 */
+    /** 尺寸类签名 = 各成员目录“目录名=7 张基础图最后修改时刻序列”排序后拼接：任一成员任一基础图更新即变化 */
     private String classSig(List<Path> cls) {
         List<String> parts = new ArrayList<>(cls.size());
         for (Path d : cls) {
-            long m = 0;
-            try {
-                m = Files.getLastModifiedTime(d.resolve(FILE_SAME)).toMillis();
-            } catch (IOException ignore) {
-                // 读取失败按 0 计：签名必变，触发下一轮重算
+            StringBuilder sb = new StringBuilder(d.getFileName().toString());
+            for (String kind : BASE_KINDS) {
+                long m = 0;
+                try {
+                    m = Files.getLastModifiedTime(d.resolve(KIND_FILE.get(kind))).toMillis();
+                } catch (IOException ignore) {
+                    // 读取失败按 0 计：签名必变，触发下一轮重算
+                }
+                sb.append('=').append(m);
             }
-            parts.add(d.getFileName().toString() + "=" + m);
+            parts.add(sb.toString());
         }
         parts.sort(String::compareTo);
         return String.join("|", parts);
@@ -1061,7 +1158,7 @@ public class ThinkService {
         return storage.summary().resolve(dir).normalize();
     }
 
-    /** 七张对照图是否齐全 */
+    /** 7 张基础对照图是否齐全（-unique 独有区图的前置） */
     private boolean artifactsComplete(Path gdir) {
         return Files.isRegularFile(gdir.resolve(FILE_SAME))
             && Files.isRegularFile(gdir.resolve(FILE_MAX))
@@ -1070,6 +1167,22 @@ public class ThinkService {
             && Files.isRegularFile(gdir.resolve(FILE_A8))
             && Files.isRegularFile(gdir.resolve(FILE_M32))
             && Files.isRegularFile(gdir.resolve(FILE_A32));
+    }
+
+    /** 7 张 -unique 独有区图是否齐全 */
+    private boolean uniqueArtifactsComplete(Path gdir) {
+        return Files.isRegularFile(gdir.resolve(FILE_UNIQUE))
+            && Files.isRegularFile(gdir.resolve(FILE_MAX_UNIQUE))
+            && Files.isRegularFile(gdir.resolve(FILE_AVG_UNIQUE))
+            && Files.isRegularFile(gdir.resolve(FILE_M8_UNIQUE))
+            && Files.isRegularFile(gdir.resolve(FILE_A8_UNIQUE))
+            && Files.isRegularFile(gdir.resolve(FILE_M32_UNIQUE))
+            && Files.isRegularFile(gdir.resolve(FILE_A32_UNIQUE));
+    }
+
+    /** 14 张对照图（7 基础 + 7 -unique）是否齐全：与执行模式识别器同口径，齐全才参与匹配 */
+    private boolean artifactsAllComplete(Path gdir) {
+        return artifactsComplete(gdir) && uniqueArtifactsComplete(gdir);
     }
 
     /** 产物目录 info.json 的最后修改时刻（毫秒）；缺失/读不到返回 0。作为该组七图产物整体是否更新过的版本号 */
@@ -1318,12 +1431,33 @@ public class ThinkService {
         }
     }
 
+    /** 递归删除整个 `summary/` 产物目录（一键重建前清场；单个文件删除失败仅告警，不中断后续重建） */
+    private void wipeSummary() {
+        Path root = storage.summary();
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (Stream<Path> s = Files.walk(root)) {
+            s.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    log.warn("清理 summary/ 时无法删除 {}（保留并随重建覆盖，不影响运行）：{}", p, e.toString());
+                }
+            });
+        } catch (IOException e) {
+            log.warn("清理 summary/ 失败：{}", e.toString());
+        }
+    }
+
     /* ---------------------------------------------------------------- 模型 */
 
     /** 后台分析任务（running → done / error） */
     public static class Task {
         public final String taskId;
         public final boolean force;
+        /** true = 一键重建：开始前先清空整个 summary/ 再全量分析 */
+        public final boolean rebuild;
         public volatile String status = "running";
         public volatile String message = "";
         public volatile int total;
@@ -1333,8 +1467,13 @@ public class ThinkService {
         public volatile String current = "";
 
         Task(String taskId, boolean force) {
+            this(taskId, force, false);
+        }
+
+        Task(String taskId, boolean force, boolean rebuild) {
             this.taskId = taskId;
             this.force = force;
+            this.rebuild = rebuild;
         }
     }
 }

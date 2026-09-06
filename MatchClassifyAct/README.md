@@ -33,7 +33,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 |------|------|
 | `capture/` | 后台采集的**原始截图**（未标注，`IMG_yyyyMMdd_HHmmss.png`） |
 | `classify/` | 保存标注时图从 capture/ 移入；图旁同名 json **只记归属** `{"state":…}`；`data.json` = **分类定义中心表**（每分类一份动作+坐标） |
-| `summary/<分类标注>/` | **汇总分析产物**：8 张对照图 + `info.json`，仅供人工目检 / 执行识别，可随时整目录删除后重算 |
+| `summary/<分类标注>/` | **汇总分析产物**：14 张对照图（7 基础 + 7 `-unique` 独有区）+ `info.json`，仅供人工目检 / 执行识别，可随时整目录删除后重算 |
 
 数据布局例子：
 
@@ -70,14 +70,14 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 
 ### 3.3 汇总分析（生成对照图）
 
-进入「汇总分析」段会自动异步分析每个「样本 ≥1 张且尚未分析」的分组；样本有变也会自动标记待重算。产物 = **8 张对照图** + `info.json`（样本数 / 覆盖率 / 公共点击坐标等），**仅供人工目检与执行识别，不参与任何标注决策**：
+进入「汇总分析」段会自动异步分析每个「样本 ≥1 张且尚未分析」的分组；样本有变也会自动标记待重算。产物 = **14 张对照图**（7 张基础合成图 + 每张对应的 `-unique` 独有区图）+ `info.json`（样本数 / 覆盖率 / 公共点击坐标等），**仅供人工目检与执行识别，不参与任何标注决策**：
 
 | 产物 | 含义 |
 |------|------|
 | `same.png` 交集图 | 每像素取「覆盖率 >90%」的主流颜色，不足则透明 = 样本间公共（稳定）区 |
 | `max.png` 多数图 / `avg.png` 均值图 | 每像素取出现最多的颜色 / 全部样本 RGB 平均 |
 | `maj8.png` `avg8.png` `maj32.png` `avg32.png` | 8×8、32×32 块内「多数色 / 均值色」的降采样合成 |
-| `same-unique.png` 独有交集图 | 在交集图基础上去掉「**其它分类**交集图同位置同色」的像素，剩本分类独有区域，用来观察相近分类差在哪。它是跨分类产物：**要等全部分组的 7 张基础图都生成完才开始算**；也是执行识别时可选的第 8 个比对维度（缺失自动跳过） |
+| `same-unique.png` `max-unique.png` `avg-unique.png` `maj8-unique.png` `avg8-unique.png` `maj32-unique.png` `avg32-unique.png`（7 张 -unique 独有区图） | 每张对应一种基础图：在**该 kind 基础图**上去掉「**其它分类同 kind 基础图**同位置同色」的像素，剩本分类独有区域，用来观察相近分类差在哪。均为跨分类产物：**要等全部分组的 7 张基础图都生成完才开始算**；**必须 14 张齐全**该分组才参与执行识别——基础图看整幅画面、独有区图只盯本分类独占区，两者互补拉开相近分类的差距 |
 
 已分析分组在列表中按交集图覆盖率**从低到高**排列（覆盖率越高说明样本越雷同、采样价值越低，放在前面便于优先补采），未分析/待重算分组排在其后；单击任一图放大查看，Esc 还原。
 
@@ -85,7 +85,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 
 执行循环默认关闭，页面「▶ 开始执行循环」后按 `execute.interval-ms`（默认 2s）周期「截图 → 识别 → 刷新画面与结果」，也可点「立即识别一次」手动单轮。截图复用标注模式的找窗/调窗机制，**只用于识别与展示、不写盘**。
 
-- **识别口径**：把当前帧与 `summary/` 里各分组对照图逐张比对（全幅图每隔 4 像素取 1 点抽样），按各图「不匹配点占比」的均方根 RMS 聚合成与每个分类的差异度；**最近似分组 ≤ `execute.match-threshold-percent`（默认 25%）才判「已识别」**，否则只展示最近似作参考、不执行动作（防误点）。
+- **识别口径**：把当前帧与 `summary/` 里各分组 **14 张对照图**（7 基础 + 7 -unique 独有区图，需齐全才参与）逐张比对（全幅图每隔 4 像素取 1 点抽样），分类差异度 = 各图「不匹配点占比」的均方根 RMS = **√(Σ占比²/14)**，固定按 14 张图归一；**最近似分组 ≤ `execute.match-threshold-percent`（默认 25%）才判「已识别」**，否则只展示最近似作参考、不执行动作（防误点）。
 - **依赖前提**：目标画面需先在标注模式打好标并生成汇总产物（产物缺失或尺寸不符的分组不参与识别）。
 - **触发执行**：识别出「鼠标点击」动作后点「触发执行」，后端会**按最新画面先复核一次**，确认仍命中才发送点击：
   - `post`（默认）：`PostMessage` 后台发送，不要求窗口前台、不抢占鼠标；
@@ -151,7 +151,7 @@ src/main/resources/static/annotate.html  控制台单页（标注 / 执行双模
 ### A. REST API 摘要
 
 - 标注：`GET /api/annotate/images`（列图）、`image/{name}`（PNG）、`defs`（分类定义表）、`PUT/DELETE /api/annotate/mark/{name}`、`POST /api/annotate/rename`（分类整体改名）、`POST /api/annotate/delete`（移入系统回收站）。
-- 汇总分析：`GET /api/annotate/think/groups`、`POST /api/annotate/think/analyze`、`GET …/task/{id}`、`GET …/img/{kind}?dir={dirB64}`（`kind = same|same-unique|max|avg|m8|a8|m32|a32`，`dir` 为分类目录名 UTF-8 → Base64）。
+- 汇总分析：`GET /api/annotate/think/groups`、`POST /api/annotate/think/analyze`、`GET …/task/{id}`、`GET …/img/{kind}?dir={dirB64}`（`kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|m8|m8-unique|a8|a8-unique|m32|m32-unique|a32|a32-unique`，`dir` 为分类目录名 UTF-8 → Base64）。
 - 截图：`GET /api/capture/status`、`POST /api/capture/pause|resume`。
 - 执行：`GET /api/execute/status`、`POST …/start|stop|refresh|act`、`GET …/latest|frame`。
 - 其它：`GET /api/app/meta`（版本探针 `codeTs`/最近截图结果）、`POST /api/system/shutdown`。

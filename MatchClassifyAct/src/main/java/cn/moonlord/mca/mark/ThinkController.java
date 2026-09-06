@@ -23,14 +23,17 @@ import java.util.Map;
 
 /**
  * 汇总分析（同「分类标注（state）+ 匹配动作」截图像素分析）展示接口：
- * 生成八张对照图供人工目检；其中独有交集图（same-unique.png）作为第 8 张对照图
- * 一并参与执行模式 / 智能分析的匹配计算（缺失或独有区过小时自动跳过该图）。
+ * 生成 14 张对照图供人工目检——7 张基础合成图（交集 same / 多数 max / 均值 avg / maj8 / avg8 / maj32 / avg32）
+ * 加每张对应的 -unique 独有区图（same-unique / max-unique / avg-unique / maj8-unique / avg8-unique / maj32-unique / avg32-unique）；
+ * 独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，是跨分类产物、等全部分组的
+ * 7 张基础图生成完后才统一计算，并与基础图一起构成 14 个固定比对维度参与执行模式 / 智能分析的匹配。
  *
  * <pre>
  *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir）
- *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下七图）
+ *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下七图，随后补 -unique 独有区图）
+ *   POST /api/annotate/think/rebuild                        一键重建：清空 summary/ 全部产物后全量重算 → {taskId}
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = same|same-unique|max|avg|m8|a8|m32|a32；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|m8|m8-unique|a8|a8-unique|m32|m32-unique|a32|a32-unique；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */
@@ -60,6 +63,13 @@ public class ThinkController {
         boolean force = req != null && req.force();
         String taskId = thinkService.startAnalyze(force);
         return ResponseEntity.ok(Map.of("taskId", taskId, "force", force));
+    }
+
+    /** 一键重建：先清空 summary/ 全部产物再全量重算（前端「重新生成全部对照图」按钮；清场动作在串行计算池内执行） */
+    @PostMapping("/rebuild")
+    public ResponseEntity<?> rebuild() {
+        String taskId = thinkService.startRebuild();
+        return ResponseEntity.ok(Map.of("taskId", taskId));
     }
 
     /** 轮询分析任务 */

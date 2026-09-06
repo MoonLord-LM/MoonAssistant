@@ -432,32 +432,56 @@
           <div class="tcimg"><img id="imgSame" alt="交集图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
-          <div class="tch"><span class="tn">same-unique（独有交集图）</span><span class="tcs" id="tcsUnique">—</span></div>
-          <div class="tcimg"><img id="imgUnique" alt="same-unique 独有交集图" title="在交集图基础上删除其它分类交集图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+          <div class="tch"><span class="tn">same-unique（交集图独有区）</span><span class="tcs" id="tcsUnique">—</span></div>
+          <div class="tcimg"><img id="imgUnique" alt="same-unique 独有区图" title="在交集图基础上删除其它分类交集图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">多数图（每个像素取覆盖率最多的值）</span><span class="tcs" id="tcsMax">—</span></div>
           <div class="tcimg"><img id="imgMax" alt="多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
+          <div class="tch"><span class="tn">max-unique（多数图独有区）</span><span class="tcs" id="tcsMaxU">—</span></div>
+          <div class="tcimg"><img id="imgMaxU" alt="max-unique 独有区图" title="在多数图基础上删除其它分类多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
           <div class="tch"><span class="tn">均值图（每个像素取RGB的均值）</span><span class="tcs" id="tcsAvg">—</span></div>
           <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">avg-unique（均值图独有区）</span><span class="tcs" id="tcsAvgU">—</span></div>
+          <div class="tcimg"><img id="imgAvgU" alt="avg-unique 独有区图" title="在均值图基础上删除其它分类均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/8 多数图（每个像素取8x8个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM8">—</span></div>
           <div class="tcimg"><img id="imgM8" alt="1/8 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
+          <div class="tch"><span class="tn">maj8-unique（1/8 多数图独有区）</span><span class="tcs" id="tcsM8U">—</span></div>
+          <div class="tcimg"><img id="imgM8U" alt="maj8-unique 独有区图" title="在 1/8 多数图基础上删除其它分类 1/8 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
           <div class="tch"><span class="tn">1/32 多数图（每个像素取32x32个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM32">—</span></div>
           <div class="tcimg"><img id="imgM32" alt="1/32 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">maj32-unique（1/32 多数图独有区）</span><span class="tcs" id="tcsM32U">—</span></div>
+          <div class="tcimg"><img id="imgM32U" alt="maj32-unique 独有区图" title="在 1/32 多数图基础上删除其它分类 1/32 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/8 均值图（每个像素取8x8个原始像素的RGB的均值）</span><span class="tcs" id="tcsA8">—</span></div>
           <div class="tcimg"><img id="imgA8" alt="1/8 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
+          <div class="tch"><span class="tn">avg8-unique（1/8 均值图独有区）</span><span class="tcs" id="tcsA8U">—</span></div>
+          <div class="tcimg"><img id="imgA8U" alt="avg8-unique 独有区图" title="在 1/8 均值图基础上删除其它分类 1/8 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
           <div class="tch"><span class="tn">1/32 均值图（每个像素取32x32个原始像素的RGB的均值）</span><span class="tcs" id="tcsA32">—</span></div>
           <div class="tcimg"><img id="imgA32" alt="1/32 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">avg32-unique（1/32 均值图独有区）</span><span class="tcs" id="tcsA32U">—</span></div>
+          <div class="tcimg"><img id="imgA32U" alt="avg32-unique 独有区图" title="在 1/32 均值图基础上删除其它分类 1/32 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
       </div>
       <div id="thinkEmpty"><b id="teTitle"></b></div>
@@ -525,6 +549,8 @@
   <div id="edThink" style="display:none">
     <div class="edHead">
       <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
+      <button type="button" class="btn" id="btnRebuild" style="margin-left:auto;font-size:12px"
+        title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类的 14 张对照图（历史遗留的旧文件一并清除）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
     </div>
     <div class="tkstat" id="tkInfo" style="margin-top:10px">左侧选择分类标注查看对照图。</div>
     <div id="tkExplain" style="margin-top:4px;font-size:12px;color:var(--muted);line-height:1.8"></div>
@@ -810,6 +836,40 @@ function showShotTip(msg, kind){
     el.style.opacity = "0";
     setTimeout(()=> el.remove(), 280);
   }, 2000);
+}
+
+/* 右下角单条「后台任务进度」提示：自动分析 / 全量重建等批量任务由轮询反复刷新当前进度时使用。
+   与截图提示同构——新进度直接替换旧内容，任务结束才淡出；不逐条写历史日志（避免一次任务几十条刷屏），
+   任务的开始 / 完成 / 失败仍由 toast() 正常入库记录 */
+let taskTipTimer = 0;
+function taskTip(msg, kind){
+  const box = $("toasts");
+  let el = box.querySelector(".toast.task");
+  if(msg == null){
+    if(el){
+      clearTimeout(taskTipTimer);
+      el.style.transition = "opacity .25s";
+      el.style.opacity = "0";
+      setTimeout(()=> el.remove(), 280);
+    }
+    return;
+  }
+  if(!el){
+    el = document.createElement("div");
+    el.className = "toast task " + (kind || "");
+    box.appendChild(el);
+  }else{
+    el.className = "toast task " + (kind || "");
+    el.style.transition = "none";     // 先取消淡出过渡，立即恢复显示
+    el.style.opacity = "1";
+  }
+  el.textContent = msg;
+  clearTimeout(taskTipTimer);
+  taskTipTimer = setTimeout(()=>{
+    el.style.transition = "opacity .25s";
+    el.style.opacity = "0";
+    setTimeout(()=> el.remove(), 280);
+  }, 1600);
 }
 
 /* ---------------- 列表加载 / 渲染 ---------------- */
@@ -1996,6 +2056,7 @@ const escHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;
 let GROUPS = [];              // 后端组合总览（state×action）
 let selKey = null;            // 当前选中组合 key = state\u0001action
 let thinkBusy = false;        // 后台是否正在批量分析
+let thinkTaskMsg = "";        // 批量任务进行中主图 dock 的进行态文案（切换分组时仍保持显示）
 let lastThinkSig = "";        // 组合列表签名（避免无变化时反复刷新闪烁）
 
 const gkey = g => g.state + "\u0001" + g.action;
@@ -2013,6 +2074,13 @@ function thinkSig(){
    待生成（≥1 张即自动分析） → 正在生成 → 样本有变 → 已生成，均只在此展示一次 */
 function renderThinkDock(g){
   const b = $("thinkBar");
+  if(FILTER === "think" && thinkTaskMsg){       // 批量任务进行中：不渲染（可能已过时的）分组状态，保持任务进行态
+    b.hidden = false;
+    b.className = "thinkbar warn";
+    b.innerHTML = '<span class="tb-title">汇总分析</span><span>' + escHtml(thinkTaskMsg) + '</span>';
+    syncDockNow();
+    return;
+  }
   if(!g){ b.hidden = true; syncDockNow(); return; }
   let cls = "", text;
   if(!g.analyzed){
@@ -2028,7 +2096,9 @@ function renderThinkDock(g){
     cls = "warn";
     text = '样本有变：新增 / 改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
-    const tail = g.hasUnique ? '八张对照图已生成。' : '对照图已生成；same-unique（独有交集图）将在随后的后台重算中补齐。';
+    const tail = g.hasUnique
+      ? '14 张对照图（7 张基础图 + 7 张 -unique 独有区图）已生成。'
+      : '对照图已生成；各 -unique 独有区图（本分类独有区域）将在随后的后台重算中补齐。';
     text = g.coverage != null
       ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，' + tail
       : tail;
@@ -2038,6 +2108,34 @@ function renderThinkDock(g){
   b.innerHTML = '<span class="tb-title">汇总分析</span><span>' + text + '</span>';
   syncDockNow();
 }
+/* 后台批量任务进行中（自动补分析 / 全量重建）：主图下方 dock 不再停留旧的“已生成”摘要，
+   改为一行任务进行态并随轮询刷新进度；任务结束（成功 / 失败）后由 thinkTaskDone
+   重新按最新组合状态渲染（恢复“已生成 / 覆盖率 / 正在后台合成”等正确状态） */
+function thinkBusyDock(text){
+  const b = $("thinkBar");
+  if(text == null){                              // 任务结束：清空进行态，恢复分组状态渲染
+    thinkTaskMsg = "";
+    if(FILTER !== "think"){ b.hidden = true; syncDockNow(); return; }
+    const g = selKey ? (GROUPS.find(x => gkey(x) === selKey) || null) : null;
+    renderThinkDock(g);
+    return;
+  }
+  if(FILTER !== "think"){ b.hidden = true; syncDockNow(); return; }   // 已退出汇总分析：不残留浮层
+  thinkTaskMsg = text;
+  b.hidden = false;
+  b.className = "thinkbar warn";
+  b.innerHTML = '<span class="tb-title">汇总分析</span><span>' + escHtml(text) + '</span>';
+  syncDockNow();
+}
+/* 批量任务收尾：复位 busy 标志与进行态文案 → 重新拉取组合总览，让列表 / 主图 / dock 回到最新状态 */
+async function thinkTaskDone(){
+  thinkBusy = false;
+  thinkTaskMsg = "";
+  if(FILTER !== "think"){ $("thinkBar").hidden = true; syncDockNow(); return; }
+  await refreshThink(false, false);
+  renderThinkList();
+  thinkBusyDock(null);   // dock 从“任务进行态”恢复为当前分组的最新状态（覆盖率 / 后台合成中…）
+}
 /* 主图区轻占位：无对照图时给一行极简提示；具体原因与下一步见底部浮层状态条 */
 function showThinkEmpty(cls, title){
   const te = $("thinkEmpty");
@@ -2046,10 +2144,12 @@ function showThinkEmpty(cls, title){
   te.style.display = "flex";
 }
 const THINK_EMPTY = "没有分类标注";
-/* 汇总分析对照图（顺序：交集 / 独有交集 / 多数 / 均值 / 1-8多数 / 1-32多数 / 1-8均值 / 1-32均值；
-   八张都参与执行模式比对：独有交集图是第 8 个比对维度，缺失/独有区过小时该图自动跳过、按其余图计分） */
-const IMG_IDS = ["imgSame","imgUnique","imgMax","imgAvg","imgM8","imgM32","imgA8","imgA32"];
-const TCS_IDS = ["tcsSame","tcsUnique","tcsMax","tcsAvg","tcsM8","tcsM32","tcsA8","tcsA32"];
+/* 汇总分析对照图（顺序：每张基础图与其 -unique 独有区图成对出现：
+   same/same-unique → max/max-unique → avg/avg-unique → maj8/maj8-unique → maj32/maj32-unique → avg8/avg8-unique → avg32/avg32-unique；
+   14 张都参与执行模式比对：差异度 = √(Σ各图不匹配占比²/14)，固定按 14 张图归一；
+   -unique 图须等全部分组的 7 张基础图都生成完后由后台统一补算，未生成前本组先不展示独有区图卡片） */
+const IMG_IDS = ["imgSame","imgUnique","imgMax","imgMaxU","imgAvg","imgAvgU","imgM8","imgM8U","imgM32","imgM32U","imgA8","imgA8U","imgA32","imgA32U"];
+const TCS_IDS = ["tcsSame","tcsUnique","tcsMax","tcsMaxU","tcsAvg","tcsAvgU","tcsM8","tcsM8U","tcsM32","tcsM32U","tcsA8","tcsA8U","tcsA32","tcsA32U"];
 
 /* ---- 对照图加载容错：快速切换分组时，同一 <img> 连续换 src 会中止上一组在途请求，
    浏览器偶发把中止/瞬时失败残留成裂图（此时服务端文件其实完好——再点裂图在弹窗里能正常加载）。
@@ -2095,7 +2195,7 @@ function enterThink(){
   syncRightPanel();            // 右栏切到「汇总分析」（隐藏标注编辑与分类过滤）
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "none";
-  showZoomCtl(false);      // 汇总分析七图用各自的 lightbox 放大，隐藏主图缩放控件
+  showZoomCtl(false);      // 汇总分析各对照图用各自的 lightbox 放大，隐藏主图缩放控件
   resetZoom();
   hideSmartTip();          // 汇总分析模式下不显示「未标注」智能分析建议条
   syncSugDock();           // 汇总分析：处理状态浮层按 thinkBar 内容自动显示
@@ -2128,7 +2228,7 @@ function exitThink(){
 
 function renderThinkList(){
   setSegState();   // 筛选按钮仍显示全部/未标注/已标注的截图计数，选中态切到“汇总分析”
-  $("listCount").textContent = thinkBusy ? "分析中…" : GROUPS.length + " 个";
+  $("listCount").textContent = GROUPS.length + " 个";   // 任务进度不再挤进列表头小角，改由右下角 taskTip 闪现提示
   const ul = $("imgList"); ul.innerHTML = "";
   for(const g of GROUPS){
     const li = document.createElement("li");
@@ -2187,7 +2287,7 @@ function autoPick(){
 }
 
 /* ---------------- 汇总分析 · 对照图“原图一半”列表排版 ----------------
-   全幅对照图（交集/独有交集/多数/均值）统一按“原图的一半”展示：原尺寸平滑缩到 1/2；
+   全幅对照图（交集/多数/均值及各自 -unique 独有区图）统一按“原图的一半”展示：原尺寸平滑缩到 1/2；
    1/8、1/32 压缩图按整数倍放大到与半尺寸接近（保留像素锐利），保证一行视觉整齐 */
 let thinkMeta = null;       // { halfW, halfH } 当前组的列表基准尺寸
 
@@ -2264,18 +2364,27 @@ function openGroup(g){
     } else {
       tp.style.gridTemplateColumns = "repeat(auto-fit, 700px)";
     }
+    // 独有区图覆盖率（kind → 独有像素占该图全图百分比；未生成时为 —）
+    const uc = kind => fmtCov(g.uniqueCov ? g.uniqueCov[kind] : null);
     const kinds = [["same","imgSame","tcsSame",fmtCov(g.coverage)],
+                   ["same-unique","imgUnique","tcsUnique", uc("same-unique")],
                    ["max","imgMax","tcsMax", W + "×" + H],
+                   ["max-unique","imgMaxU","tcsMaxU", uc("max-unique")],
                    ["avg","imgAvg","tcsAvg", W + "×" + H],
+                   ["avg-unique","imgAvgU","tcsAvgU", uc("avg-unique")],
                    ["m8","imgM8","tcsM8", sz8(W) + "×" + sz8(H) + " · 多数"],
+                   ["m8-unique","imgM8U","tcsM8U", uc("m8-unique")],
                    ["m32","imgM32","tcsM32", sz32(W) + "×" + sz32(H) + " · 多数"],
+                   ["m32-unique","imgM32U","tcsM32U", uc("m32-unique")],
                    ["a8","imgA8","tcsA8", sz8(W) + "×" + sz8(H) + " · 均值"],
+                   ["a8-unique","imgA8U","tcsA8U", uc("a8-unique")],
                    ["a32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"],
-                   ["same-unique","imgUnique","tcsUnique", fmtCov(g.uniqueCoverage)]];   // 独有像素占比，与交集图覆盖率同口径；旧产物尚未补算时为 —
+                   ["a32-unique","imgA32U","tcsA32U", uc("a32-unique")]];
     for(const [kind,imgId,tcsId,label] of kinds){
       const el = $(imgId), card = el.closest(".tcard");
-      if(kind === "same-unique" && !g.hasUnique){
-        // 独有交集图需跨分类对比：本组尚未经包含新产物的那次重算生成 → 先不展示（重新分析或样本变化后自动补齐）
+      if(kind.endsWith("-unique") && !g.hasUnique){
+        // -unique 独有区图需跨分类对比：本组尚未经「全部分组基础图齐备后的那次重算」生成 → 先不展示
+        // （随后台自动重算补齐，或对该组重新分析）
         $(tcsId).textContent = "";
         card.style.display = "none";
         continue;
@@ -2311,6 +2420,7 @@ async function startAnalyzeIfNeeded(){
   const need = GROUPS.filter(g => g.canAnalyze && (!g.analyzed || g.stale === true));
   if(!need.length){ renderThinkList(); return; }
   thinkBusy = true; renderThinkList();
+  thinkBusyDock("正在后台分析，为「自动分析中」的组合合成对照图…");
   toast("发现 " + need.length + " 个分类标注待生成对照图，开始后台分析…", "");
   try{
     const r = await fetch("/api/annotate/think/analyze", {
@@ -2318,16 +2428,15 @@ async function startAnalyzeIfNeeded(){
     });
     if(!r.ok){ let m="HTTP "+r.status; try{ const j=await r.json(); if(j&&j.error)m=j.error; }catch(_){} throw new Error(m); }
     const j = await r.json();
-    await pollAnalyze(j.taskId);
+    await pollAnalyze(j.taskId, "自动分析");
   }catch(e){
     toast("启动分析失败：" + e.message, "err");
   }
-  thinkBusy = false;
-  await refreshThink(false, false);
-  renderThinkList();
+  await thinkTaskDone();
 }
 
-async function pollAnalyze(id){
+async function pollAnalyze(id, label){
+  label = label || "分析";
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   for(let i=0;i<3600;i++){
     await sleep(700);
@@ -2339,18 +2448,43 @@ async function pollAnalyze(id){
     }catch(_){ continue; }     // 服务短暂中断则等下一轮
     if(t.status === "running"){
       // 后台为单线程串行计算池：任务刚提交 / 排在自动重算等其它分析后面时，total 尚未统计出来（0/0），
-      // 此时只显示“分析中…”，避免把无意义的 0/0 当作卡死；total 确定后再显示真实进度 processed/N
-      $("listCount").textContent = t.total > 0
-        ? "分析中 " + t.processed + "/" + t.total
-            + (t.current ? " · " + t.current : "")
-        : "分析中…";
+      // 此时只报“正在…”，避免把无意义的 0/0 当作卡死；total 确定后显示真实进度 processed/N。
+      // 进度不挤在列表头小角，改为：图片下方 dock 实时刷新进行态 + 右下角 taskTip 单条闪现
+      const hasN = t.total > 0;
+      thinkBusyDock("正在" + label + "…" + (hasN
+        ? " " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "")
+        : ""));
+      taskTip(hasN
+        ? "分析中 " + t.processed + "/" + t.total + (t.current ? " · " + t.current : "")
+        : "正在" + label + "…");
       continue;
     }
-    if(t.status === "error"){ toast(t.message || "分析失败", "err"); return; }
+    if(t.status === "error"){ taskTip(null); toast(t.message || "分析失败", "err"); return; }
+    taskTip(null);
     toast(t.message || "分析完成", "ok");
     return;
   }
+  taskTip(null);
   toast("分析耗时过长，已停止等待（可稍后重新进入本栏）", "err");
+}
+
+/* 「重新生成全部对照图」：先清空 summary/ 全部产物，再全量重建。删除在后台计算线程内串行执行，
+   不会与自动重算/其它分析互踩；产物由 classify/ 已标注样本派生，删除不影响原始截图与标注 */
+async function rebuildThink(){
+  if(thinkBusy){ toast("已有分析任务进行中，请稍候", "warn"); return; }
+  if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类的 14 张对照图。\n原始截图与标注不受影响。\n\n确定继续？")) return;
+  thinkBusy = true; renderThinkList();
+  thinkBusyDock("正在全量重建全部对照图…（将先清空 summary/ 旧产物）");
+  try{
+    const r = await fetch("/api/annotate/think/rebuild", { method:"POST" });
+    if(!r.ok){ let m="HTTP "+r.status; try{ const j=await r.json(); if(j&&j.error)m=j.error; }catch(_){} throw new Error(m); }
+    const j = await r.json();
+    toast("已清空产物，开始全量重建…", "");
+    await pollAnalyze(j.taskId, "全量重建");
+  }catch(e){
+    toast("启动重建失败：" + e.message, "err");
+  }
+  await thinkTaskDone();
 }
 
 /* 80% 视口弹窗：默认「自适应缩放」（整幅可见并尽量占满：不足等比缩小、空间充足等比放大到框内最大，四周留少量空白，不产生滚动条）；
@@ -2405,7 +2539,7 @@ function toggleLbMode(){
   applyLbZoom();
 }
 
-/* ---------------- 智能分析：未标注图 × 执行模式同一匹配口径（7 张对照图差异度） ---------------- */
+/* ---------------- 智能分析：未标注图 × 执行模式同一匹配口径（14 张对照图差异度） ---------------- */
 let sugSeq = 0;          // 目标切换序号：用于丢弃过期轮询
 let sugTimer = 0;        // 建议任务轮询定时器
 let sugDismiss = new Set();  // 用户手动收起的智能分析（按文件名），对应图不再自动弹出
@@ -2452,7 +2586,7 @@ function refreshSmartTip(){
   const file = it.name;
   const seq = ++sugSeq;
   sugStop();
-  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 8 张对照图（交集 / 独有交集 / 多数 / 均值 / 1/8、1/32 多尺度）做逐像素差异比对…</span>');
+  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 14 张对照图（7 张基础图 + 7 张 -unique 独有区图）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
     try{
@@ -2497,11 +2631,11 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类各对照图「不匹配点占比」的均方根 RMS √(Σ占比²/图数)（越小越像） */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类各对照图「不匹配点占比」的均方根 RMS √(Σ占比²/14)，固定按 14 张图归一（越小越像） */
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
-      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（汇总分析完成即可参与比对；独有交集图缺失时自动按其余图计分）。</span>');
+      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（生成完整的 14 张图（7 张基础图 + 7 张 -unique 独有区图）即可参与比对）。</span>');
     return;
   }
   const top = list[0];
@@ -2522,7 +2656,7 @@ function renderSuggest(list){
       (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 8 张对照图（交集 / 独有交集 / 多数 / 均值 / 1/8、1/32 多尺度）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/图数)，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；独有交集图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，缺失或区域过小时自动跳过该图；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2585,6 +2719,7 @@ document.addEventListener("keydown", (e)=>{
 $("btnCap").addEventListener("click", toggleCap);
 $("btnLog").addEventListener("click", openLogPanel);
 $("btnExit").addEventListener("click", requestExit);
+$("btnRebuild").addEventListener("click", rebuildThink);
 $("btnSaveNext").addEventListener("click", ()=> saveCurrent(true));
 $("btnLast").addEventListener("click", useLastMark);
 $("btnClear").addEventListener("click", clearCurrent);
@@ -3068,7 +3203,7 @@ function renderExecCandidates(list){
       vbtn.type = "button";
       vbtn.className = "mbtn";
       vbtn.textContent = "详细分值";
-      vbtn.title = "查看该分类各张对照图（交集/多数/均值/8块/32块等）各自的不匹配点占比分值";
+      vbtn.title = "查看该分类 14 张对照图（基础图及其 -unique 独有区图）各自的不匹配点占比分值";
       vbtn.addEventListener("click", () => openKindScores(it));
       row.appendChild(vbtn);
     }
@@ -3086,27 +3221,41 @@ function renderExecCandidates(list){
   });
 }
 
-/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（含独有交集图）的分值 ---- */
+/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（7 基础图 + 7 -unique 独有区图）的分值 ---- */
 function openKindScores(it){
   if(!it || !Array.isArray(it.kinds) || !it.kinds.length){
     toast("该候选缺少对照图分值明细（未参与比对）", "err");
     return;
   }
   if($("kindScoreModal")) $("kindScoreModal").remove();
-  const zh = { same:"交集图", "same-unique":"same-unique（独有交集图）",
-               max:"逐像素多数合成", avg:"逐像素均值合成",
-               m8:"8×8 块 · 多数色", a8:"8×8 块 · 均值色", m32:"32×32 块 · 多数色", a32:"32×32 块 · 均值色" };
+  const zh = { same:"交集图", "same-unique":"独有交集图",
+               max:"多数图", "max-unique":"独有多数图",
+               avg:"均值图", "avg-unique":"独有均值图",
+               m8:"多数块 8×8", "m8-unique":"独有多数块 8×8",
+               a8:"均值块 8×8", "a8-unique":"独有均值块 8×8",
+               m32:"多数块 32×32", "m32-unique":"独有多数块 32×32",
+               a32:"均值块 32×32", "a32-unique":"独有均值块 32×32" };
+  // kind → 磁盘文件名（多数系列在磁盘上是 major 名：major / major8 / major32 及各自 -unique）
+  const kf = { same:"same.png", "same-unique":"same-unique.png",
+               max:"major.png", "max-unique":"major-unique.png",
+               avg:"avg.png", "avg-unique":"avg-unique.png",
+               m8:"major8.png", "m8-unique":"major8-unique.png",
+               a8:"avg8.png", "a8-unique":"avg8-unique.png",
+               m32:"major32.png", "m32-unique":"major32-unique.png",
+               a32:"avg32.png", "a32-unique":"avg32-unique.png" };
   const rows = it.kinds.map(ks => {
     const nm = zh[ks.kind] || ks.kind;
-    const isBlock = ks.kind === "m8" || ks.kind === "a8" || ks.kind === "m32" || ks.kind === "a32";
+    const isBlock = ks.kind === "m8" || ks.kind === "m8-unique" || ks.kind === "a8"
+      || ks.kind === "a8-unique" || ks.kind === "m32" || ks.kind === "m32-unique"
+      || ks.kind === "a32" || ks.kind === "a32-unique";
     const grid = (typeof ks.w === "number" && ks.w > 0 && typeof ks.h === "number" && ks.h > 0)
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
         ? '<b style="color:' + (ks.score <= 25 ? "var(--green)" : "#e0a04e") + '">' + ks.score.toFixed(2) + "%</b>"
-        : '<span style="color:#778">跳过</span>';
+        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或基础图有效比对区域过小（信噪比低）。本轮未计入差异度（按 0 计，不报错）。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:12.5px">' +
       '<span>' + escHtml(nm) +
-        '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml(ks.kind + ".png · " + grid) + "</span></span>" +
+        '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml((kf[ks.kind] || ks.kind + ".png") + " · " + grid) + "</span></span>" +
       '<span style="white-space:nowrap">' + score + "</span></div>";
   }).join("");
   const ov = document.createElement("div");

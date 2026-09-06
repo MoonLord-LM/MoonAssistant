@@ -28,20 +28,24 @@ import java.util.stream.Stream;
  * 画面识别器（执行模式）：把「当前最新截图」与 summary/ 下每个已汇总分析的分类做像素比对。
  *
  * <p>匹配源是汇总分析产物，而不是 classify/ 的散装样本：每个分类标注（state）经「汇总分析」
- * 会生成 8 张对照图（same 交集 / same-unique 独有交集 / max 多数 / avg 均值 /
- * maj8·avg8·maj32·avg32 块降采样），它们把同一分类的多张样本合成成一张张“该状态的代表画面”。
- * 其中 same-unique 独有交集图在交集图基础上剔除了「其它分类交集图同位同色」的像素——那些区域对区分
- * 本分类没有贡献，只在 same-unique 上统计差异相当于专门考察“该状态独有的画面区域”，能进一步拉开
- * 相近分类的差距；该图是可选维度：产物尚未生成或独有公共像素过少时自动跳过，按其余图照常计算；
- * 产物存在但没有任何独有像素时该维度差异度按 0 计（不存在可判“不匹配”的独有点）。
+ * 会生成 14 张对照图——7 张基础合成图（same 交集 / max 多数 / avg 均值 /
+ * maj8·avg8·maj32·avg32 块降采样）加每张基础图对应的 -unique 独有区图
+ * （same-unique / max-unique / avg-unique / maj8-unique·avg8-unique·maj32-unique·avg32-unique），
+ * 它们把同一分类的多张样本合成成一张张“该状态的代表画面”。每张 -unique 独有区图在该基础图基础上
+ * 剔除了「其它分类同 kind 基础图同位同色」的像素——那些区域对区分本分类没有贡献，只在独有区上统计
+ * 差异相当于专门考察“该状态独有的画面区域”，能进一步拉开相近分类的差距；基础图覆盖整幅画面、
+ * 独有区图只盯着本分类独占的区域，两者互补。产物必须 14 张齐全该分类才参与识别
+ * （-unique 是正式维度，不再是可选项）。
  *
  * <p>匹配口径：把每个对应像素当作 (R,G,B) 三维空间中的一点，两点欧氏距离
  * √(ΔR²+ΔG²+ΔB²) ≥ {@code execute.rgb-dist-threshold}（默认 256）即判该点为「不匹配」；
- * 8 张图分别与当前画面按同一缩放口径逐点判定并统计各自的「不匹配点占比」（0~100，
- * 透明像素不参与统计：交集图的非公共区、独有交集图的非独有区都被剔除）。把各图的占比当作
- * 该分类在对应比对维度上的分值，按欧氏距离思路聚合为差异度 = √(各图占比² 的平均)
- * （即均方根 RMS，等价于把各维差值向量的欧氏长度按维数归一：任一张图差得远都会显著抬高总分，
- * 不会被其余接近的图稀释）；实际参与计分的只有“有效读出且公共像素足够的图”，缺失的图自动剔除。
+ * 14 张图分别与当前画面按同一缩放口径逐点判定并统计各自的「不匹配点占比」（0~100，
+ * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区都被剔除）。把各图的占比当作
+ * 该分类在对应比对维度上的分值，按欧氏距离思路聚合为差异度 = √(Σ各图占比² / 14)
+ * （即均方根 RMS，固定按 14 张图归一：任一张图差得远都会显著抬高总分，不会被其余接近的图稀释；
+ * 个别图产物缺失或无法有效读出时，该维按 0 计——没有可判“不一致”的像素就不增加分歧；
+ * 独有区图没有任何独有像素时同样按 0 计（有 ≥1 个独有点就按实测占比计，不做“过少剔除”）；
+ * 只有全部 14 张都不可比时才剔除该目录）。
  * 不同分类按各自的 RMS 比较，最小者即为最近似分类。
  * 仅当最近似 RMS ≤ {@code execute.match-threshold-percent}（默认 25%）时才判定为「已识别」，
  * 否则视为未识别画面（最近似分类仅作参考展示）。
@@ -57,45 +61,75 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class FrameClassifier {
 
-    /** 全幅对照图（same/max/avg）比对时的抽样步长：横、纵都每隔 4 像素取 1 点（约 1/16）。 */
+    /** 全幅对照图（same/max/avg 及其 -unique 版）比对时的抽样步长：横、纵都每隔 4 像素取 1 点（约 1/16）。 */
     private static final int FULL_SAMPLE_STEP = 4;
 
-    /** 1/8、1/32 块图参与比较的块边长与口径：{块边长, 1=块内多数 / 0=块内均值}；全幅图不压缩。 */
-    private static final Map<String, int[]> KIND_DOWN = Map.of(
-            "same", new int[]{1, 0},
-            "same-unique", new int[]{1, 0},
-            "max", new int[]{1, 0},
-            "avg", new int[]{1, 0},
-            "m8", new int[]{8, 1},
-            "a8", new int[]{8, 0},
-            "m32", new int[]{32, 1},
-            "a32", new int[]{32, 0});
+    /** 各产物维度参与比对时的压缩口径：{块边长, 1=块内多数 / 0=块内均值}；全幅图不压缩。
+     *  -unique 独有区图与各自基础图同口径。 */
+    private static final Map<String, int[]> KIND_DOWN = Map.ofEntries(
+            Map.entry("same", new int[]{1, 0}),
+            Map.entry("same-unique", new int[]{1, 0}),
+            Map.entry("max", new int[]{1, 0}),
+            Map.entry("max-unique", new int[]{1, 0}),
+            Map.entry("avg", new int[]{1, 0}),
+            Map.entry("avg-unique", new int[]{1, 0}),
+            Map.entry("m8", new int[]{8, 1}),
+            Map.entry("m8-unique", new int[]{8, 1}),
+            Map.entry("a8", new int[]{8, 0}),
+            Map.entry("a8-unique", new int[]{8, 0}),
+            Map.entry("m32", new int[]{32, 1}),
+            Map.entry("m32-unique", new int[]{32, 1}),
+            Map.entry("a32", new int[]{32, 0}),
+            Map.entry("a32-unique", new int[]{32, 0}));
 
-    /** 8 张对照图的文件名（与 ThinkService 产物保持一致）。 */
-    private static final Map<String, String> KIND_FILE = Map.of(
-            "same", "same.png",
-            "same-unique", "same-unique.png",
-            "max", "max.png",
-            "avg", "avg.png",
-            "m8", "maj8.png",
-            "a8", "avg8.png",
-            "m32", "maj32.png",
-            "a32", "avg32.png");
+    /** 全部对照图（7 基础 + 7 -unique 独有区）的文件名（与 ThinkService 产物保持一致）。 */
+    private static final Map<String, String> KIND_FILE = Map.ofEntries(
+            Map.entry("same", "same.png"),
+            Map.entry("same-unique", "same-unique.png"),
+            Map.entry("max", "major.png"),
+            Map.entry("max-unique", "major-unique.png"),
+            Map.entry("avg", "avg.png"),
+            Map.entry("avg-unique", "avg-unique.png"),
+            Map.entry("m8", "major8.png"),
+            Map.entry("m8-unique", "major8-unique.png"),
+            Map.entry("a8", "avg8.png"),
+            Map.entry("a8-unique", "avg8-unique.png"),
+            Map.entry("m32", "major32.png"),
+            Map.entry("m32-unique", "major32-unique.png"),
+            Map.entry("a32", "avg32.png"),
+            Map.entry("a32-unique", "avg32-unique.png"));
 
-    /** 8 张对照图的固定展示/比较顺序（same 交集 → same-unique 独有交集 → max/avg 全幅 → 8 块 → 32 块）。 */
-    private static final List<String> KIND_ORDER =
-            List.of("same", "same-unique", "max", "avg", "m8", "a8", "m32", "a32");
+    /** -unique 独有区图维度：无任何独有像素时按差异度 0 计（不存在可判“不匹配”的独有点）。 */
+    private static final Set<String> UNIQUE_KINDS = Set.of(
+            "same-unique", "max-unique", "avg-unique",
+            "m8-unique", "a8-unique", "m32-unique", "a32-unique");
 
-    /** 参与比对必需的核心对照图文件名（7 张基础图：same-unique 独有交集图是可选的第 8 维度，
-     *  产物未生成 / 读失败时该图记 -1 跳过、按剩余图计算，不阻塞整目录识别）。 */
+    /** 14 张对照图的固定展示/比较顺序（每张基础图紧跟其 -unique 独有区图：交集 → 多数 → 均值 → 8 块 → 32 块）。 */
+    private static final List<String> KIND_ORDER = List.of(
+            "same", "same-unique",
+            "max", "max-unique",
+            "avg", "avg-unique",
+            "m8", "m8-unique",
+            "a8", "a8-unique",
+            "m32", "m32-unique",
+            "a32", "a32-unique");
+
+    /** 参与比对必需的全部 14 张产物对照图：任一缺失 = 该分类产物未齐，整目录跳过不参与识别
+     *  （差异度按固定 14 张图平均，缺图无法保证口径）。 */
     private static final Set<String> MATCH_CORE_FILES = Set.of(
-            "same.png", "max.png", "avg.png",
-            "maj8.png", "avg8.png", "maj32.png", "avg32.png");
+            "same.png", "same-unique.png",
+            "major.png", "major-unique.png",
+            "avg.png", "avg-unique.png",
+            "major8.png", "major8-unique.png",
+            "avg8.png", "avg8-unique.png",
+            "major32.png", "major32-unique.png",
+            "avg32.png", "avg32-unique.png");
 
     /** 产物像素缓存的 LRU 容量上限，防止分类数量膨胀时内存失控。 */
     private static final int MAX_CACHE = 400;
 
-    /** 全幅图参与比对的有效像素占比下限：交集图公共区域太少时该图信噪比过低，跳过不参与平均。 */
+    /** 非 -unique 基础图的有效像素占比下限：有效（公共）区域太少时该图信噪比过低判不可比；
+     *  -unique 独有区图不做此剔除：0 个独有点按 0 计，有独有点即按实测占比计。 */
     private static final double MIN_OVERLAP_RATIO = 0.005;
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -213,7 +247,7 @@ public class FrameClassifier {
             }
             total++;
             if (!artifactsComplete(dir)) {
-                continue;   // 核心对照图不齐（未做汇总分析）无法比较
+                continue;   // 14 张对照图不齐（未做汇总分析 / -unique 独有区图尚未补齐）无法比较
             }
             Number wObj = info.get("width") instanceof Number n ? n : null;
             Number hObj = info.get("height") instanceof Number n ? n : null;
@@ -240,18 +274,19 @@ public class FrameClassifier {
                 }
             }
             if (kindCount == 0) {
-                continue;   // 各对照图都无法有效比较
+                continue;   // 14 张对照图全部无法有效读出 → 该目录不参与（正常产物不会出现）
             }
             scanned++;
-            // 差异度 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/图数)：7 维差值向量的欧氏长度按维数归一，
-            // 任一张图差得远都会显著抬高总分，不会被其余接近的图平均掉（RMS ≥ 算术平均）
-            double diff = Math.sqrt(sumSq / kindCount);
+            // 差异度 = 14 张图「不匹配点占比」的均方根 RMS = √(Σ占比²/14)：固定按 14 张图归一（口径恒定），
+            // 各维差值向量的欧氏长度按维数归一，任一张图差得远都会显著抬高总分，不会被其余接近的图平均掉；
+            // 无法有效读出的个别图按 0 计（无可用判别像素 = 不产生分歧）
+            double diff = Math.sqrt(sumSq / KIND_ORDER.size());
             GroupBest g = perState.computeIfAbsent(state, s -> new GroupBest());
             g.state = state;
             if (diff < g.diff) {
                 g.diff = diff;
                 g.dir = dir.getFileName().toString();
-                g.kindScores = scores;   // 只保留该分类“最优产物目录”那一轮的 7 图分值
+                g.kindScores = scores;   // 只保留该分类“最优产物目录”那一轮的 14 图分值
                 g.action = info.get("action") == null ? null : String.valueOf(info.get("action"));
                 g.clickLeft = intOf(info.get("clickLeft"));
                 g.clickTop = intOf(info.get("clickTop"));
@@ -324,7 +359,7 @@ public class FrameClassifier {
                 return -1;
             }
             return mismatchPercent(sampleStep(basePx, w, h, FULL_SAMPLE_STEP), ref.px, distThr,
-                    "same-unique".equals(kind));
+                    UNIQUE_KINDS.contains(kind));
         }
         // 1/8、1/32 块图：把当前画面按块压缩到产物同尺度（整块对齐、右侧/底部不足整块忽略），
         // 产物本身也是同一 floor 网格生成，尺寸天然一致。
@@ -340,7 +375,9 @@ public class FrameClassifier {
         if (ref.w != wb || ref.h != hb) {
             return -1;
         }
-        return mismatchPercent(blockDown(basePx, w, h, block, wb, hb, majority), ref.px, distThr, false);
+        // -unique 独有区图（含块图）口径：无独有点该维按 0 计；有独有点（即使很少）按实测占比计，不做“过少”剔除
+        return mismatchPercent(blockDown(basePx, w, h, block, wb, hb, majority), ref.px, distThr,
+                UNIQUE_KINDS.contains(kind));
     }
 
     /** 取一张与产物同尺寸的当前画面像素：尺寸一致直接复用整帧数组，否则缩放后缓存。 */
@@ -435,10 +472,12 @@ public class FrameClassifier {
      * 两段已对齐像素序列的「不匹配点占比」（0~100）：把每个对应像素当 (R,G,B) 三维空间的一点，
      * 计算两点欧氏距离 √(ΔR²+ΔG²+ΔB²)；距离 ≥ distThr 判为不匹配点，否则视为匹配点。
      * 结果为不匹配点数 / 有效点数 × 100。参考序列（b，即产物）的透明像素
-     * （交集图非公共区域）不参与统计。长度不一致或无有效公共像素时返回 -1。
-     * <p>zeroIfEmpty：独有交集图没有任何独有像素时不存在可判“不匹配”的点，该维度差异按 0 计
-     * （无独有判别区 = 与画面无分歧），而不是 -1 跳过；其余图（same/max/avg/块图）保持
-     * “公共像素过少视为不可比”。
+     * （交集图非公共区域 / 独有区图非独有区域）不参与统计。长度不一致时返回 -1。
+     * <p>zeroIfEmpty（-unique 独有区图口径）：该图没有任何有效（独有）像素时，不存在可判
+     * “不匹配”的点，该维度差异按 0 计（无独有判别区 = 与画面无分歧）；只要读到 ≥1 个有效像素，
+     * 就按这些点的实测不匹配占比计——独有区图不做“有效点过少”的剔除，不会因独有区小显示跳过。
+     * <p>基础图（same/max/avg/块图，zeroIfEmpty=false）：无有效像素或有效像素过少视为不可比返回 -1，
+     * 调用侧统一把 -1 按 0 计入固定 14 图分母。
      * <p>与逐通道线性平均色差不同：三通道的差异是联动比较的，任一颜色方向偏得够远都算“不一致”，
      * 不受背景大片近似色的平均稀释。</p>
      */
@@ -464,11 +503,14 @@ public class FrameClassifier {
             }
             n++;
         }
-        if (n == 0 && zeroIfEmpty) {
-            return 0.0;   // 独有交集图无任何独有像素：该维度统计不到不匹配点 → 差异度 0
+        if (n == 0) {
+            // 没有任何可判“不匹配”的有效像素：独有区图为空 → 差异度按 0 计；基础图（公共区全空）→ 不可比
+            return zeroIfEmpty ? 0.0 : -1;
         }
-        if (n < Math.max(16, a.length * MIN_OVERLAP_RATIO)) {
-            return -1;   // 有效公共像素过少（如同类图基本全透明），视为不可比
+        // 独有区图（zeroIfEmpty）只要有 ≥1 个有效像素就按实测占比计，不做“过少剔除”；
+        // 基础图保留有效像素过少（信噪比过低）判不可比的防护
+        if (!zeroIfEmpty && n < Math.max(16, a.length * MIN_OVERLAP_RATIO)) {
+            return -1;
         }
         return bad * 100.0 / n;
     }
@@ -502,7 +544,7 @@ public class FrameClassifier {
         int w = im.getWidth();
         int h = im.getHeight();
         int[] down = KIND_DOWN.get(kind);
-        boolean isFull = down != null && down.length == 2 && down[0] == 1;   // 全幅 kind（same/same-unique/max/avg）缓存抽样序列
+        boolean isFull = down != null && down.length == 2 && down[0] == 1;   // 全幅 kind（same/max/avg 及各自的 -unique 版）缓存抽样序列
         int[] px;
         if (isFull) {
             int[] all = im.getRGB(0, 0, w, h, null, 0, w);
@@ -521,7 +563,7 @@ public class FrameClassifier {
         return sp;
     }
 
-    /** 参与比对的必需核心对照图（7 张基础图）是否齐全；same-unique 是可选维度，缺失不阻塞。 */
+    /** 参与比对的必需全部对照图（14 张：7 基础 + 7 -unique）是否齐全；任一缺失该目录整体跳过。 */
     private static boolean artifactsComplete(Path gdir) {
         for (String f : MATCH_CORE_FILES) {
             if (!Files.isRegularFile(gdir.resolve(f))) {
