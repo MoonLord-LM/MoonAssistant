@@ -8,8 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -37,10 +35,19 @@ import java.util.stream.Stream;
  * 独有区图只盯着本分类独占的区域，两者互补。产物必须 14 张齐全该分类才参与识别
  * （-unique 是正式维度，不再是可选项）。
  *
- * <p>匹配口径：逐点比较两像素的 R、G、B 三个通道差值的绝对值，任一通道差 ≥
- * {@code execute.rgb-dist-threshold}（默认 255/3 = 85）即判该点为「不匹配」——
- * 只有三个通道的差值都小于 255/3 才认为两像素是同一个颜色；
- * 14 张图分别与当前画面按同一缩放口径逐点判定并统计各自的「不匹配点占比」（0~100，
+ * <p>匹配口径：14 张图按「代表色的来源」分两套逐点判据——
+ * <ul>
+ * <li><b>交集/多数类</b>（same 交集、max 多数、maj8/maj32 多数块图及各自的 -unique 独有区图，
+ * 共 8 张）：对照颜色来自样本中<b>真实出现过的像素</b>（交集 = 多数样本一致的原始色，多数 = 出现最多的原始色）。
+ * 工程靠 resize 让窗口截图与标注逐像素对齐，同一状态重截的画面应当<b>逐像素完全重现</b>该画面——
+ * 因此要求两像素 R、G、B 三通道差值<b>全部为 0</b>，任一通道差 ≥ 1 即判「不匹配」；</li>
+ * <li><b>均值类</b>（avg 均值、avg8/avg32 均值块图及各自的 -unique 独有区图，共 6 张）：
+ * 对照颜色是样本的<b>逐通道平均值</b>，真实画面几乎不可能恰好等于平均色，逐像素完全一致没有意义——
+ * 因此采用逐通道容差：三通道差值都小于 {@code execute.rgb-dist-threshold}（默认 255/3 = 85）才判「匹配」，
+ * 任一通道差 ≥ 阈值即「不匹配」。</li>
+ * </ul>
+ * 14 张图分别与当前画面（须与产物同分辨率：靠 resize 对齐，比对不做图片缩放）按同一口径逐点判定
+ * 并统计各自的「不匹配点占比」（0~100，
  * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区都被剔除）。把各图的占比当作
  * 该分类在对应比对维度上的分值，按均方根聚合为差异度 = √(Σ各图占比² / 14)
  * （即均方根 RMS，固定按 14 张图归一：任一张图差得远都会显著抬高总分，不会被其余接近的图稀释；
@@ -64,6 +71,19 @@ public class FrameClassifier {
 
     /** 全幅对照图（same/max/avg 及其 -unique 版）比对时的抽样步长：横、纵都每隔 4 像素取 1 点（约 1/16）。 */
     private static final int FULL_SAMPLE_STEP = 4;
+
+    /** 交集/多数类维度用的「完全一致」判据阈值：distThr=1 ⇔ 仅当 R/G/B 三通道差都为 0 才算匹配
+     *  （通道差是整数，|Δ| < 1 等价于 Δ = 0）。 */
+    private static final int EXACT_MATCH_DIST = 1;
+
+    /** 逐像素「完全一致」判据的维度（交集/多数类，颜色来自样本真实像素）：same / max(major) /
+     *  maj8 / maj32 及各自的 -unique 独有区图，共 8 张；其余 6 张均值类（avg/avg8/avg32 及各自
+     *  -unique，颜色是样本平均色）走逐通道容差 {@code execute.rgb-dist-threshold}。 */
+    private static final Set<String> EXACT_KINDS = Set.of(
+            "same", "same-unique",
+            "max", "max-unique",
+            "m8", "m8-unique",
+            "m32", "m32-unique");
 
     /** 各产物维度参与比对时的压缩口径：{块边长, 1=块内多数 / 0=块内均值}；全幅图不压缩。
      *  -unique 独有区图与各自基础图同口径。 */
@@ -207,7 +227,7 @@ public class FrameClassifier {
     /**
      * 对一张截图做状态识别。
      *
-     * @param frame 最新一张画面截图（任意尺寸；按各分类产物尺寸缩放对齐后比较）
+     * @param frame 最新一张画面截图（须与产物同分辨率：窗口先经 resize 对齐，不一致时比对直接抛异常）
      * @return 识别输出（可能为“未识别”，此时 bestState 仍给出最近似参考）
      */
     public synchronized Outcome classify(BufferedImage frame) {
@@ -223,8 +243,7 @@ public class FrameClassifier {
 
         int fw = frame.getWidth();
         int fh = frame.getHeight();
-        int[] framePxFull = frame.getRGB(0, 0, fw, fh, null, 0, fw);   // 与产物同尺寸时直接复用
-        Map<String, int[]> scaledPx = new LinkedHashMap<>();            // 按产物尺寸缓存缩放像素
+        int[] framePxFull = frame.getRGB(0, 0, fw, fh, null, 0, fw);   // 与产物同分辨率才可逐像素比对（resize 负责对齐）
 
         Map<String, GroupBest> perState = new LinkedHashMap<>();
         int total = 0;
@@ -267,7 +286,7 @@ public class FrameClassifier {
                 CachedPx ref = loadCached(art, kind);
                 KindScore ks = (ref == null) ? new KindScore(kind, file, 0, 0, -1)
                         : new KindScore(kind, file, ref.w, ref.h,
-                        compareKind(framePxFull, fw, fh, w, h, ref, kind, scaledPx));
+                        compareKind(framePxFull, fw, fh, w, h, ref, kind));
                 scores.put(kind, ks);
                 if (ks.score() >= 0) {
                     sumSq += ks.score() * ks.score();
@@ -336,38 +355,38 @@ public class FrameClassifier {
     }
 
     /**
-     * 把当前画面按某张产物的口径压到同一尺度后比较，返回该图「不匹配点占比」百分比（0~100）：
-     * 逐点比较 R/G/B 三通道差值，任一通道差 ≥ {@code execute.rgb-dist-threshold} 即判为不匹配点
-     * 并统计占比（三通道差都 < 阈值才算匹配）；无法对齐/无有效公共像素时返回 -1（该图不参与平均）。
+     * 画面与产物须同分辨率（窗口 resize 对齐，不一致 basePixels 直接报错）后，把画面按该张产物的
+     * 抽样/块压缩口径归一到同一尺度比较，返回该图「不匹配点占比」百分比（0~100）。
+     * 判据按维度类别分两套：交集/多数类（same/max/maj8/maj32 及各自的 -unique）对照颜色是样本真实像素，
+     * 同一状态画面应能逐像素重现 → <b>逐像素完全一致</b>（R/G/B 三通道差都须为 0）才算匹配；
+     * 均值类（avg/avg8/avg32 及各自的 -unique）对照颜色是样本平均值 → 走逐通道容差
+     * {@code execute.rgb-dist-threshold}（三通道差都 < 阈值才算匹配）。
+     * 无有效公共像素/产物尺寸与抽样网格对不上时返回 -1（该图不参与平均）。
      */
     private double compareKind(int[] framePxFull, int fw, int fh, int w, int h,
-                               CachedPx ref, String kind, Map<String, int[]> scaledPx) {
+                               CachedPx ref, String kind) {
         int[] down = KIND_DOWN.get(kind);
         if (down == null || down.length != 2) {
             return -1;
         }
         int block = down[0];
         boolean majority = down[1] == 1;
-        int distThr = executeProperties.getRgbDistThreshold();
+        int distThr = EXACT_KINDS.contains(kind) ? EXACT_MATCH_DIST
+                : executeProperties.getRgbDistThreshold();
 
         if (block == 1) {
-            // 全幅对照图：当前画面需缩放到与产物相同尺寸后，双方同用 1/4 抽样网格比较
-            int[] basePx = basePixels(framePxFull, fw, fh, w, h, scaledPx);
-            if (basePx == null) {
-                return -1;
-            }
+            // 全幅对照图：当前画面须与产物同分辨率（resize 对齐；不一致 basePixels 直接报错），
+            // 双方同用 1/4 抽样网格比较
+            int[] basePx = basePixels(framePxFull, fw, fh, w, h);
             if (!ref.sampled) {
                 return -1;
             }
             return mismatchPercent(sampleStep(basePx, w, h, FULL_SAMPLE_STEP), ref.px, distThr,
                     UNIQUE_KINDS.contains(kind));
         }
-        // 1/8、1/32 块图：把当前画面按块压缩到产物同尺度（整块对齐、右侧/底部不足整块忽略），
-        // 产物本身也是同一 floor 网格生成，尺寸天然一致。
-        int[] basePx = basePixels(framePxFull, fw, fh, w, h, scaledPx);
-        if (basePx == null) {
-            return -1;
-        }
+        // 1/8、1/32 块图：画面须与产物同分辨率（不一致 basePixels 直接报错），
+        // 再按块压缩到产物同尺度（整块对齐、右侧/底部不足整块忽略；产物本身也是同一 floor 网格生成）
+        int[] basePx = basePixels(framePxFull, fw, fh, w, h);
         if (ref.sampled) {
             return -1;
         }
@@ -381,28 +400,16 @@ public class FrameClassifier {
                 UNIQUE_KINDS.contains(kind));
     }
 
-    /** 取一张与产物同尺寸的当前画面像素：尺寸一致直接复用整帧数组，否则缩放后缓存。 */
-    private int[] basePixels(int[] framePxFull, int fw, int fh, int w, int h, Map<String, int[]> scaledPx) {
+    /** 画面像素须与产物同分辨率（resize 对齐的前提）：尺寸一致直接复用整帧数组；不一致直接报错——比对不做任何图片缩放。 */
+    private int[] basePixels(int[] framePxFull, int fw, int fh, int w, int h) {
         if (w == fw && h == fh) {
             return framePxFull;
         }
-        String key = w + "x" + h;
-        int[] hit = scaledPx.get(key);
-        if (hit != null) {
-            return hit;
-        }
-        if (w <= 0 || h <= 0) {
-            return null;
-        }
-        BufferedImage src = new BufferedImage(fw, fh, BufferedImage.TYPE_INT_ARGB);
-        src.setRGB(0, 0, fw, fh, framePxFull, 0, fw);
-        BufferedImage sc = scaleTo(src, w, h);
-        int[] px = sc.getRGB(0, 0, w, h, null, 0, w);
-        scaledPx.put(key, px);
-        return px;
+        throw new IllegalArgumentException(
+                "画面分辨率 " + fw + "x" + fh + " 与对照产物 " + w + "x" + h + " 不一致：比对不做图片缩放，请先让窗口/截图对齐到目标分辨率");
     }
 
-    /* ---------------- 像素采样 / 块压缩 / 差异 ---------------- */
+    /* ---------------- 像素抽样 / 块压缩 / 差异判定 ---------------- */
 
     /** 对像素数组做 step×step 网格抽样（步进取样，与 full 产物缓存同口径）。 */
     private static int[] sampleStep(int[] px, int w, int h, int step) {
@@ -471,7 +478,9 @@ public class FrameClassifier {
 
     /**
      * 两段已对齐像素序列的「不匹配点占比」（0~100）：对每个对应像素分别取 R、G、B 三通道差值的
-     * 绝对值，任一通道差 ≥ distThr 判为不匹配点；只有三通道差都 < distThr 才视为匹配点。
+     * 绝对值，任一通道差 ≥ distThr 判为不匹配点；只有三通道差都 < distThr 才视为匹配点
+     * （distThr = {@link #EXACT_MATCH_DIST} 即「逐像素完全一致」：通道差是整数，|Δ| < 1
+     * 等价于三通道全部相等；均值类传 execute.rgb-dist-threshold）。
      * 结果为不匹配点数 / 有效点数 × 100。参考序列（b，即产物）的透明像素
      * （交集图非公共区域 / 独有区图非独有区域）不参与统计。长度不一致时返回 -1。
      * <p>zeroIfEmpty（-unique 独有区图口径）：该图没有任何有效（独有）像素时，不存在可判
@@ -486,8 +495,8 @@ public class FrameClassifier {
         if (a == null || b == null || a.length != b.length) {
             return -1;
         }
-        // 逐通道判定：R/G/B 三通道分别算差值，任一通道差绝对值 ≥ distThr 即判「不匹配」；
-        // 只有三通道差都 < distThr 才算匹配（无平方/开方开销）
+        // 逐点判定：R/G/B 三通道分别算差值，任一通道差绝对值 ≥ distThr 即判「不匹配」；
+        // 只有三通道差都 < distThr 才算匹配（无平方/开方开销）；b（参考/产物）透明像素不参与
         long bad = 0;
         long n = 0;
         for (int i = 0; i < a.length; i++) {
@@ -592,19 +601,4 @@ public class FrameClassifier {
         return v instanceof Number n ? n.intValue() : null;
     }
 
-    /** 尺寸不一致时缩放到 w×h（双线性）。 */
-    private static BufferedImage scaleTo(BufferedImage src, int w, int h) {
-        if (src.getWidth() == w && src.getHeight() == h) {
-            return src;
-        }
-        BufferedImage out = new BufferedImage(Math.max(w, 1), Math.max(h, 1), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = out.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(src, 0, 0, Math.max(w, 1), Math.max(h, 1), null);
-        } finally {
-            g.dispose();
-        }
-        return out;
-    }
 }

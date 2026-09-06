@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.Iterator;
@@ -431,8 +429,9 @@ public class ThinkService {
     /**
      * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
      * 每个分类的 14 张对照图（交集 / 独有交集 / 多数 / 均值 / 1-8、1-32 块图及其各自的 -unique 独有区图）
-     * 分别同尺度逐像素比对（单像素 R/G/B 三通道各算差值，任一通道差 ≥ execute.rgb-dist-threshold
-     * 判为不匹配点，三通道差都小于阈值才算匹配），
+     * 分别同尺度逐像素比对。判据按维度类别分两套：交集/多数类（交集图、多数图、1-8/1-32 多数块图及各自
+     * -unique）逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值图、1-8/1-32 均值块图及各自 -unique）
+     * 走逐通道容差（三通道差都小于 execute.rgb-dist-threshold 才算匹配，默认 255/3=85），
      * 分类得分 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/14)（差异度，越小越像，
      * 各维差值向量的长度按固定 14 维归一，任一张图差得远都会抬高总分），并按 execute
      * 识别阈值（match-threshold-percent）判定是否「已识别」。不再维护“像素一致率 / 平均色差”的平行口径，
@@ -759,7 +758,7 @@ public class ThinkService {
             }
         }
 
-        // 解码全部样本（缩放到第一张的尺寸兜底）
+        // 解码全部样本（分辨率须与第一张一致：同一窗口截图同尺寸，不一致 readScaled 直接报错）
         BufferedImage first = ImageIO.read(group.get(0).toFile());
         if (first == null) {
             throw new IOException("无法解码样本 " + group.get(0).getFileName());
@@ -1350,24 +1349,18 @@ public class ThinkService {
         return v instanceof Number n && n.intValue() >= 0 ? n.intValue() : -1;
     }
 
-    /** 读取图片；尺寸与基准不一致时缩放到 w×h（同一窗口一般一致，仅兜底） */
+    /** 读取样本并校验分辨率与组内基准一致：同一窗口的同组截图分辨率本就相同，不一致直接报错（禁止缩放混用不同分辨率样本）。 */
     private BufferedImage readScaled(Path p, int w, int h) throws IOException {
         BufferedImage bi = ImageIO.read(p.toFile());
         if (bi == null) {
             return null;
         }
-        if (bi.getWidth() == w && bi.getHeight() == h) {
-            return bi;
+        if (bi.getWidth() != w || bi.getHeight() != h) {
+            throw new IOException("样本分辨率与组内不一致，无法合成对照图：" + p.getFileName()
+                    + " = " + bi.getWidth() + "x" + bi.getHeight() + "，组内基准 = " + w + "x" + h
+                    + "（同一分类的样本须同一分辨率，请重新在同分辨率下标注）");
         }
-        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = out.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(bi, 0, 0, w, h, null);
-        } finally {
-            g.dispose();
-        }
-        return out;
+        return bi;
     }
 
     /** classify/ 下 IMG_*.png：已标注数据集（保存标注时完整移入；写入端统一 .tmp→原子改名，半成品按后缀天然排除） */

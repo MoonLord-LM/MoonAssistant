@@ -1998,7 +1998,7 @@ function renderSuggest(list){
       (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对，单像素按 R/G/B 逐通道算差，任一通道差 ≥ execute.rgb-dist-threshold（默认 255/3=85）判为「不匹配」、三通道都小于它才匹配，分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都小于 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 ≥ 它判「不匹配」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2609,7 +2609,7 @@ function openKindScores(it){
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "标注分类：" + escHtml(it.state || "—") + "<br>" +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按 R/G/B 逐通道判定：任一通道差 ≥ execute.rgb-dist-threshold（默认 255/3=85）即不一致</div>" +
+        "色差按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/均值块图及各自 -unique）走逐通道容差（三通道差都小于 execute.rgb-dist-threshold（默认 255/3=85）才一致）</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";
