@@ -18,7 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 执行模式 API：实时画面识别 + 一键执行动作（供 annotate.html 的「执行模式」页驱动）。
+ * 执行模式 API：实时画面识别 + 一键执行动作（供 index.html 的「执行模式」页驱动）。
  *
  * <ul>
  *   <li>{@code GET  /api/execute/status} —— 执行循环开关与参数；</li>

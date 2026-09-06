@@ -1,0 +1,368 @@
+  :root{
+    --bg:#0d1017; --panel:#151a24; --panel2:#1a2030; --border:#262e40;
+    --text:#d9dee8; --muted:#8b94a7; --accent:#4f8cff; --accent-soft:rgba(79,140,255,.15);
+    --green:#2fbf71; --green-soft:rgba(47,191,113,.14);
+    --amber:#f0a83c; --danger:#ff5c6c;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  /* 统一深色滚动条（图片列表 / 预览区 / 编辑区等），避免 Windows 默认浅色与深色界面不搭 */
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2c3550;border-radius:6px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:#3a4560}
+  ::-webkit-scrollbar-corner{background:transparent}
+  *{scrollbar-width:thin;scrollbar-color:#2c3550 transparent}
+  button{font:inherit;cursor:pointer}
+  .topbar{height:54px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--border)}
+  /* 左上角：工作模式切换（标注模式为默认；执行模式建设中）。下拉未展开时本身即显示当前模式 */
+  .modeCtl{flex:none}
+  .modeCtl select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:14px;font-weight:600;line-height:1.2;outline:none;cursor:pointer;letter-spacing:.3px;transition:border-color .15s}
+  .modeCtl select:hover{border-color:#3a4560}
+  .modeCtl select option{background:#121a2a;color:var(--text)}
+  /* 标注 / 执行 模式显隐：标注界面整体（顶栏筛选、主体、截图开关）在执行模式隐藏 */
+  body[data-appmode="exec"] .mark-only{display:none!important}
+  body[data-appmode="exec"] .layout{display:none!important}
+  body[data-appmode="mark"] #execPane{display:none!important}
+  /* 执行模式：实时画面识别 + 动作执行（画面顶栏放「立即识别 / 执行动作」，右侧识别信息） */
+  #execPane{display:flex;flex-direction:column;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0;box-sizing:border-box}
+  .exec-main{flex:1;min-height:0;display:flex;gap:0}
+  .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .exec-stage .stagebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-height:42px}
+  .exec-stage .fname{font-size:14px;font-weight:600;white-space:nowrap}
+  .exec-stage .dims{font-size:12px;color:var(--muted);border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;white-space:nowrap;font-variant-numeric:tabular-nums;margin-left:auto}
+  .exec-stage .spacer{flex:1}
+  .exec-area .imgplaceholder{display:flex;align-items:center;justify-content:center}
+  .exec-side .hint,.exec-area .hint{display:block;margin:0}
+  .exec-area{flex:1;min-height:0;display:flex;overflow:auto;padding:12px}
+  .exec-wrap{position:relative;display:inline-block;line-height:0;margin:auto}
+  #execImg{display:block;cursor:zoom-in}
+  #execDot{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;
+    background:radial-gradient(circle,rgba(47,191,113,.9) 0 28%,rgba(47,191,113,.3) 62%,transparent 75%);
+    border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.8);pointer-events:none;display:none;z-index:2}
+  #execVline,#execHline{position:absolute;background:rgba(47,191,113,.55);pointer-events:none;display:none;z-index:1}
+  #execVline{top:0;bottom:0;width:1px}
+  #execHline{left:0;right:0;height:1px}
+  /* 右栏宽度分隔条：可拖拽调节（拖中间竖条；双击复位；宽度存 localStorage） */
+  .exec-split{flex:none;width:9px;align-self:stretch;cursor:col-resize;display:flex;align-items:center;justify-content:center;position:relative}
+  .exec-split::before{content:"";width:3px;height:38px;border-radius:3px;background:var(--border);transition:background .15s,height .15s}
+  .exec-split:hover::before,.exec-split.dragging::before{background:rgba(47,191,113,.75);height:64px}
+  body.split-dragging{cursor:col-resize;user-select:none}
+  .exec-side{width:380px;flex:none;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;overflow-y:auto;
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;min-height:0}
+  .exec-side .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:11px 12px}
+  .exec-side .edhead{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;margin-bottom:8px;text-transform:uppercase}
+  .exec-side .mopt{display:flex;align-items:flex-start;gap:8px;padding:6px 0;font-size:12.5px;line-height:1.55;color:var(--text);cursor:pointer}
+  .exec-side .mopt input{margin:3px 0 0;accent-color:var(--green);cursor:pointer}
+  .exec-side .mopt b{color:var(--text)}
+  .exec-side .mopt i{font-style:normal;color:var(--muted);font-size:11.5px}
+  .kvrow{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:3px 0}
+  .kvrow .k{flex:none;width:70px;color:var(--muted)}
+  .kvrow .v{flex:1;min-width:0;word-break:break-all;color:var(--text)}
+  .kvrow .v.ok{color:var(--green);font-weight:600}
+  .kvrow .v.err{color:var(--danger)}
+  .exec-ops{display:flex;gap:8px}
+  .exec-ops .btn{flex:1;padding:9px 10px;font-size:13px;font-weight:600;border-radius:8px;white-space:nowrap;text-align:center}
+  /* 自动识别（红色测试按钮）：整行独立 + 脉冲提示运行中；下方状态行显示当前循环阶段/倒计时 */
+  #execAutoBtn{display:block;width:100%;margin-top:10px;border:1px solid rgba(255,92,108,.5);background:rgba(255,92,108,.1);color:var(--danger);font-weight:700}
+  /* 把当前画面存入待标注：与自动识别同级整行独立，蓝色描边（保存样本入口，非破坏性操作） */
+  #execSaveCap{display:block;width:100%;margin-top:8px;border:1px solid rgba(79,140,255,.55);background:rgba(79,140,255,.1);color:var(--accent);font-weight:700}
+  #execSaveCap:hover{background:rgba(79,140,255,.2)}
+  #execAutoBtn:hover:not(:disabled){background:var(--danger);color:#fff}
+  #execAutoBtn.running{background:var(--danger);color:#fff;animation:execAutoPulse 1.5s ease-in-out infinite}
+  #execAutoBtn:disabled{opacity:.5;cursor:wait}
+  /* 执行模式：把当前画面另存到 capture/ 待人工标注（画面本不落盘，需精确标注/修正坐标时才用） */
+  #execSaveCap{display:block;width:100%;margin-top:10px;font-size:12.5px}
+  #execSaveCap:hover:not(:disabled){border-color:var(--green);color:var(--green);background:rgba(47,191,113,.08)}
+  #execSaveCap:disabled{opacity:.5;cursor:not-allowed}
+  /* 执行模式四个操作按钮统一高度：立即识别 / 执行动作 / 开启自动识别 / 把当前画面存到待标注。
+     固定高 + flex 垂直水平居中，消除因字号/内边距差异导致的高矮不一（原两两一组上下错落） */
+  #execRefresh,#execAct,#execAutoBtn,#execSaveCap{height:34px;display:flex;align-items:center;justify-content:center;white-space:nowrap;line-height:1}
+  #execAutoBtn,#execSaveCap{width:100%}
+  @keyframes execAutoPulse{50%{opacity:.72}}
+  .execAutoState{display:none;margin-top:8px;padding:6px 9px;font-size:11.5px;line-height:1.55;color:var(--muted);border:1px dashed rgba(255,92,108,.35);border-radius:8px;background:rgba(255,92,108,.06)}
+  .execAutoState.show{display:block}
+  .execAutoState b{color:#ff98a6}
+  .cand{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px dashed var(--border);font-size:12.5px}
+  .cand:last-child{border-bottom:0}
+  .cand .cst{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+  .cand .cd{flex:none;color:var(--muted);font-variant-numeric:tabular-nums}
+  .cand.top .cst{color:var(--green);font-weight:600}
+  .cand .mbtn{flex:none;font-size:11.5px;padding:2px 9px;border-radius:7px;border:1px solid rgba(47,191,113,.45);
+    background:rgba(47,191,113,.1);color:var(--green);cursor:pointer;white-space:nowrap}
+  .cand .mbtn:hover:not(:disabled){background:rgba(47,191,113,.22)}
+  .cand .mbtn:disabled{opacity:.45;cursor:not-allowed}
+  @media (max-width:1000px){
+    .exec-main{flex-direction:column;overflow-y:auto}
+    .exec-split{display:none}               /* 窄屏改上下堆叠，横向拖拽无意义 */
+    .exec-side{width:auto!important;flex:none}
+    .exec-area{min-height:260px}
+  }
+  .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px}
+  .seg button{border:0;background:transparent;color:var(--muted);padding:4px 16px;border-radius:6px;min-width:64px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .seg button.on{background:var(--accent);color:#fff}
+  .meta{color:var(--muted);font-size:12px;white-space:nowrap}
+  .spacer{flex:1}
+  .btn{border:1px solid var(--border);background:var(--panel2);color:var(--text);padding:6px 13px;border-radius:8px;transition:background .15s}
+  .btn:hover{background:#222a3d}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.green{background:var(--green);border-color:var(--green);color:#04120a}
+  .btn.ghost{background:transparent}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  /* 无当前图（列表空 / 全部标记完成）时右侧编辑输入与单选一并置灰 */
+  .editor input[type="text"]:disabled{opacity:.5;cursor:not-allowed;background:var(--panel2)}
+  .editor input[type="radio"]:disabled{opacity:.45;cursor:not-allowed}
+  .btn.danger{border-color:rgba(255,92,108,.4);color:var(--danger);background:transparent}
+  .btn.danger:hover{background:rgba(255,92,108,.12)}
+  .btn.del{border-color:rgba(255,92,108,.55);color:var(--danger);background:rgba(255,92,108,.1)}
+  .btn.del:hover{background:var(--danger);color:#fff}
+  .btn.exit{background:rgba(255,92,108,.15);border-color:rgba(255,92,108,.65);color:var(--danger);font-weight:600}
+  .btn.exit:hover{background:var(--danger);color:#fff}
+  .btn.log{border-color:rgba(96,165,250,.4);color:var(--accent);background:rgba(79,140,255,.06)}
+  .btn.log:hover{background:rgba(79,140,255,.18)}
+  .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
+  .btn.cap.on{border-color:rgba(47,191,113,.65);color:var(--green);background:rgba(47,191,113,.12);font-weight:600}
+  .btn.cap.on:hover{background:var(--green);color:#04120a}
+  .btn.cap:not(.on){border-color:rgba(240,168,60,.5);color:var(--amber);background:rgba(240,168,60,.08)}
+  .btn.cap:not(.on):hover{background:rgba(240,168,60,.2)}
+  .layout{display:flex;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0}
+  .sidebar{width:318px;flex:none;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .listhead{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
+  #imgList{flex:1;overflow:auto;margin:0;padding:6px;list-style:none}
+  .row{padding:8px 10px;border-radius:8px;border:1px solid transparent;cursor:pointer;margin-bottom:3px}
+  .row:hover{background:var(--panel2)}
+  .row.on{background:var(--accent-soft);border-color:rgba(79,140,255,.5)}
+  .row .r1{display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+  .row .t{font-size:13px;font-weight:600}
+  .chip{font-size:11px;padding:1px 7px;border-radius:20px;white-space:nowrap;margin-left:auto}
+  .chip.m{color:var(--green);background:var(--green-soft)}
+  .chip.u{color:var(--amber);background:rgba(240,168,60,.12)}
+  .row .r2{color:var(--muted);font-size:12px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .empty{padding:24px 12px;text-align:center;color:var(--muted);font-size:13px}
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .stagebar{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)}
+  .stagebar .fname{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stagebar .sub{color:var(--muted);font-size:12px}
+  .stagebar .sub:empty{display:none}   /* 主图标题只保留完整文件名时，空的副标题不占位 */
+  /* 图片分辨率提示（窗口相对坐标空间）：紧随图片文件名显示 */
+  .stagebar .dims{flex:none;color:var(--muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums;border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;margin-left:2px}
+  .stagebar .dims b{color:var(--accent);font-weight:600}
+  .imgarea{flex:1;display:flex;overflow:auto;padding:12px;position:relative;min-height:0}
+  .imgwrap{position:relative;display:inline-block;line-height:0;margin:auto}
+  /* 主图缩放（全部/未标注/已标注 共用的预览大图）：实际显示尺寸统一由 JS 按显示区实时计算 */
+  #mainImg{display:block;cursor:zoom-in}
+  body[data-mode="click"] #mainImg{cursor:crosshair}
+  #imgwrap.zoomed #mainImg{cursor:zoom-out}
+  body[data-mode="click"] #imgwrap.zoomed #mainImg{cursor:crosshair}
+  .zoomCtl{display:none;align-items:center;gap:2px;padding:2px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .zoomCtl.show{display:flex}
+  .zoomCtl button{border:0;background:transparent;color:var(--muted);font-size:12px;line-height:1;padding:6px 11px;border-radius:6px;cursor:pointer;font-family:inherit;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .zoomCtl button:hover:not(:disabled){background:rgba(79,140,255,.18);color:#fff}
+  .zoomCtl button.on{background:var(--accent);color:#fff}
+  .zoomCtl button:disabled{opacity:.35;cursor:default}
+  .zoomCtl .zpct{min-width:44px;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted);padding:2px 2px}
+  #dot{position:absolute;width:16px;height:16px;border-radius:50%;background:rgba(255,51,85,.28);border:2px solid #ff3355;box-shadow:0 0 0 2px rgba(255,255,255,.85);transform:translate(-50%,-50%);pointer-events:none;display:none}
+  #vline,#hline{position:absolute;background:rgba(255,51,85,.55);pointer-events:none;display:none}
+  #vline{top:0;bottom:0;width:1px}
+  #hline{left:0;right:0;height:1px}
+  .imgplaceholder{color:var(--muted);font-size:13px;margin:auto}
+  .editor{width:400px;flex:none;display:flex;flex-direction:column;justify-content:center;justify-content:safe center;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;overflow:auto}
+  /* 标注编辑区分隔条：拖中间竖条可调编辑区宽度（双击复位为默认宽），宽度持久化 localStorage。
+     负 margin 抵消 flex gap，使图片区→编辑区总间隙仍约 12px，条夹在两面板之间不额外占宽 */
+  .mark-split{flex:none;width:9px;align-self:stretch;margin:0 -10.5px;cursor:col-resize;display:flex;align-items:center;justify-content:center;position:relative;z-index:6}
+  .mark-split::before{content:"";width:3px;height:76px;border-radius:3px;background:var(--border);transition:background .15s,height .15s}
+  .mark-split:hover::before,.mark-split.dragging::before{background:var(--accent);height:120px}
+  .editor h3{margin:0 0 4px;font-size:14px}
+  .editor .esub{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  .status-tag{display:inline-block;font-size:12px;padding:2px 10px;border-radius:20px;margin-bottom:12px}
+  .status-tag.m{color:var(--green);background:var(--green-soft)}
+  .status-tag.u{color:var(--amber);background:rgba(240,168,60,.12)}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+  .tags:empty{display:none}
+  /* 分类标注：已产生的标签在上，「分类标注」文字与文本框分两行展示（文字一行、文本框一行） */
+  .labRow{display:block}
+  .labRow label{margin:0 0 6px;white-space:nowrap}
+  .labRow input{display:block;width:100%;box-sizing:border-box}
+  .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 5px 3px 11px;border:1.5px solid rgba(79,140,255,.55);border-radius:16px;color:var(--text);background:rgba(79,140,255,.1);cursor:pointer;transition:border-color .12s,background .12s}
+  .tag:hover{border-color:var(--accent);background:rgba(79,140,255,.2)}
+  .tag .txt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .tag .cnt{flex:none;font-size:11px;font-weight:600;line-height:17px;min-width:17px;text-align:center;padding:0 6px;border-radius:9px;color:#fff;background:var(--accent);cursor:pointer;transition:filter .12s}
+  .tag .cnt:hover{filter:brightness(1.18)}
+  .tag .ed{flex:none;padding:1px 5px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:13px;line-height:1;cursor:pointer;transition:background .12s,color .12s}
+  .tag .ed:hover{color:#fff;background:rgba(79,140,255,.25)}
+  .tag.editing{border-color:var(--accent);background:rgba(79,140,255,.16)}
+  .tag.editing .txt,.tag.editing .cnt,.tag.editing .ed{display:none}
+  .tag.editing .rename-in{display:inline-block}
+  .rename-in{display:none;width:190px;max-width:52vw;margin:0;padding:0 2px;border:0;background:transparent;color:var(--text);font:inherit;outline:none}
+  .tag.on{border-color:var(--green);background:var(--green-soft)}
+  .tag.on .txt{color:var(--green)}
+  .tag.on .cnt{background:var(--green)}
+  /* 标签 chip 的统一高亮：on（绿）=文本被选为当前图的分类标注；fil（蓝）=列表正按该分类过滤 */
+  .tag.fil{border-color:var(--accent);background:rgba(79,140,255,.22)}
+  .tag.fil .txt{color:var(--accent)}
+  .tag.fil .cnt{background:var(--accent)}
+  input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:8px;outline:none}
+  input[type=text]:focus{border-color:var(--accent)}
+  .actions{display:flex;flex-direction:column;gap:6px}
+  .act{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .12s,background .12s}
+  .act:hover{border-color:#3a4560}
+  .act.on{border-color:var(--accent);background:var(--accent-soft)}
+  .act input{accent-color:var(--accent);margin:0}
+  .act .at{font-size:13px}
+  .act .ad{color:var(--muted);font-size:11px;margin-left:auto;text-align:right}
+  .coord{display:none;margin-top:10px;padding:8px 10px;border:1px dashed rgba(79,140,255,.5);border-radius:8px;background:rgba(79,140,255,.06);font-size:12px}
+  .coord b{color:#ff8fa0}
+  .btnrow{display:flex;gap:8px;margin-top:14px}
+  .btnrow .btn{flex:1}
+  /* 右侧编辑区：按功能分区并各自用一个圆角卡片框包裹（标注信息 / 保存 / 清除与删除） */
+  .editor .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:12px}
+  .editor .edsec+.edsec{margin-top:12px}
+  .editor .edsec .field:last-child{margin-bottom:0}
+  .editor .edsec .btnrow{margin-top:0}
+  .editor .edsec.danger{border-color:rgba(255,92,108,.28)}
+  .tip{color:var(--muted);font-size:11px;line-height:1.6;border-top:1px solid var(--border);margin-top:16px;padding-top:10px}
+  .hint{display:none;margin:-2px 0 12px;font-size:12px;line-height:1.5;color:var(--muted)}
+  .hint.show{display:block}
+  .hint.info{color:var(--amber)}
+  .hint.ok{color:#9ad8a8}
+  .hint.bad{color:#ffd2c9;background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.4);padding:6px 9px;border-radius:8px}
+  kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
+  #toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:50}
+  .toast{background:#20293d;color:#e8edf7;border:1px solid #33405e;border-left:3px solid var(--accent);padding:9px 14px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-width:420px;animation:fadein .18s ease}
+  .toast.ok{border-left-color:var(--green)}
+  .toast.err{border-left-color:var(--danger)}
+  .toast.skip{border-left-color:var(--amber)}
+  /* 智能分析 · 建议提示条：以「浮层」叠在主图上层，不占文档流 → 出现 / 收起 / 内容换行都不会再挤压图片，
+     图片显示区恒为全高。「未标注」显示智能分析建议（smartBar），「汇总分析」显示处理状态（thinkBar）；
+     两条都无内容时整条浮层隐藏。浮层半透明 + 磨砂，可点右上 ✕ 收起本图的建议，方便查看/点选整图。 */
+  .sugdock{position:absolute;left:10px;right:10px;bottom:10px;z-index:30;height:52px;overflow:hidden;display:grid;place-items:center;border:1px solid rgba(76,98,146,.55);border-radius:10px;background:rgba(13,18,30,.92);box-shadow:0 10px 28px rgba(0,0,0,.45);opacity:0;visibility:hidden;transform:translateY(8px);pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+  body.sugdock-on .sugdock{opacity:1;visibility:visible;transform:none;pointer-events:auto}
+  .sugdock .dismiss{position:absolute;top:2px;right:4px;z-index:2;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:12px;line-height:1;cursor:pointer}
+  .sugdock .dismiss:hover{color:#fff;background:rgba(255,255,255,.14)}
+  .sugdock .dismiss[hidden]{display:none}
+  .sugdock .smartbar{width:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 30px 7px 12px;font-size:12px;line-height:1.55;color:var(--muted);overflow-y:auto}
+  .smartbar[hidden]{display:none}
+  /* 汇总分析 · 处理过程状态条：与「未标注」智能分析提示共用同一浮层（内容可两行、超出滚动） */
+  .thinkbar{width:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 12px;font-size:12px;line-height:1.6;color:#c6cfe0;overflow-y:auto}
+  .thinkbar[hidden]{display:none}
+  .thinkbar .tb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
+  .thinkbar b{color:var(--text);font-weight:700}
+  .thinkbar .kv{color:#ffd24d;font-weight:700;font-variant-numeric:tabular-nums}
+  .thinkbar.warn{color:#ffe6b0}
+  .thinkbar.warn .tb-title{color:var(--amber)}
+  .thinkbar.bad{color:#ffd9d2}
+  .thinkbar.bad .tb-title{color:#ffb4ab}
+  .smartbar .spin{width:13px;height:13px;flex:none;border:2px solid #33405e;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .smartbar .sb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
+  .smartbar .sug b{color:var(--green);font-weight:600}
+  .smartbar .cand b{color:#ffd24d}
+  .smartbar .expl{font-size:11px;color:#5f6c88}
+  .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
+  .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
+  .sb-btn:hover{background:var(--accent);color:#fff}
+  /* 汇总分析 · 对照图卡片：按“原图一半”对齐的网格（列宽由 openGroup 按组分辨率动态设定） */
+  #thinkPane{display:none;gap:12px;align-content:start;justify-content:center;width:100%;padding:12px;margin:0}
+  #thinkPane.g{display:grid}
+  .tcard{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#000}
+  .tch{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:12px}
+  .tch .tn{flex:1 1 auto;min-width:150px;line-height:1.45}
+  .tch .tcs{color:var(--amber);font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap}
+  .tcimg{display:flex;align-items:center;justify-content:center;padding:8px;min-height:110px;
+         background-color:#0e1320;background-image:repeating-conic-gradient(#131a29 0% 25%,#0a0e16 0% 50%);background-size:16px 16px}
+  .tcimg img{display:block;max-width:none;cursor:zoom-in}
+  .tbar{height:3px;border-radius:2px;background:#242c40;overflow:hidden;margin-top:5px}
+  .tbar i{display:block;height:100%;background:var(--green)}
+  .tbar i.full{background:var(--accent)}   /* 交集图覆盖率 100%：满格用蓝色区分，表示样本高度一致 / 无浪费像素 */
+  .row .actx{color:var(--amber);font-weight:600;font-size:11px;margin-left:2px}
+  .tkstat{font-size:13px;line-height:1.9;margin-bottom:12px}
+  .tkstat b{color:var(--text)}
+  .tkstat .kv{color:var(--amber);font-weight:600;font-variant-numeric:tabular-nums}
+  /* 汇总分析 · 主图区轻占位（无对照图时给一行极简提示）—— 完整原因与下一步全部收敛到
+     底部 dock 状态条（thinkBar），不再在右栏 / 主图中央堆叠同义横幅 */
+  #thinkEmpty{display:none;align-items:center;justify-content:center;width:100%;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:0 24px}
+  #thinkEmpty b{color:var(--text);font-size:15px}
+  #thinkEmpty.warn b{color:var(--amber)}
+  #thinkEmpty.bad b{color:#ffb4ab}
+  #tkExplain{color:var(--muted);font-size:11px;line-height:1.8;border:1px dashed rgba(47,191,113,.4);background:rgba(47,191,113,.05);border-radius:8px;padding:7px 9px;margin-top:4px}
+  /* 智能提示浮层展开期间，「汇总分析」的对照图网格底部多留一块空间，
+     最后一行内容不会被浮条盖住（网格不缩小、仅在其下留白） */
+  body.sugdock-on #thinkPane{padding-bottom:72px}
+  /* 「全部」视图右栏 = 按分类过滤（标注编辑仅用于「未标注 / 已标注」视图） */
+  .fHint{color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px}
+  .cats{display:flex;flex-wrap:wrap;gap:6px}
+  /* 「全部」视图：右栏内容从顶部顺序排布；「修改这张图」入口紧跟在下方分类过滤标签之后
+     （不吸底贴右下角，避免被右下角的提示消息遮挡） */
+  aside.editor.jump-mode{justify-content:flex-start}
+  #edJump{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)}
+  #edJump .jbtn{width:100%}
+  /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率 */
+  #imgLightbox{position:fixed;inset:0;z-index:120;background:rgba(4,7,13,.86);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px}
+  #imgLightbox.show{display:flex}
+  #imgLightbox .lbBox{max-width:80vw;max-height:calc(80vh - 72px);overflow:auto;background:#000;border:1px solid var(--border);border-radius:8px;line-height:0}
+  #imgLightbox .lbBox::-webkit-scrollbar{width:10px;height:10px}
+  #imgLightbox .lbBox::-webkit-scrollbar-thumb{background:#3a4560;border-radius:6px;border:2px solid #000}
+  #imgLightbox img{display:block;max-width:none;cursor:zoom-in}
+  #imgLightbox .lbCap{color:#c7d0e2;font-size:12px;text-align:center;padding:0 34px;max-width:80vw}
+  #imgLightbox #lbClose{position:absolute;top:12px;right:14px;width:32px;height:32px;border:1px solid var(--border);border-radius:8px;background:rgba(13,16,23,.75);color:var(--muted);font-size:14px;line-height:1;cursor:pointer;z-index:3}
+  #imgLightbox #lbClose:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .edHead{display:flex;align-items:center;gap:8px}
+  .edHead h3{margin:0;font-size:14px}
+  .miniDot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
+  .miniDot.g{background:var(--green)}
+  .miniDot.d{background:var(--danger)}
+  @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+  @keyframes execspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+  #exitScreen,#exitingScreen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:24px}
+  #exitScreen .xt,#exitingScreen .xt{font-size:24px;font-weight:700;color:var(--green)}
+  #exitScreen .msg,#exitingScreen .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:8px}
+  #exitConfirm,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
+  /* 7 图分值明细弹层：遮罩更暗更不透明，避免后排页面透出来干扰阅读 */
+  #kindScoreModal{background:rgba(2,4,9,.92)}
+  #exitConfirm .xcard,#capStopModal .xcard,#xCloseAsk .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #exitConfirm .xt2,#capStopModal .xt2,#xCloseAsk .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #exitConfirm .msg,#capStopModal .msg,#xCloseAsk .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
+  /* 自动暂停弹窗：正文长，按后端 \n 分段、靠左 + 宽松行高排版便于阅读 */
+  #capStopModal .xcard{text-align:left}
+  #capStopModal .msg{white-space:pre-line;text-align:left;font-size:12.5px;line-height:1.9}
+  /* 关闭程序窗口弹窗：右上角小 X = 取消（继续使用） */
+  #xCloseAsk .xcard{position:relative}
+  #xCloseAsk .modalX{position:absolute;top:8px;right:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:rgba(13,16,23,.45);color:var(--muted);font-size:13px;line-height:1;cursor:pointer;z-index:2}
+  #xCloseAsk .modalX:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .xrow{display:flex;gap:10px;justify-content:center;margin-top:6px}
+  .xrow .btn{min-width:96px}
+  #exitScreen .xrow,#exitingScreen .xrow{margin-top:10px}
+  /* 历史日志弹窗：右下角出现过的全部消息全量保存、支持回溯查看 */
+  #logModal .xcard{max-width:760px;width:min(94vw,760px);height:min(76vh,640px);padding:0;display:flex;flex-direction:column;text-align:left;overflow:hidden;background:#121a2a;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #logModal .xhead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex:none}
+  #logModal .xt2{margin:0;font-size:15px}
+  #logModal .xsub{color:var(--muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  #logModal .xsp{flex:1}
+  #logModal .btn.logclr{padding:3px 10px;font-size:12px;flex:none}
+  #logModal .x{flex:none;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--muted);font-size:13px;line-height:1;cursor:pointer}
+  #logModal .x:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .loglist{flex:1;overflow:auto;padding:8px 0;min-height:0}
+  .logrow{display:flex;align-items:baseline;gap:10px;padding:5px 14px;border-left:3px solid transparent;font-size:12.5px;line-height:1.55}
+  .logrow:hover{background:rgba(255,255,255,.03)}
+  .logrow .lt{flex:none;color:var(--muted);font-family:Consolas,Menlo,monospace;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .logrow .lk{flex:none;color:var(--muted);font-size:11px;white-space:nowrap}
+  .logrow .lx{flex:1;word-break:break-all;min-width:0}
+  .logrow.ok{border-left-color:var(--green)}
+  .logrow.ok .lk{color:var(--green)}
+  .logrow.err{border-left-color:var(--danger)}
+  .logrow.err .lk{color:var(--danger)}
+  .logrow.skip,.logrow.warn{border-left-color:var(--amber)}
+  .logrow.skip .lk,.logrow.warn .lk{color:var(--amber)}
+  .logrow.info{border-left-color:var(--accent)}
+  .logempty{padding:42px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.8}
+  @media (max-width:1150px){
+    .layout{flex-direction:column;height:auto;overflow:auto}
+    .sidebar,.editor{width:100%;max-height:280px}
+    .stage{min-height:460px}
+    #mainImg{max-width:calc(100vw - 90px);max-height:56vh}
+  }

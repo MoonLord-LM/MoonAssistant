@@ -37,11 +37,12 @@ import java.util.stream.Stream;
  * 独有区图只盯着本分类独占的区域，两者互补。产物必须 14 张齐全该分类才参与识别
  * （-unique 是正式维度，不再是可选项）。
  *
- * <p>匹配口径：把每个对应像素当作 (R,G,B) 三维空间中的一点，两点欧氏距离
- * √(ΔR²+ΔG²+ΔB²) ≥ {@code execute.rgb-dist-threshold}（默认 256）即判该点为「不匹配」；
+ * <p>匹配口径：逐点比较两像素的 R、G、B 三个通道差值的绝对值，任一通道差 ≥
+ * {@code execute.rgb-dist-threshold}（默认 255/3 = 85）即判该点为「不匹配」——
+ * 只有三个通道的差值都小于 255/3 才认为两像素是同一个颜色；
  * 14 张图分别与当前画面按同一缩放口径逐点判定并统计各自的「不匹配点占比」（0~100，
  * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区都被剔除）。把各图的占比当作
- * 该分类在对应比对维度上的分值，按欧氏距离思路聚合为差异度 = √(Σ各图占比² / 14)
+ * 该分类在对应比对维度上的分值，按均方根聚合为差异度 = √(Σ各图占比² / 14)
  * （即均方根 RMS，固定按 14 张图归一：任一张图差得远都会显著抬高总分，不会被其余接近的图稀释；
  * 个别图产物缺失或无法有效读出时，该维按 0 计——没有可判“不一致”的像素就不增加分歧；
  * 独有区图没有任何独有像素时同样按 0 计（有 ≥1 个独有点就按实测占比计，不做“过少剔除”）；
@@ -278,7 +279,7 @@ public class FrameClassifier {
             }
             scanned++;
             // 差异度 = 14 张图「不匹配点占比」的均方根 RMS = √(Σ占比²/14)：固定按 14 张图归一（口径恒定），
-            // 各维差值向量的欧氏长度按维数归一，任一张图差得远都会显著抬高总分，不会被其余接近的图平均掉；
+            // 各维差值向量的长度按维数归一，任一张图差得远都会显著抬高总分，不会被其余接近的图平均掉；
             // 无法有效读出的个别图按 0 计（无可用判别像素 = 不产生分歧）
             double diff = Math.sqrt(sumSq / KIND_ORDER.size());
             GroupBest g = perState.computeIfAbsent(state, s -> new GroupBest());
@@ -336,8 +337,8 @@ public class FrameClassifier {
 
     /**
      * 把当前画面按某张产物的口径压到同一尺度后比较，返回该图「不匹配点占比」百分比（0~100）：
-     * 逐点按 RGB 三维空间欧氏距离 ≥ {@code execute.rgb-dist-threshold} 判为不匹配点并统计占比；
-     * 无法对齐/无有效公共像素时返回 -1（该图不参与平均）。
+     * 逐点比较 R/G/B 三通道差值，任一通道差 ≥ {@code execute.rgb-dist-threshold} 即判为不匹配点
+     * 并统计占比（三通道差都 < 阈值才算匹配）；无法对齐/无有效公共像素时返回 -1（该图不参与平均）。
      */
     private double compareKind(int[] framePxFull, int fw, int fh, int w, int h,
                                CachedPx ref, String kind, Map<String, int[]> scaledPx) {
@@ -469,8 +470,8 @@ public class FrameClassifier {
     }
 
     /**
-     * 两段已对齐像素序列的「不匹配点占比」（0~100）：把每个对应像素当 (R,G,B) 三维空间的一点，
-     * 计算两点欧氏距离 √(ΔR²+ΔG²+ΔB²)；距离 ≥ distThr 判为不匹配点，否则视为匹配点。
+     * 两段已对齐像素序列的「不匹配点占比」（0~100）：对每个对应像素分别取 R、G、B 三通道差值的
+     * 绝对值，任一通道差 ≥ distThr 判为不匹配点；只有三通道差都 < distThr 才视为匹配点。
      * 结果为不匹配点数 / 有效点数 × 100。参考序列（b，即产物）的透明像素
      * （交集图非公共区域 / 独有区图非独有区域）不参与统计。长度不一致时返回 -1。
      * <p>zeroIfEmpty（-unique 独有区图口径）：该图没有任何有效（独有）像素时，不存在可判
@@ -478,15 +479,15 @@ public class FrameClassifier {
      * 就按这些点的实测不匹配占比计——独有区图不做“有效点过少”的剔除，不会因独有区小显示跳过。
      * <p>基础图（same/max/avg/块图，zeroIfEmpty=false）：无有效像素或有效像素过少视为不可比返回 -1，
      * 调用侧统一把 -1 按 0 计入固定 14 图分母。
-     * <p>与逐通道线性平均色差不同：三通道的差异是联动比较的，任一颜色方向偏得够远都算“不一致”，
-     * 不受背景大片近似色的平均稀释。</p>
+     * <p>判定采用逐通道口径：三个通道独立比较、必须全部达标才算一致——单一通道的明显色偏
+     * 不会被另外两个通道的接近“平均稀释”掉，例如画面整体亮度偏移会让三通道同时越界而被检出。</p>
      */
     private static double mismatchPercent(int[] a, int[] b, int distThr, boolean zeroIfEmpty) {
         if (a == null || b == null || a.length != b.length) {
             return -1;
         }
-        // 欧氏距离比较对阈值单调，直接用「距离平方 ≥ 阈值平方」判定，省掉每点开平方
-        long thr2 = (long) distThr * distThr;
+        // 逐通道判定：R/G/B 三通道分别算差值，任一通道差绝对值 ≥ distThr 即判「不匹配」；
+        // 只有三通道差都 < distThr 才算匹配（无平方/开方开销）
         long bad = 0;
         long n = 0;
         for (int i = 0; i < a.length; i++) {
@@ -498,7 +499,7 @@ public class FrameClassifier {
             long dr = ((ca >> 16) & 0xff) - ((cb >> 16) & 0xff);
             long dg = ((ca >> 8) & 0xff) - ((cb >> 8) & 0xff);
             long db = (ca & 0xff) - (cb & 0xff);
-            if (dr * dr + dg * dg + db * db >= thr2) {
+            if (Math.abs(dr) >= distThr || Math.abs(dg) >= distThr || Math.abs(db) >= distThr) {
                 bad++;
             }
             n++;

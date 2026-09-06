@@ -23,7 +23,7 @@ import java.util.Map;
  *
  * <p>codeTs 取「最能代表代码构建时间」的文件修改时间：
  * ① 以单个 jar / 目录运行时取其 mtime；② 否则取 classpath 中
- * static/annotate.html 所在部署根（可执行 jar 取其外层 jar 的 mtime）；</p>
+ * static/index.html 所在部署根（可执行 jar 取其外层 jar 的 mtime）；</p>
  *
  * <p>除版本探针外，meta 还携带截图任务的动态提示事件：
  * <ul>
@@ -119,15 +119,15 @@ public class AppMetaController {
             long t = mtimeOf(cp);
             if (t > 0) return t;
         }
-        // 2) 从 static/annotate.html 定位部署根
+        // 2) 从 static/index.html 定位部署根
         try {
-            URL u = AppMetaController.class.getClassLoader().getResource("static/annotate.html");
+            URL u = AppMetaController.class.getClassLoader().getResource("static/index.html");
             if (u != null) {
                 if ("file".equalsIgnoreCase(u.getProtocol())) {          // 开发目录直接运行
                     long t = mtimeOf(Path.of(u.toURI()).toString());
                     if (t > 0) return t;
                 } else if ("jar".equalsIgnoreCase(u.getProtocol())) {    // Spring Boot 可执行包
-                    String p = u.getPath();    // jar:file:/…/x.jar!/BOOT-INF/classes!/static/annotate.html
+                    String p = u.getPath();    // jar:file:/…/x.jar!/BOOT-INF/classes!/static/index.html
                     int b = p.indexOf("!/");
                     if (b > 0 && p.startsWith("file:")) {
                         long t = mtimeOf(p.substring(5, b));

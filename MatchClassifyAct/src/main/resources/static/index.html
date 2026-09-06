@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCA 控制台</title>
+  <link rel="stylesheet" href="annotate.css">
+</head>
+<body data-mode="none" data-appmode="mark">
+
+<header class="topbar">
+  <!-- 左上角：工作模式选择（标注模式为默认；执行模式=实时画面识别 + 一键执行点击）。合拢时下拉本身即显示当前模式 -->
+  <div class="modeCtl" title="控制台工作模式：标注模式=截图标注/汇总分析；执行模式=实时识别当前画面并一键向目标窗口发送鼠标点击">
+    <select id="modeSel" aria-label="控制台模式">
+      <option value="mark">标注模式</option>
+      <option value="exec">执行模式</option>
+    </select>
+  </div>
+  <div class="seg mark-only" id="filterSeg">
+    <button data-f="all">全部</button>
+    <button data-f="unmarked" class="on">未标注</button>
+    <button data-f="marked">已标注</button>
+    <button data-f="think">汇总分析</button>
+  </div>
+  <div class="spacer"></div>
+  <!-- 右上角三按钮（自动截图 / 历史日志 / 完全退出）：标注模式与执行模式共用，功能一致——btnCap 不加 mark-only，
+       执行模式同样可在右上角开启/暂停后台周期截图（存 capture/，供回标注模式标注） -->
+  <button class="btn cap" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
+  <button class="btn log" id="btnLog" title="历史日志：回溯查看右下角出现过的全部消息（截图保存/差异跳过、重复清理、标注与操作反馈等）">历史日志</button>
+  <button class="btn exit" id="btnExit" title="完全退出：停止控制台服务与后台截图（录屏）任务">完全退出</button>
+</header>
+
+<main class="layout mark-only">
+  <aside class="sidebar">
+    <div class="listhead"><span id="lstTitle">截图列表（按时间）</span><span id="listCount"></span></div>
+    <ul id="imgList"></ul>
+  </aside>
+
+  <section class="stage">
+    <div class="stagebar">
+      <span class="fname" id="fname"></span>
+      <span class="sub" id="fsub"></span>
+      <span class="dims" id="imgDims"></span>
+      <div class="spacer"></div>
+      <div class="zoomCtl" id="zoomCtl" title="显示模式：原始分辨率=100% 原像素（空间不足时可滚动）；自适应缩放=整幅可见并尽量占满：空间不足等比缩小、空间充足等比放大（如 140%），四周留少量空白且不产生滚动条。也可直接点按图片在「自适应缩放 ↔ 原始分辨率」间切换">
+        <button id="zmOrig" type="button" title="按实际像素 1:1 显示（空间不足时产生滚动条）">原始分辨率</button>
+        <button id="zmFit" type="button" title="整幅可见并尽量占满：不足等比缩小、充足等比放大，四周留少量空白，不产生滚动条">自适应缩放</button>
+        <span class="zpct" id="zoomPct">—</span>
+      </div>
+      <span class="status-tag" id="statusTag" style="display:none"></span>
+    </div>
+    <div class="imgarea" id="imgarea">
+      <span class="imgplaceholder" id="placeholder">没有图片。启动截图任务后，原始截图会保存到 capture/ 目录并自动出现在本列表。</span>
+      <div class="imgwrap" id="imgwrap" style="display:none">
+        <img id="mainImg" alt="截图">
+        <div id="vline"></div>
+        <div id="hline"></div>
+        <div id="dot"></div>
+      </div>
+      <div id="thinkPane" style="display:none">
+        <div class="tcard">
+          <div class="tch"><span class="tn">交集图（每个像素取覆盖大于90%的值）</span><span class="tcs" id="tcsSame">—</span></div>
+          <div class="tcimg"><img id="imgSame" alt="交集图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">same-unique（交集图独有区）</span><span class="tcs" id="tcsUnique">—</span></div>
+          <div class="tcimg"><img id="imgUnique" alt="same-unique 独有区图" title="在交集图基础上删除其它分类交集图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">多数图（每个像素取覆盖率最多的值）</span><span class="tcs" id="tcsMax">—</span></div>
+          <div class="tcimg"><img id="imgMax" alt="多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">max-unique（多数图独有区）</span><span class="tcs" id="tcsMaxU">—</span></div>
+          <div class="tcimg"><img id="imgMaxU" alt="max-unique 独有区图" title="在多数图基础上删除其它分类多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">均值图（每个像素取RGB的均值）</span><span class="tcs" id="tcsAvg">—</span></div>
+          <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">avg-unique（均值图独有区）</span><span class="tcs" id="tcsAvgU">—</span></div>
+          <div class="tcimg"><img id="imgAvgU" alt="avg-unique 独有区图" title="在均值图基础上删除其它分类均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">1/8 多数图（每个像素取8x8个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM8">—</span></div>
+          <div class="tcimg"><img id="imgM8" alt="1/8 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">maj8-unique（1/8 多数图独有区）</span><span class="tcs" id="tcsM8U">—</span></div>
+          <div class="tcimg"><img id="imgM8U" alt="maj8-unique 独有区图" title="在 1/8 多数图基础上删除其它分类 1/8 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">1/32 多数图（每个像素取32x32个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM32">—</span></div>
+          <div class="tcimg"><img id="imgM32" alt="1/32 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">maj32-unique（1/32 多数图独有区）</span><span class="tcs" id="tcsM32U">—</span></div>
+          <div class="tcimg"><img id="imgM32U" alt="maj32-unique 独有区图" title="在 1/32 多数图基础上删除其它分类 1/32 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">1/8 均值图（每个像素取8x8个原始像素的RGB的均值）</span><span class="tcs" id="tcsA8">—</span></div>
+          <div class="tcimg"><img id="imgA8" alt="1/8 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">avg8-unique（1/8 均值图独有区）</span><span class="tcs" id="tcsA8U">—</span></div>
+          <div class="tcimg"><img id="imgA8U" alt="avg8-unique 独有区图" title="在 1/8 均值图基础上删除其它分类 1/8 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">1/32 均值图（每个像素取32x32个原始像素的RGB的均值）</span><span class="tcs" id="tcsA32">—</span></div>
+          <div class="tcimg"><img id="imgA32" alt="1/32 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">avg32-unique（1/32 均值图独有区）</span><span class="tcs" id="tcsA32U">—</span></div>
+          <div class="tcimg"><img id="imgA32U" alt="avg32-unique 独有区图" title="在 1/32 均值图基础上删除其它分类 1/32 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+      </div>
+      <div id="thinkEmpty"><b id="teTitle"></b></div>
+      <div class="sugdock" id="smartDock">
+        <button type="button" class="dismiss" id="dockX" title="收起本图的智能分析提示（图片保持当前显示大小）" hidden>✕</button>
+        <div class="smartbar" id="smartBar" hidden></div>
+        <div class="thinkbar" id="thinkBar" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="mark-split" id="markSplit" title="拖拽调节编辑区宽度（双击复位为默认宽度）"></div>
+
+  <aside class="editor">
+  <div id="edNorm">
+    <h3>标注编辑</h3>
+
+    <div class="edsec">
+      <div class="field">
+        <div class="tags" id="stateTags"></div>
+        <div class="labRow">
+          <label for="stateInput">分类标注</label>
+          <input type="text" id="stateInput" maxlength="40" placeholder="例：登录页 / 主界面 / 弹窗 / 无响应…" title='将作为汇总分析产物目录名（summary/&lt;分类标注&gt;/）：不可包含 \ / : * ? " < > |，且不能以 . 结尾'>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>匹配动作</label>
+        <div class="actions">
+          <label class="act" data-a="none">
+            <input type="radio" name="action" value="none" checked><span class="at">无动作</span>
+          </label>
+          <label class="act" data-a="click">
+            <input type="radio" name="action" value="click"><span class="at">鼠标点击</span>
+          </label>
+        </div>
+        <div class="hint" id="actHint" role="status"></div>
+      </div>
+
+      <div class="coord" id="coordBox">
+        <span>点击坐标 <b id="coordText">—</b>，再点图片可改</span>
+      </div>
+    </div>
+
+    <div class="edsec">
+      <div class="btnrow">
+        <button class="btn green" id="btnSaveNext">保存并下一张</button>
+        <button class="btn" id="btnLast">使用上次标记</button>
+      </div>
+    </div>
+
+    <div class="edsec danger">
+      <div class="btnrow">
+        <button class="btn danger" id="btnClear">清除标记</button>
+        <button class="btn del" id="btnDelete" title="点击后立即把当前截图（连同标注）移入系统回收站，不会再弹确认框；误删可到系统回收站还原">删除此图片</button>
+      </div>
+    </div>
+
+    <div class="tip">
+      <kbd>↑</kbd>/<kbd>↓</kbd> 切换；<kbd>Enter</kbd> 保存并按时间顺序跳到列表的下一张图。<br>
+      同一分类标注只对应一种匹配动作。点击图片，可标记鼠标动作的位置。
+    </div>
+  </div><!-- /edNorm -->
+
+  <div id="edThink" style="display:none">
+    <div class="edHead">
+      <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
+      <button type="button" class="btn" id="btnRebuild" style="margin-left:auto;font-size:12px"
+        title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类的 14 张对照图（历史遗留的旧文件一并清除）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
+    </div>
+    <div class="tkstat" id="tkInfo" style="margin-top:10px">左侧选择分类标注查看对照图。</div>
+    <div id="tkExplain" style="margin-top:4px;font-size:12px;color:var(--muted);line-height:1.8"></div>
+  </div>
+
+  <div id="edFilter" style="display:none">
+    <div class="edHead">
+      <h3 style="margin:0;font-size:14px">分类标签</h3>
+    </div>
+    <div class="fHint">「全部」视图用于浏览与筛选：点分类的「文本」或「数字」都让左侧只显示该分类（再点一次取消过滤）；点「✎」重命名；点「全部」chip 显示全部截图。若要把某张图设定为分类标注，先在左侧选中该图，再点下方「修改这张图的标记」。</div>
+    <div class="cats" id="catList"></div>
+  </div>
+
+  <div id="edJump" style="display:none">
+    <button type="button" class="btn green jbtn" id="btnJumpMark" disabled>修改这张图的标记</button>
+  </div>
+  </aside>
+</main>
+
+<!-- 执行模式：实时画面识别 + 匹配动作执行（驱动 /api/execute/*；切换模式时整体显隐） -->
+<section id="execPane" aria-label="执行模式（实时画面识别与动作执行）">
+  <div class="exec-main">
+  <div class="exec-stage">
+    <div class="stagebar">
+      <span class="fname">执行模式 · 实时画面识别</span>
+      <span class="dims" id="execMetaChip">—</span>
+    </div>
+    <div class="exec-area" id="execArea">
+      <div class="imgplaceholder" id="execPlaceholder">
+        <div style="text-align:center;padding:24px">
+          <div class="execspin" style="width:28px;height:28px;margin:0 auto 14px;border:3px solid rgba(255,255,255,.15);border-top-color:var(--green);border-radius:50%;animation:execspin 1s linear infinite"></div>
+          <div style="font-size:14px">正在截图识别…</div>
+          <div style="margin-top:8px;font-size:12px;color:#5b6577;line-height:1.7">
+            已自动抓取目标窗口画面并与已标注分类比对，无需手动操作；<br>
+            若长时间无结果，可点右侧「<b style="color:var(--text)">立即识别</b>」重试。</div>
+        </div>
+      </div>
+      <div class="exec-wrap" id="execWrap" style="display:none">
+        <img id="execImg" alt="最新画面（点击可放大）">
+        <div id="execVline"></div>
+        <div id="execHline"></div>
+        <div id="execDot" title="识别出的点击点"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="exec-split" id="execSplit" title="拖拽调节右侧宽度（双击复位）"></div>
+
+  <aside class="exec-side" id="execSide">
+    <div class="edsec">
+      <div class="edhead">识别结果</div>
+      <div class="kvrow" title="当前画面识别命中的分类标注；动作与点击坐标都取自该分类。每个分类在 summary/ 下对应一个比对分组，二者常规同名，故合并为一行展示"><span class="k">匹配分类</span><span class="v" id="execMatched">—</span></div>
+      <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
+      <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
+      <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
+      <div class="kvrow"><span class="k">差异度</span><span class="v" id="execDiff">—</span></div>
+      <div class="kvrow"><span class="k">比对分组</span><span class="v" id="execSamples">—</span></div>
+      <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">候选分类（差异度由小到大）</div>
+      <div id="execCandidates"><div class="hint">—</div></div>
+      <div class="hint" style="font-size:11.5px;margin-top:8px;line-height:1.6">
+        识别错了？点对应分类的「<b style="color:var(--green)">存入分类</b>」，
+        把当前画面登记为该分类样本，下次识别会优先参考它。
+      </div>
+    </div>
+
+    <div class="edsec">
+      <div class="exec-ops">
+        <button type="button" class="btn green" id="execRefresh" title="重新抓取目标窗口最新画面并识别当前状态">立即识别</button>
+        <button type="button" class="btn primary" id="execAct" disabled
+          title="识别到「鼠标点击」动作后可用，点击坐标会标在画面上">执行动作</button>
+      </div>
+      <button type="button" class="btn auto" id="execAutoBtn"
+        title="自动循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选前台/后台方式动作 → 再等 3 秒游戏响应 → 下一轮。运行中再次点击即停止">开启自动识别</button>
+      <button type="button" class="btn" id="execSaveCap"
+        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存入待标注</button>
+      <div class="execAutoState" id="execAutoState" aria-live="polite"></div>
+    </div>
+
+    <div class="edsec">
+      <div class="edhead">点击方式</div>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="post" checked>
+        <span><b>后台消息</b> —— 不抢鼠标焦点，向目标窗口投递完整点击消息序列：先模拟滑入移动、再按下/抬起。<br><i>比单纯投递按下/抬起更接近真实输入；若目标程序仍忽略，请改用下方「前台点击」。</i></span></label>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="screen">
+        <span><b>前台点击</b> —— 把窗口带到前台后模拟一次真实鼠标左键点击。<br><i>模拟器 / 游戏等只认真实输入的程序必须用此项，否则点击会被忽略。</i></span></label>
+      <div class="hint" style="font-size:11.5px;line-height:1.6;margin-top:8px">
+        切换立即生效、无需重启；执行动作前会自动复核最新画面，点击点即画面上标记的位置。
+      </div>
+    </div>
+  </aside>
+  </div>
+</section>
+
+<div id="toasts"></div>
+
+<div id="imgLightbox">
+  <button type="button" id="lbClose" title="关闭（Esc）">✕</button>
+  <div class="lbBox"><img id="lbImg" alt="大图预览"></div>
+  <div class="lbCap" id="lbCap"></div>
+</div>
+
+<script src="annotate.js"></script>
+</body>
+</html>

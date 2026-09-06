@@ -85,7 +85,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 
 执行循环默认关闭，页面「▶ 开始执行循环」后按 `execute.interval-ms`（默认 2s）周期「截图 → 识别 → 刷新画面与结果」，也可点「立即识别一次」手动单轮。截图复用标注模式的找窗/调窗机制，**只用于识别与展示、不写盘**。
 
-- **识别口径**：把当前帧与 `summary/` 里各分组 **14 张对照图**（7 基础 + 7 -unique 独有区图，需齐全才参与）逐张比对（全幅图每隔 4 像素取 1 点抽样），分类差异度 = 各图「不匹配点占比」的均方根 RMS = **√(Σ占比²/14)**，固定按 14 张图归一；**最近似分组 ≤ `execute.match-threshold-percent`（默认 25%）才判「已识别」**，否则只展示最近似作参考、不执行动作（防误点）。
+- **识别口径**：把当前帧与 `summary/` 里各分组 **14 张对照图**（7 基础 + 7 -unique 独有区图，需齐全才参与）逐张比对（全幅图每隔 4 像素取 1 点抽样；单像素按 R/G/B 三通道分别算差，任一通道差 ≥ `execute.rgb-dist-threshold`（默认 255/3=85）判为「不匹配点」），分类差异度 = 各图「不匹配点占比」的均方根 RMS = **√(Σ占比²/14)**，固定按 14 张图归一；**最近似分组 ≤ `execute.match-threshold-percent`（默认 25%）才判「已识别」**，否则只展示最近似作参考、不执行动作（防误点）。
 - **依赖前提**：目标画面需先在标注模式打好标并生成汇总产物（产物缺失或尺寸不符的分组不参与识别）。
 - **触发执行**：识别出「鼠标点击」动作后点「触发执行」，后端会**按最新画面先复核一次**，确认仍命中才发送点击：
   - `post`（默认）：`PostMessage` 后台发送，不要求窗口前台、不抢占鼠标；
@@ -113,6 +113,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `ui.window-size` `ui.center` | `1760x990` `true` | 控制台窗口尺寸 / 是否居中 |
 | `execute.interval-ms` | `2000` | 执行循环「截图→识别」间隔 |
 | `execute.match-threshold-percent` | `25` | 识别判定阈值：最近似差异度（RMS）≤ 它才算已识别 |
+| `execute.rgb-dist-threshold` | `85`（255/3） | 单像素判不匹配的逐通道色差上限：R/G/B 任一通道差 ≥ 它判「不匹配」，三通道都 < 它才匹配；调小更严格 |
 | `execute.click-mode` | `post` | `post`=后台消息点击；`screen`=真实前台点击 |
 
 ## 五、代码 / 目录结构
@@ -133,7 +134,10 @@ MatchClassifyAct/
    │                                   （与 summary 对照图比对识别）→ WindowClicker（鼠标点击）
    └─ mark/                            标注层：ClassifyStore（中心表）→ AnnotateController /
                                         ThinkController（汇总分析）/ AppMetaController / SystemController
-src/main/resources/static/annotate.html  控制台单页（标注 / 执行双模式，无外部依赖）
+src/main/resources/static/                控制台前端（标注 / 执行双模式，无外部依赖）
+  ├─ index.html   页面骨架
+  ├─ annotate.css 样式
+  └─ annotate.js  交互脚本
 ```
 
 ## 六、已知限制 & 待办

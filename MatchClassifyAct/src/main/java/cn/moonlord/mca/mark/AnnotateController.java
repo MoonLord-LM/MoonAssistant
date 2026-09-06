@@ -39,7 +39,7 @@ import java.util.stream.Stream;
  * </pre>
  * 列表接口合并 capture/ 与 classify/ 两处（同一文件名优先取 classify/，即已标注版本）。
  *
- * <p>页面入口：{@code http://localhost:8080/annotate}（静态页 <code>static/annotate.html</code>）。</p>
+ * <p>页面入口：{@code http://localhost:8080/annotate}（静态页 <code>static/index.html</code>）。</p>
  *
  * <p>图片内容一旦输出即不再变更，故所有图片响应允许浏览器缓存；标注 .json 每次读写。</p>
  */
