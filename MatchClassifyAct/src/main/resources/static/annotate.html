@@ -74,7 +74,7 @@
   .exec-ops .btn{flex:1;padding:9px 10px;font-size:13px;font-weight:600;border-radius:8px;white-space:nowrap;text-align:center}
   /* 自动识别（红色测试按钮）：整行独立 + 脉冲提示运行中；下方状态行显示当前循环阶段/倒计时 */
   #execAutoBtn{display:block;width:100%;margin-top:10px;border:1px solid rgba(255,92,108,.5);background:rgba(255,92,108,.1);color:var(--danger);font-weight:700}
-  /* 把当前画面存到待标注：与自动识别同级整行独立，蓝色描边（保存样本入口，非破坏性操作） */
+  /* 把当前画面存入待标注：与自动识别同级整行独立，蓝色描边（保存样本入口，非破坏性操作） */
   #execSaveCap{display:block;width:100%;margin-top:8px;border:1px solid rgba(79,140,255,.55);background:rgba(79,140,255,.1);color:var(--accent);font-weight:700}
   #execSaveCap:hover{background:rgba(79,140,255,.2)}
   #execAutoBtn:hover:not(:disabled){background:var(--danger);color:#fff}
@@ -84,6 +84,10 @@
   #execSaveCap{display:block;width:100%;margin-top:10px;font-size:12.5px}
   #execSaveCap:hover:not(:disabled){border-color:var(--green);color:var(--green);background:rgba(47,191,113,.08)}
   #execSaveCap:disabled{opacity:.5;cursor:not-allowed}
+  /* 执行模式四个操作按钮统一高度：立即识别 / 执行动作 / 开启自动识别 / 把当前画面存到待标注。
+     固定高 + flex 垂直水平居中，消除因字号/内边距差异导致的高矮不一（原两两一组上下错落） */
+  #execRefresh,#execAct,#execAutoBtn,#execSaveCap{height:34px;display:flex;align-items:center;justify-content:center;white-space:nowrap;line-height:1}
+  #execAutoBtn,#execSaveCap{width:100%}
   @keyframes execAutoPulse{50%{opacity:.72}}
   .execAutoState{display:none;margin-top:8px;padding:6px 9px;font-size:11.5px;line-height:1.55;color:var(--muted);border:1px dashed rgba(255,92,108,.35);border-radius:8px;background:rgba(255,92,108,.06)}
   .execAutoState.show{display:block}
@@ -124,6 +128,8 @@
   .btn.del:hover{background:var(--danger);color:#fff}
   .btn.exit{background:rgba(255,92,108,.15);border-color:rgba(255,92,108,.65);color:var(--danger);font-weight:600}
   .btn.exit:hover{background:var(--danger);color:#fff}
+  .btn.log{border-color:rgba(96,165,250,.4);color:var(--accent);background:rgba(79,140,255,.06)}
+  .btn.log:hover{background:rgba(79,140,255,.18)}
   .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
   .btn.cap.on{border-color:rgba(47,191,113,.65);color:var(--green);background:rgba(47,191,113,.12);font-weight:600}
   .btn.cap.on:hover{background:var(--green);color:#04120a}
@@ -191,8 +197,9 @@
   .labRow input{display:block;width:100%;box-sizing:border-box}
   .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 5px 3px 11px;border:1.5px solid rgba(79,140,255,.55);border-radius:16px;color:var(--text);background:rgba(79,140,255,.1);cursor:pointer;transition:border-color .12s,background .12s}
   .tag:hover{border-color:var(--accent);background:rgba(79,140,255,.2)}
-  .tag .txt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tag .cnt{flex:none;font-size:11px;font-weight:600;line-height:17px;min-width:17px;text-align:center;padding:0 6px;border-radius:9px;color:#fff;background:var(--accent)}
+  .tag .txt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .tag .cnt{flex:none;font-size:11px;font-weight:600;line-height:17px;min-width:17px;text-align:center;padding:0 6px;border-radius:9px;color:#fff;background:var(--accent);cursor:pointer;transition:filter .12s}
+  .tag .cnt:hover{filter:brightness(1.18)}
   .tag .ed{flex:none;padding:1px 5px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:13px;line-height:1;cursor:pointer;transition:background .12s,color .12s}
   .tag .ed:hover{color:#fff;background:rgba(79,140,255,.25)}
   .tag.editing{border-color:var(--accent);background:rgba(79,140,255,.16)}
@@ -202,6 +209,10 @@
   .tag.on{border-color:var(--green);background:var(--green-soft)}
   .tag.on .txt{color:var(--green)}
   .tag.on .cnt{background:var(--green)}
+  /* 标签 chip 的统一高亮：on（绿）=文本被选为当前图的分类标注；fil（蓝）=列表正按该分类过滤 */
+  .tag.fil{border-color:var(--accent);background:rgba(79,140,255,.22)}
+  .tag.fil .txt{color:var(--accent)}
+  .tag.fil .cnt{background:var(--accent)}
   input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:8px;outline:none}
   input[type=text]:focus{border-color:var(--accent)}
   .actions{display:flex;flex-direction:column;gap:6px}
@@ -285,22 +296,12 @@
   #thinkEmpty.warn b{color:var(--amber)}
   #thinkEmpty.bad b{color:#ffb4ab}
   #tkExplain{color:var(--muted);font-size:11px;line-height:1.8;border:1px dashed rgba(47,191,113,.4);background:rgba(47,191,113,.05);border-radius:8px;padding:7px 9px;margin-top:4px}
-  /* 汇总分析 · 样本不足（仅 1 张）时：中间直接展示那张样本截图；原因提示在底部 dock */
-  #thinkSample{display:none;align-items:center;justify-content:center;width:100%;height:100%;padding:16px;box-sizing:border-box}
-  #thinkSample img{display:block;max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.4);background:#000;cursor:zoom-in}
-  /* 智能提示浮层展开期间，「汇总分析」的对照图网格与唯一样本底部多留一块空间，
-     最后一行内容不会被浮条盖住（网格不缩小、仅在其下留白；样本图内收一点） */
+  /* 智能提示浮层展开期间，「汇总分析」的对照图网格底部多留一块空间，
+     最后一行内容不会被浮条盖住（网格不缩小、仅在其下留白） */
   body.sugdock-on #thinkPane{padding-bottom:72px}
-  body.sugdock-on #thinkSample{padding-bottom:72px}
   /* 「全部」视图右栏 = 按分类过滤（标注编辑仅用于「未标注 / 已标注」视图） */
   .fHint{color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px}
   .cats{display:flex;flex-wrap:wrap;gap:6px}
-  .cat{display:inline-flex;align-items:center;gap:6px;max-width:100%;font-size:12px;padding:4px 8px 4px 10px;border:1.5px solid var(--border);border-radius:16px;color:var(--text);background:var(--panel2);cursor:pointer;transition:border-color .12s,background .12s}
-  .cat:hover{border-color:var(--accent)}
-  .cat .tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .cat .n{flex:none;font-size:11px;font-weight:600;line-height:17px;min-width:17px;text-align:center;padding:0 6px;border-radius:9px;color:#fff;background:var(--muted)}
-  .cat.on{border-color:var(--accent);background:var(--accent-soft)}
-  .cat.on .n{background:var(--accent)}
   /* 「全部」视图：右栏内容从顶部顺序排布；「修改这张图」入口紧跟在下方分类过滤标签之后
      （不吸底贴右下角，避免被右下角的提示消息遮挡） */
   aside.editor.jump-mode{justify-content:flex-start}
@@ -342,6 +343,29 @@
   .xrow{display:flex;gap:10px;justify-content:center;margin-top:6px}
   .xrow .btn{min-width:96px}
   #exitScreen .xrow,#exitingScreen .xrow{margin-top:10px}
+  /* 历史日志弹窗：右下角出现过的全部消息全量保存、支持回溯查看 */
+  #logModal .xcard{max-width:760px;width:min(94vw,760px);height:min(76vh,640px);padding:0;display:flex;flex-direction:column;text-align:left;overflow:hidden;background:#121a2a;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #logModal .xhead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex:none}
+  #logModal .xt2{margin:0;font-size:15px}
+  #logModal .xsub{color:var(--muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  #logModal .xsp{flex:1}
+  #logModal .btn.logclr{padding:3px 10px;font-size:12px;flex:none}
+  #logModal .x{flex:none;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--muted);font-size:13px;line-height:1;cursor:pointer}
+  #logModal .x:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .loglist{flex:1;overflow:auto;padding:8px 0;min-height:0}
+  .logrow{display:flex;align-items:baseline;gap:10px;padding:5px 14px;border-left:3px solid transparent;font-size:12.5px;line-height:1.55}
+  .logrow:hover{background:rgba(255,255,255,.03)}
+  .logrow .lt{flex:none;color:var(--muted);font-family:Consolas,Menlo,monospace;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .logrow .lk{flex:none;color:var(--muted);font-size:11px;white-space:nowrap}
+  .logrow .lx{flex:1;word-break:break-all;min-width:0}
+  .logrow.ok{border-left-color:var(--green)}
+  .logrow.ok .lk{color:var(--green)}
+  .logrow.err{border-left-color:var(--danger)}
+  .logrow.err .lk{color:var(--danger)}
+  .logrow.skip,.logrow.warn{border-left-color:var(--amber)}
+  .logrow.skip .lk,.logrow.warn .lk{color:var(--amber)}
+  .logrow.info{border-left-color:var(--accent)}
+  .logempty{padding:42px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.8}
   @media (max-width:1150px){
     .layout{flex-direction:column;height:auto;overflow:auto}
     .sidebar,.editor{width:100%;max-height:280px}
@@ -367,7 +391,10 @@
     <button data-f="think">汇总分析</button>
   </div>
   <div class="spacer"></div>
-  <button class="btn cap mark-only" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
+  <!-- 右上角三按钮（自动截图 / 历史日志 / 完全退出）：标注模式与执行模式共用，功能一致——btnCap 不加 mark-only，
+       执行模式同样可在右上角开启/暂停后台周期截图（存 capture/，供回标注模式标注） -->
+  <button class="btn cap" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
+  <button class="btn log" id="btnLog" title="历史日志：回溯查看右下角出现过的全部消息（截图保存/差异跳过、重复清理、标注与操作反馈等）">历史日志</button>
   <button class="btn exit" id="btnExit" title="完全退出：停止控制台服务与后台截图（录屏）任务">完全退出</button>
 </header>
 
@@ -429,7 +456,6 @@
         </div>
       </div>
       <div id="thinkEmpty"><b id="teTitle"></b></div>
-      <div id="thinkSample"><img id="thinkSampleImg" alt="分类样本截图" title="单击放大查看样本截图"></div>
       <div class="sugdock" id="smartDock">
         <button type="button" class="dismiss" id="dockX" title="收起本图的智能分析提示（图片保持当前显示大小）" hidden>✕</button>
         <div class="smartbar" id="smartBar" hidden></div>
@@ -501,9 +527,9 @@
 
   <div id="edFilter" style="display:none">
     <div class="edHead">
-      <h3 style="margin:0;font-size:14px">按分类过滤</h3>
+      <h3 style="margin:0;font-size:14px">分类标签</h3>
     </div>
-    <div class="fHint">「全部」视图用于浏览与筛选：点下面的分类标签，左侧列表就只保留该分类下已标注的截图。</div>
+    <div class="fHint">「全部」视图用于浏览与筛选：点分类的「文本」或「数字」都让左侧只显示该分类（再点一次取消过滤）；点「✎」重命名；点「全部」chip 显示全部截图。若要把某张图设定为分类标注，先在左侧选中该图，再点下方「修改这张图的标记」。</div>
     <div class="cats" id="catList"></div>
   </div>
 
@@ -573,7 +599,7 @@
       <button type="button" class="btn auto" id="execAutoBtn"
         title="自动循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选前台/后台方式动作 → 再等 3 秒游戏响应 → 下一轮。运行中再次点击即停止">开启自动识别</button>
       <button type="button" class="btn" id="execSaveCap"
-        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存到待标注</button>
+        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存入待标注</button>
       <div class="execAutoState" id="execAutoState" aria-live="polite"></div>
     </div>
 
@@ -622,7 +648,6 @@ let loading = null;    // 当前图片名，用于防异步竞态
 let lastMark = null;   // 上次输入/保存的标记草稿 {state,action,left,top}，切到未标注图时自动带入
 let DEF = {};          // 分类定义表快照 {state: {action,left,top}}，来自 /api/annotate/defs（中心表：动作坐标每分类一份）
 let stateFilter = null;   // 仅「全部」视图使用：null=不过滤；字符串=只显示该分类下已标注的截图
-let thinkSampleCap = "";  // 汇总分析样本不足时，中间那张单样本截图的弹窗说明
 
 function listNow(){
   let L = FILTER === "all" ? ALL.slice() : ALL.filter(i => FILTER === "unmarked" ? !i.marked : i.marked);
@@ -664,7 +689,93 @@ async function fetchDefs(){
 function defOf(state){ return DEF[state] || null; }
 
 /* ---------------- 提示 ---------------- */
+/* 历史日志：右下角出现过的消息全量保存到内存 LOG（弹窗回溯查看，与淡出展示互不影响）。
+   普通消息在 toast()、截图/去重等在 showShotTip() 内统一入库；meta 轮询还按 seq 增量把
+   轮询间隙被节流的截图结果（shotLog）补齐，保证截图开启时每秒一拍的记录也不丢。 */
+const KLOG_LABEL = { ok:"成功", err:"错误", skip:"跳过", warn:"注意" };
+let LOG = [];                    // {at, txt, kind}，按发生先后追加（最早在前）
+let lastShotLogSeq = -1;         // 已并入历史日志的最后一条截图结果 seq（-1 = 尚未取过，首次 meta 全量回填）
+const LOG_RENDER_MAX = 8000;     // 弹窗列表最多渲染行数（LOG 数组本身全量保留，不受此限制）
+const logKindOf = k => KLOG_LABEL[k] || "提示";
+const fmtLogTime = t => {
+  const d = new Date(t), p = n => String(n).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+};
+function makeLogRow(it){
+  const row = document.createElement("div");
+  row.className = "logrow " + (it.kind || "info");
+  const t = document.createElement("span"); t.className = "lt"; t.textContent = fmtLogTime(it.at);
+  const k = document.createElement("span"); k.className = "lk"; k.textContent = "[" + logKindOf(it.kind) + "]";
+  const x = document.createElement("span"); x.className = "lx"; x.textContent = it.txt;
+  row.appendChild(t); row.appendChild(k); row.appendChild(x);
+  return row;
+}
+function pushLog(txt, kind, at){
+  if(!txt) return;
+  const it = { at: at || Date.now(), txt: String(txt), kind: kind || "info" };
+  LOG.push(it);
+  const list = $("logList");                       // 面板开着才增量追加一行（最新在上）
+  if(list){
+    const empty = list.querySelector(".logempty");
+    if(empty) empty.remove();
+    list.insertBefore(makeLogRow(it), list.firstChild);
+    while(list.children.length > LOG_RENDER_MAX) list.removeChild(list.lastChild);
+  }
+}
+function openLogPanel(){
+  if($("logModal")) return;
+  const ov = document.createElement("div");
+  ov.id = "logModal";
+  ov.className = "modal-ov";
+  ov.innerHTML =
+    '<div class="xcard">' +
+      '<div class="xhead">' +
+        '<span class="xt2">历史日志</span>' +
+        '<span class="xsub" id="logTotal"></span>' +
+        '<span class="xsp"></span>' +
+        '<button type="button" class="btn logclr" id="logClear">清空</button>' +
+        '<button type="button" class="x" id="logClose" title="关闭（Esc）">✕</button>' +
+      '</div>' +
+      '<div class="loglist" id="logList"></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  const list = $("logList");
+  const total = $("logTotal");
+  const renderAll = ()=>{
+    list.innerHTML = "";
+    if(!LOG.length){
+      const e = document.createElement("div");
+      e.className = "logempty";
+      e.textContent = "暂无历史消息。右下角出现过的提示（截图保存 / 差异过小跳过、启动重复清理、标注与操作反馈等）都会完整记录在此，便于回溯查看。";
+      list.appendChild(e);
+      return;
+    }
+    const fr = document.createDocumentFragment();
+    for(let i = LOG.length - 1; i >= Math.max(0, LOG.length - LOG_RENDER_MAX); i--){
+      fr.appendChild(makeLogRow(LOG[i]));          // 最新在上：倒序渲染
+    }
+    list.appendChild(fr);
+  };
+  const refreshTotal = ()=> total.textContent = "共 " + LOG.length + " 条";
+  const close = ()=>{
+    ov.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = e => { if(e.key === "Escape") close(); };
+  renderAll();
+  refreshTotal();
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", e => { if(e.target === ov) close(); });   // 点弹层外（旁边）即关闭
+  $("logClose").addEventListener("click", close);
+  const clr = $("logClear");
+  if(clr) clr.addEventListener("click", ()=>{
+    LOG = [];
+    renderAll();
+    refreshTotal();
+  });
+}
 function toast(msg, kind){
+  pushLog(msg, kind || "info");                  // 右下角出现过的消息 → 历史日志
   const t = document.createElement("div");
   t.className = "toast " + (kind||"");
   t.textContent = msg;
@@ -676,6 +787,7 @@ function toast(msg, kind){
    故用单条替换式展示——新结果直接替换旧内容，约 2 秒后自动淡出，不叠加刷屏 */
 let shotTipTimer = 0;
 function showShotTip(msg, kind){
+  pushLog(msg, kind || "info");                  // 右下角单条替换式消息（截图/去重等）→ 历史日志
   const box = $("toasts");
   let el = box.querySelector(".toast.shot");
   if(!el){
@@ -709,36 +821,62 @@ async function loadList(preferName){
   selectTarget(target.name);
 }
 
-/* 把已使用过的文本标签渲染成输入框上方的可点击标签；右侧数字 = 当前有多少张已标记图在用该标签 */
+/* ---------------- 分类标签 chip：未标注 / 已标注 / 全部 三处共用同一结构、样式与交互 ----------------
+   一个 chip 分三个可点区域：文本 / 数字 = 在「全部」视图均为按该分类过滤左列表
+   （文本在「未标注 / 已标注」视图才是“选中作为设定”，把该分类设为当前图标注）；✎ = 重命名该分类。
+   高亮：on（绿）= 文本已被选为当前分类标注；fil（蓝）= 列表正按该分类过滤。 */
+function makeTagChip(box, state, count, o){
+  const t = document.createElement("span");
+  t.className = "tag";
+  if(o && o.sel) t.classList.add("on");
+  if(o && o.fil) t.classList.add("fil");
+  const label = state === null ? "全部" : state;
+  const txt = document.createElement("span");
+  txt.className = "txt";
+  txt.textContent = label;
+  txt.title = state === null
+    ? "当前未按分类过滤，点此保持显示全部截图"
+    : (FILTER === "all"
+      ? "让左侧只显示「" + state + "」分类的截图（再点一次取消过滤；与点数字一致）"
+      : "把当前图片的分类标注设为「" + state + "」（自动带出该分类统一的动作与点击坐标）");
+  const n = document.createElement("span");
+  n.className = "cnt";
+  n.textContent = count;
+  n.title = state === null
+    ? ("共 " + count + " 张截图，点此取消过滤显示全部")
+    : (count + " 张已标注截图在使用该分类；点此让左侧列表只显示该分类");
+  t.appendChild(txt);
+  t.appendChild(n);
+  if(state !== null){
+    const ed = document.createElement("button");
+    ed.type = "button";
+    ed.className = "ed";
+    ed.title = "重命名该分类标注（各视图同步）";
+    ed.setAttribute("aria-label", "重命名分类标注 " + state);
+    ed.textContent = "✎";
+    ed.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      startRenameTag(state, t);
+    });
+    t.appendChild(ed);
+  }
+  txt.addEventListener("click", ()=> {
+    if(state === null){ goFilter(null); return; }        // 「全部」chip：取消过滤，显示全部截图
+    if(FILTER === "all"){ goFilter(state); return; }     // 「全部」视图：点文本与点数字一致 = 按该分类过滤
+    setAsLabel(state);                                    // 未标注 / 已标注视图：把该分类设为当前图标注
+  });
+  n.addEventListener("click", ()=> goFilter(state));
+  box.appendChild(t);
+}
+
+/* 未标注 / 已标注视图：把“已用过”的分类标签渲染成输入框上方的可点标签（文本升序，与「全部」视图一致） */
 function rebuildStates(){
   const box = $("stateTags"); box.innerHTML = "";
   const counts = new Map();
   for(const i of ALL){ if(i.marked && i.state){ counts.set(i.state, (counts.get(i.state)||0) + 1); } }
   const curVal = $("stateInput").value.trim();
-  for(const s of counts.keys()){
-    const t = document.createElement("span");
-    t.className = "tag" + (s===curVal ? " on" : "");
-    t.title = "点击填入该分类标注";
-    const txt = document.createElement("span");
-    txt.className = "txt"; txt.textContent = s;
-    const n = document.createElement("span");
-    n.className = "cnt"; n.textContent = counts.get(s);
-    n.title = counts.get(s) + " 张图片在使用该分类标注";
-    const ed = document.createElement("button");
-    ed.type = "button";
-    ed.className = "ed";
-    ed.title = "重命名该分类标注";
-    ed.setAttribute("aria-label", "重命名分类标注 " + s);
-    ed.textContent = "✎";
-    ed.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      startRenameTag(s, t);
-    });
-    t.appendChild(txt);
-    t.appendChild(n);
-    t.appendChild(ed);
-    t.addEventListener("click", ()=> adoptCategory(s));
-    box.appendChild(t);
+  for(const s of [...counts.keys()].sort((a,b)=>a.localeCompare(b,"zh"))){
+    makeTagChip(box, s, counts.get(s), { sel: s === curVal });
   }
 }
 
@@ -868,6 +1006,7 @@ async function commitRename(from, inp){
     exitRenameEdit();                                   // 成功：先收起输入框，再整树重建
     for(const i of ALL){ if(i.marked && i.state === from){ i.state = to; } }
     if(DEF[from]){ DEF[to] = DEF[from]; delete DEF[from]; }   // 定义表的 key 也随改名迁移
+    if(stateFilter === from){ stateFilter = to; }   // 「全部」视图正在按旧名过滤时，改完后继续按新名过滤
     if($("stateInput").value.trim() === from){ $("stateInput").value = to; setDirty(); }
     rebuildStates();
     renderList();
@@ -997,24 +1136,16 @@ function renderList(){
   refreshJumpBar();   // 「全部」视图底部「修改这张图」入口随当前图/选中态刷新
 }
 
-/* ---------------- 「全部」视图：按分类过滤（右栏不做标注编辑） ---------------- */
+/* ---------------- 「全部」视图：分类标签（文本=设定当前图标注；数字=过滤；✎=重命名） ---------------- */
 function renderFilterPanel(){
   const box = $("catList"); if(!box) return;
   const counts = new Map();
   for(const i of ALL){ if(i.marked && i.state) counts.set(i.state, (counts.get(i.state)||0)+1); }
   box.innerHTML = "";
-  const add = (label, n, state) => {
-    const c = document.createElement("span");
-    c.className = "cat" + (stateFilter === state ? " on" : "");
-    const tx = document.createElement("span"); tx.className = "tx"; tx.textContent = label;
-    const cnt = document.createElement("span"); cnt.className = "n"; cnt.textContent = n;
-    c.title = state ? "显示该分类下已标注的 " + n + " 张截图" : "显示全部截图";
-    c.appendChild(tx); c.appendChild(cnt);
-    c.addEventListener("click", ()=> setStateFilter(state));
-    box.appendChild(c);
-  };
-  add("全部", ALL.length, null);
-  for(const s of [...counts.keys()].sort((a,b)=>a.localeCompare(b,"zh"))) add(s, counts.get(s), s);
+  makeTagChip(box, null, ALL.length, { fil: stateFilter === null });   // 「全部」：高亮 = 当前未按分类过滤
+  for(const s of [...counts.keys()].sort((a,b)=>a.localeCompare(b,"zh"))){
+    makeTagChip(box, s, counts.get(s), { fil: stateFilter === s });    // 高亮 = 列表正按该分类过滤
+  }
 }
 
 function setStateFilter(state){
@@ -1031,6 +1162,43 @@ function setStateFilter(state){
   const keep = itemOf(curName);
   const next = keep && L.some(i => i.name === keep.name) ? keep.name : L[0].name;
   selectTarget(next);
+}
+
+/* 点标签“文本”：把该分类设为当前图片的分类标注（“选中作为设定”）。
+   未标注/已标注视图直接填入编辑器并带出该分类统一动作/坐标；「全部」视图先跳到该图所属编辑视图再填入。 */
+function setAsLabel(state){
+  if(state === null){ goFilter(null); return; }
+  if(!cur()){ toast("请先在左侧选择一张图片，再点标签文本设定分类标注。", "warn"); return; }
+  if(FILTER === "unmarked" || FILTER === "marked"){ adoptCategory(state); return; }
+  if(FILTER === "all" && jumpToEdit()){ adoptCategory(state); }
+}
+
+/* 点标签“数字”：按该分类过滤左侧列表（再次点击同一分类 = 取消过滤）。
+   不在「全部」视图时先切到「全部」再过滤，保证未标注 / 已标注里的标签数字也能过滤。 */
+async function goFilter(state){
+  if(FILTER === "all"){ setStateFilter(state); return; }
+  if(FILTER === "unmarked" || FILTER === "marked"){
+    await applyFilter("all");             // 复用顶部视图切换逻辑（含未保存确认 / 列表刷新）
+    if(FILTER === "all") setStateFilter(state);
+  }
+}
+
+/* 顶部「全部 / 未标注 / 已标注 / 汇总分析」视图切换的公共逻辑（按钮与标签数字过滤共用） */
+async function applyFilter(f){
+  if(FILTER === f) return;
+  if(dirty && !confirm("当前标注尚未保存，确定切换？")) return;
+  if(f === "think"){ enterThink(); return; }   // 汇总分析入口自带 refreshThink 全量刷新
+  if(FILTER === "think"){ exitThink(); curName = null; }
+  FILTER = f;
+  if(f !== "all") stateFilter = null;        // 分类过滤只属于「全部」视图，离开即重置
+  syncSugDock();                             // dock 浮层按当前是否有提示内容显示/隐藏（浮层不占布局）
+  syncRightPanel();                          // 右栏随视图切换：all→分类标签 / unmarked、marked→标注编辑
+  if(!dirty) await refreshSilent();          // 切到新视图前先把列表/计数同步到最新：挂机期间落盘的新截图即刻出现
+  const name = cur() ? cur().name : null;
+  if(name && listNow().some(i=>i.name===name)){ renderList(); updateNavButtons(); }
+  else if(listNow().length){ selectTarget(listNow()[0].name); }
+  else { renderList(); showEmpty(); }
+  refreshSmartTip();   // 视图切换后，按当前目标图刷新智能分析提示条（建议条只出现在「未标注」）
 }
 
 /* 按当前视图切换右栏：think → 汇总分析；unmarked/marked → 标注编辑；all → 分类过滤 + 底部「修改这张图」入口 */
@@ -1063,14 +1231,15 @@ function refreshJumpBar(){
     : "跳转到「未标注」视图并定位这张图，可补全分类标注 / 匹配动作 / 鼠标点击坐标后保存";
 }
 
-/* 从「全部」浏览视图一键跳转编辑：按当前图状态切到「未标注 / 已标注」视图并定位该图（右栏随即变为标注编辑） */
+/* 从「全部」浏览视图一键跳转编辑：按当前图状态切到「未标注 / 已标注」视图并定位该图（右栏随即变为标注编辑）。
+   返回是否跳转成功（供“点标签文本设定标注”流程判断是否继续填入分类）。 */
 function jumpToEdit(){
   const btn = $("btnJumpMark");
   const item = itemOf(curName);
-  if(!item || !btn || btn.disabled) return;
-  if(dirty && !confirm("当前标注尚未保存，确定跳转到编辑视图？")) return;
+  if(!item || !btn || btn.disabled) return false;
+  if(dirty && !confirm("当前标注尚未保存，确定跳转到编辑视图？")) return false;
   const f = item.marked ? "marked" : "unmarked";
-  if(FILTER === f) return;
+  if(FILTER === f) return false;
   FILTER = f;
   stateFilter = null;                 // 分类过滤只属于「全部」视图，离开即重置
   syncSugDock();
@@ -1080,6 +1249,7 @@ function jumpToEdit(){
   toast(item.marked
     ? "已跳到「已标注」视图：可直接修改此图的分类标注 / 匹配动作 / 鼠标点击坐标（在图上点一下可微调）"
     : "已跳到「未标注」视图：可直接补全此图的分类标注 / 匹配动作 / 鼠标点击坐标", "ok");
+  return true;
 }
 
 function showEmpty(msg){
@@ -1173,14 +1343,6 @@ $("mainImg").addEventListener("load", ()=>{
 });
 $("mainImg").addEventListener("error", ()=>{
   toast("图片加载失败：" + (cur()?cur().name:"") , "err");
-});
-
-/* 汇总分析样本不足时中间的唯一样本截图：加载失败自动重试；单击打开与对照图相同的 80% 视口弹窗查看 */
-$("thinkSampleImg").addEventListener("error", ()=> onThinkImgError($("thinkSampleImg")));
-$("thinkSampleImg").addEventListener("click", ()=>{
-  const src = $("thinkSampleImg").getAttribute("src");
-  if(!src) return;
-  openLightbox(src, thinkSampleCap || "分类样本截图");
 });
 
 /* ---------------- 主图缩放：原始分辨率 / 自适应缩放 ---------------- */
@@ -1555,7 +1717,6 @@ let capBusy = false;
 let capIntervalMs = null;            // 后端真实截图间隔（毫秒），由 /api/capture/status 下发
 let capDiffThreshold = null;         // 后端像素去重阈值（%），0 = 关闭去重
 let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
-let lastShotAtShown = -1;         // 已右下角提示过的「截图结果」时间戳（去重；截图节奏为“每帧处理完约 1s 一拍”，可能快于 meta 2s 轮询，轮询间隙内连续产生的多条只展示最新一条）
 let lastDedupNoticeAt = -1;       // 已提示过的「启动重复清理结果」时间戳（去重：一条结果只在首次轮询到的那一刻右下角提示，每 2s 轮询不重复打扰）
 
 /* 毫秒间隔 → 人类可读文案（整千显示整秒，否则保留一位小数秒） */
@@ -1623,6 +1784,7 @@ async function toggleCap(){
 /* 后端自动暂停事件（截图 resize 持续无法达标）：弹窗错误提示，同步按钮态为「开启截图」 */
 function showCapStopModal(msg){
   if(document.getElementById("capStopModal")) return;
+  pushLog("截图已自动暂停：\n" + msg, "err");   // 自动暂停等关键事件一并写入历史日志（便于回溯原因）
   const ov = document.createElement("div");
   ov.id = "capStopModal";
   ov.className = "modal-ov";
@@ -1844,7 +2006,7 @@ function thinkSig(){
 }
 /* 汇总分析 · 处理过程状态条：渲染到主图底部浮层 dock（thinkBar，与「未标注」的智能分析
    提示条同处同构、悬浮在主图上不占文档流）。切换分组 / 分析进度变化时实时更新。
-   样本不足 → 正在生成 → 样本有变 → 已生成，均只在此展示一次 */
+   待生成（≥1 张即自动分析） → 正在生成 → 样本有变 → 已生成，均只在此展示一次 */
 function renderThinkDock(g){
   const b = $("thinkBar");
   if(!g){ b.hidden = true; syncDockNow(); return; }
@@ -1856,8 +2018,7 @@ function renderThinkDock(g){
         + ' 张</b>，正在后台合成七张对照图，完成后自动显示在上方。';
     }else{
       cls = "bad";
-      text = '样本不足：当前仅 <b>' + g.sampleCount + ' 张</b> 标注截图，无法合成对照图；'
-        + '继续给该分类标注，满 2 张后会自动生成。';
+      text = '该分类还没有可用的标注截图，无法合成对照图；标注 1 张后会自动生成。';
     }
   }else if(g.stale){
     cls = "warn";
@@ -1878,12 +2039,6 @@ function showThinkEmpty(cls, title){
   te.className = ["bad","warn"].includes(cls) ? cls : "";
   $("teTitle").textContent = title || "";
   te.style.display = "flex";
-}
-/* 某分组（分类标注 + 匹配动作）对应的全部已标注截图：汇总分析的样本就是这些截图 */
-function sampleItemsOf(g){
-  return ALL.filter(i => i.marked
-    && (i.state || "") === (g.state || "")
-    && (i.action || "none") === (g.action || "none"));
 }
 const THINK_EMPTY = "没有分类标注";
 /* 汇总分析七张对照图（顺序：交集 / 多数 / 均值 / 1-8多数 / 1-32多数 / 1-8均值 / 1-32均值） */
@@ -1950,12 +2105,9 @@ function exitThink(){
   $("statusTag").style.display = "none";  // 汇总分析里可能显示了徽标，回截图视图前隐藏（图片上方不再放状态徽标）
   $("thinkEmpty").style.display = "none"; // 隐藏主区占位，避免残留影响普通截图视图
   $("thinkEmpty").className = "";
-  $("thinkSample").style.display = "none"; // 清空“唯一样本截图”，避免残留到普通截图视图
-  $("thinkSampleImg").removeAttribute("src");
   $("thinkBar").hidden = true;             // 清空汇总分析状态浮层，退出后该浮层交给智能分析提示条
   syncDockNow();
   thinkMeta = null;                        // 退出后清掉列表基准，避免普通视图误排版
-  thinkSampleCap = "";
   $("thinkPane").style.display = "none";
   $("edThink").style.display = "none";
   $("edNorm").style.display = "";
@@ -1977,7 +2129,7 @@ function renderThinkList(){
     li.className = "row" + (selKey === gkey(g) ? " on" : "");
     let extra = g.sampleCount + " 张";
     if(g.analyzed) extra += g.stale ? " · 待重分析" : " · 覆盖率 " + fmtCov(g.coverage);
-    else extra += g.canAnalyze ? " · ≥2 张自动分析" : " · 不足 2 张";
+    else extra += g.canAnalyze ? " · 自动分析中" : " · 暂无样本";
     li.innerHTML =
       '<div class="r1"><span class="t">' + escHtml(g.state) + '</span>' +
       '<span class="actx">' + (ACT_LABEL[g.action] || g.action) + '</span></div>' +
@@ -2075,12 +2227,11 @@ function openGroup(g){
     el.style.imageRendering = "auto";
   }
   thinkMeta = null;
-  renderThinkDock(g);                   // 处理状态固定展示在主图底部 dock：样本不足 / 正在生成 / 样本有变 / 已生成
+  renderThinkDock(g);                   // 处理状态固定展示在主图底部 dock：待生成 / 正在生成 / 样本有变 / 已生成
   const te = $("thinkEmpty");
   if(!g){
     tp.style.display = "none";
     te.style.display = "none";
-    $("thinkSample").style.display = "none";
     $("fname").textContent = "汇总分析";
     $("fsub").textContent = "";
     $("imgDims").textContent = "";
@@ -2097,7 +2248,6 @@ function openGroup(g){
   if(g.analyzed){
     tp.style.display = "grid";           // 恢复为 CSS 网格（对照图）
     te.style.display = "none";
-    $("thinkSample").style.display = "none";
     const sz8 = v => Math.max(1, Math.floor(v / 8));
     const sz32 = v => Math.max(1, Math.floor(v / 32));
     const W = Number(g.width) || 0, H = Number(g.height) || 0;
@@ -2131,28 +2281,9 @@ function openGroup(g){
     for(const id of IMG_IDS){
       $(id).closest(".tcard").style.display = "none";
     }
-    const sh = $("thinkSample");
-    // 样本不足（只有 1 张）时：中间直接展示那张样本截图，原因与下一步仍由底部 dock 说明
-    if(!g.canAnalyze && g.sampleCount === 1){
-      const one = sampleItemsOf(g)[0];
-      if(one){
-        te.style.display = "none";
-        const si = $("thinkSampleImg"), src = imgUrl(one.name);
-        if(si.getAttribute("src") !== src){
-          si.src = src;
-          armThinkRetry(si, src);
-        }
-        sh.style.display = "flex";
-        thinkSampleCap = "「" + g.state + "」当前唯一样本截图（样本不足 2 张，暂无对照图）";
-      } else {
-        sh.style.display = "none";
-        showThinkEmpty("bad", "暂无对照图");
-      }
-    } else {
-      sh.style.display = "none";
-      // 只给一行极简空态词；原因与下一步统一由底部 dock（renderThinkDock）说明，避免重复文案
-      showThinkEmpty(g.canAnalyze ? "warn" : "bad", g.canAnalyze ? "正在合成对照图…" : "暂无对照图");
-    }
+    // 有 1 张样本即可分析，无对照图只是后台尚未合成完成：只给一行极简空态词；
+    // 原因与下一步统一由底部 dock（renderThinkDock）说明，避免重复文案
+    showThinkEmpty(g.canAnalyze ? "warn" : "bad", g.canAnalyze ? "正在合成对照图…" : "暂无对照图");
   }
   $("tkInfo").innerHTML = info;
   setThinkExplain(g.analyzed
@@ -2352,7 +2483,7 @@ function pollSuggest(seq, file, taskId){
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
-      '<span>还没有可参考的对照图：请先在标注模式把 ≥2 张同一画面的截图标成同一分类标注，并到「汇总分析」栏生成七张对照图（7 图齐全才会参与比对）。</span>');
+      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成七张对照图（7 图齐全才会参与比对）。</span>');
     return;
   }
   const top = list[0];
@@ -2394,23 +2525,7 @@ $("dockX").addEventListener("click", ()=>{
   toast("已收起本图的智能分析提示。", "");
 });
 document.querySelectorAll("#filterSeg button").forEach(b=>{
-  b.addEventListener("click", async ()=>{
-    const f = b.dataset.f;
-    if(FILTER === f) return;
-    if(dirty && !confirm("当前标注尚未保存，确定切换？")) return;
-    if(f === "think"){ enterThink(); return; }   // 汇总分析入口自带 refreshThink 全量刷新
-    if(FILTER === "think"){ exitThink(); curName = null; }
-    FILTER = f;
-    if(f !== "all") stateFilter = null;        // 分类过滤只属于「全部」视图，离开即重置
-    syncSugDock();                             // dock 浮层按当前是否有提示内容显示/隐藏（浮层不占布局）
-    syncRightPanel();                          // 右栏随视图切换：all→分类过滤 / unmarked、marked→标注编辑
-    if(!dirty) await refreshSilent();          // 切到新视图前先把列表/计数同步到最新：挂机期间落盘的新截图即刻出现
-    const name = cur() ? cur().name : null;
-    if(name && listNow().some(i=>i.name===name)){ renderList(); updateNavButtons(); }
-    else if(listNow().length){ selectTarget(listNow()[0].name); }
-    else { renderList(); showEmpty(); }
-    refreshSmartTip();   // 视图切换后，按当前目标图刷新智能分析提示条（建议条只出现在「未标注」）
-  });
+  b.addEventListener("click", ()=> applyFilter(b.dataset.f));   // 逻辑见 applyFilter（标签“数字”过滤共用）
 });
 
 /* 「全部」视图右栏底部「修改这张图」：一键跳转到当前图所属的未标注/已标注视图并进入标注编辑 */
@@ -2450,6 +2565,7 @@ document.addEventListener("keydown", (e)=>{
 });
 
 $("btnCap").addEventListener("click", toggleCap);
+$("btnLog").addEventListener("click", openLogPanel);
 $("btnExit").addEventListener("click", requestExit);
 $("btnSaveNext").addEventListener("click", ()=> saveCurrent(true));
 $("btnLast").addEventListener("click", useLastMark);
@@ -2547,7 +2663,9 @@ let needExitUI = false;    // 判定发生在后台时，等页面回到前台�
 async function checkAppVersion(){
   if(pendingReload) return;   // 页面在后台也继续探活：后端退出后仍能按时间判定，避免计数被“切走”冻结
   try{
-    const r = await fetch("/api/app/meta", { cache:"no-store" });
+    // shotAfter = 已并入历史日志的最后一条截图结果 seq：后端把其后新增的截图结果（shotLog）一并返回；
+    // 首次为 -1 → 全量回填启动以来全部截图结果（补齐轮询间隙被节流的中间条，供历史日志回溯）
+    const r = await fetch("/api/app/meta?shotAfter=" + lastShotLogSeq, { cache:"no-store" });
     if(!r.ok) return;
     const j = await r.json();
     metaDown = 0;                        // 探测成功：清零连续失败计数
@@ -2558,21 +2676,30 @@ async function checkAppVersion(){
       if(!capPaused){ capPaused = true; renderCapBtn(); }   // 后端已暂停：按钮恢复为「开启截图」
       showCapStopModal(stopReason);
     }
-    // 截图结果即时提示：meta 携带最近一次「保存 / 差异过小丢弃」结果（后端每轮都记、不节流；
-    // 截图“每帧处理完约 1s 一拍”，可快于 2s 轮询，轮询间隙内连续产生的多条只展示最新一条）。
-    // 新结果 → 右下角单条替换式轻提示，2s 后自动淡出
-    const shot = j && j.shotNotice;
-    if(shot && shot.at && Number(shot.at) !== lastShotAtShown){
-      lastShotAtShown = Number(shot.at);
-      if(shot.kind === "saved"){
-        showShotTip("已保存截图 " + (shot.name || ""), "ok");
-      }else if(shot.kind === "dup"){
-        let pct = (shot.pct != null ? shot.pct : (capDiffThreshold || 0));
-        if(Number.isInteger(pct)){ pct = String(pct); }
-        else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 3.0% → 显示“3%”，一位小数足够
-        showShotTip("当前画面与截图「" + (shot.name || "参考图") + "」差异小于 " + pct + "%，本次不保存", "skip");
+    // 截图结果历史（shotLog）：后端按发生顺序保留每一轮「保存 / 差异过小丢弃」结果，本请求按 seq 增量拉取。
+    // 每条都写入历史日志（showShotTip / pushLog）；只把最新一条作右下角单条替换式轻提示，
+    // 首次全量回填积压时不逐条闪屏（旧页面无 shotLog 字段时静默跳过，兼容旧后端）
+    const shotLog = Array.isArray(j && j.shotLog) ? j.shotLog : [];
+    if(shotLog.length){
+      const pctTxt = v => {
+        let p = (v != null ? v : (capDiffThreshold || 0));
+        if(Number.isInteger(p)) return String(p);           // 整数直显（阈值常为 1/3，如 3 → "3"）
+        return String(Math.round(p * 100) / 100);           // 非整数保留两位去尾零：0.96 → "0.96"（一位会把 0.96~1% 舍成 1%，与阈值并排观感矛盾）
+      };
+      for(let i = 0; i < shotLog.length; i++){
+        const s = shotLog[i];
+        const saved = s.kind === "saved";
+        const txt = saved
+          ? "已保存截图 " + (s.name || "")
+          : "当前画面与截图「" + (s.name || "参考图") + "」差异小于 " + pctTxt(s.pct) + "%，本次不保存";
+        if(i === shotLog.length - 1) showShotTip(txt, saved ? "ok" : "skip");   // 最新一条：右下角轻提示（内部已入日志）
+        else pushLog(txt, saved ? "ok" : "skip", Number(s.at) || undefined);    // 轮询间隙的中间条：仅入历史日志
       }
+      lastShotLogSeq = Number(shotLog[shotLog.length - 1].seq) || lastShotLogSeq;
     }
+    // 后端重启后 seq 会从 1 重新计数（历史已清空）：本页基线若已越过它则说明计数跳变，下一轮改为全量回填，避免提示静默中断
+    const maxSeq = Number(j && j.shotMaxSeq) || 0;
+    if(maxSeq > 0 && lastShotLogSeq > maxSeq) lastShotLogSeq = -1;
     // 启动历史重复清理结果：后端每次启动按差异阈值（默认 3%）重扫 capture/ + classify/ 全部截图、
     // 删除差异低于阈值的重复图（只保留最早一张）。不论是否删除了图片都右下角提示一次清理完成
     const dedup = j && j.startupDedupNotice;
@@ -2581,9 +2708,14 @@ async function checkAppVersion(){
       let pct = (dedup.threshold != null ? dedup.threshold : (capDiffThreshold || 0));
       if(Number.isInteger(pct)){ pct = String(pct); }
       else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 3.0% → 显示“3%”
+      // 耗时（后端实际重扫毫秒数）：≥1s 显示 “Xs”，不足 1s 显示 “Xms”；旧后端无该字段时静默不加
+      const costMs = Number(dedup.costMs) || 0;
+      const costTxt = costMs > 0
+        ? "，耗时 " + (costMs >= 1000 ? (costMs / 1000).toFixed(1).replace(/\.0$/, "") + "s" : costMs + "ms")
+        : "";
       const msg = (dedup.removed > 0)
-        ? "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，删除重复 " + dedup.removed + " 张"
-        : "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，检查完成，未发现重复图片";
+        ? "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，删除重复 " + dedup.removed + " 张" + costTxt
+        : "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，检查完成，未发现重复图片" + costTxt;
       showShotTip(msg, "ok");
     }
     const ts = Number(j && j.codeTs) || 0;
@@ -2654,6 +2786,7 @@ function setAppMode(m){
   syncSugDock();
   if(m === "exec"){
     toast("已切换到「执行模式」：立即识别当前画面，命中后一键执行点击。", "ok");
+    syncCapStatus();                                  // 右上角截图开关沿用标注模式同款状态（文案/高亮与后端一致）
     if(typeof execOnModeChange === "function") execOnModeChange();
   } else {
     if(typeof execAutoStop === "function") execAutoStop();   // 离开执行模式：结束自动识别循环
@@ -2853,7 +2986,7 @@ function renderExecActBtn(j, clickable){
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
-/* 「把当前画面存到待标注」可用态：有画面且不在自动识别循环中
+/* 「把当前画面存入待标注」可用态：有画面且不在自动识别循环中
    （自动循环每秒都在换帧，此时保存可能存的不是当前看到的那张） */
 function renderExecSaveCap(j){
   const b = $("execSaveCap"); if(!b) return;
@@ -2885,7 +3018,7 @@ function renderExecCandidates(list){
   const box = $("execCandidates"); if(!box) return;
   box.innerHTML = "";
   if(!list || !list.length){
-    box.innerHTML = '<div class="hint">暂无可用比对分组：请在标注模式为每个分类保存 ≥2 张同尺寸样本，并到「汇总分析」生成对照图（7 图齐全才会参与识别）。</div>';
+    box.innerHTML = '<div class="hint">暂无可用比对分组：请在标注模式为每个分类保存 ≥1 张同尺寸样本，并到「汇总分析」生成对照图（7 图齐全才会参与识别）。</div>';
     return;
   }
   const done = execShownMarked;
@@ -2973,6 +3106,11 @@ async function execQuickMark(state, btn){
   if(j && j.ok){
     execShownMarked = true;
     toast("已把当前画面存入分类「" + state + "」的样本。需在标注模式对该分类重新执行「汇总分析」，后续识别才会按新样本匹配。", "ok");
+  } else if(j && j.kind === "dup"){
+    // 与既有样本差异不达标被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与差异比例由后端给出
+    btn.disabled = false;
+    btn.textContent = "存入分类";
+    toast(j.message || "当前画面与既有样本几乎重复，未存入分类（可在标注模式修改既有样本的分类）", "skip");
   } else {
     btn.disabled = false;
     btn.textContent = "存入分类";

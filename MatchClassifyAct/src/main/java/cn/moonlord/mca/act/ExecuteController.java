@@ -29,7 +29,7 @@ import java.util.Map;
  *   <li>{@code POST /api/execute/act} —— 触发执行：复核最新画面后向目标窗口发送鼠标点击；</li>
  *   <li>{@code POST /api/execute/save-to-capture} —— 把当前画面另存为 capture/ 的原始截图
  *       （未标注，供切回标注模式人工精确标注/修正坐标）。保存前会与 capture/ + classify/ 全部
- *       截图按手动另存阈值 {@code capture.diff-threshold-manual-percent}（默认 1%）做去重比对：
+ *       截图按手动另存阈值 {@code capture.diff-threshold-manual-percent}（默认 0.3%）做去重比对：
  *       与某张差异低于阈值判为重复画面，拒绝另存并返回 kind=dup。</li>
  * </ul>
  */
@@ -105,7 +105,8 @@ public class ExecuteController {
         return status();
     }
 
-    /** 快速标记：把最近一次识别画面另存为指定分类的新样本（识别错了 → 立即纠正，减少后续误判）。 */
+    /** 快速标记：把最近一次识别画面另存为指定分类的新样本（识别错了 → 立即纠正，减少后续误判）。
+     *  保存前按手动另存阈值（默认 0.3%）做与 capture/ + classify/ 全图的重复比对，几乎重复即拒绝（kind=dup）。 */
     @PostMapping("/mark")
     public Map<String, Object> mark(@RequestBody(required = false) Map<String, String> body) {
         return executionService.markFrameAsSample(body == null ? null : body.get("state"));

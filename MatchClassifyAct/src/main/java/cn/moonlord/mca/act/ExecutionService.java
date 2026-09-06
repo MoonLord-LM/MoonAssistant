@@ -23,6 +23,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -427,6 +428,11 @@ public class ExecutionService {
      * 快速标记（识别纠错）：把最近一次识别画面另存为所选分类的新样本，
      * 让后续识别把该画面也归入此分类，减少“同一画面反复认错”。
      *
+     * <p>写入前与「存入待标注」同一套去重判定（{@link ScreenCaptureService#duplicateReference}，
+     * 套手动另存阈值 {@code capture.diff-threshold-manual-percent}，默认 0.3%）：画面与 capture/ +
+     * classify/ 任意同尺寸 PNG 差异低于阈值即视为与既有样本几乎重复而拒绝，避免分类样本重复堆叠。
+     * 被拦截时返回 kind=dup（含 dupOf / diffPercent / threshold）便于页面提示用户改标既有样本。</p>
+     *
      * @return ok=true + 新样本文件名；失败时 ok=false + message（HTTP 200，便于前端直接提示）
      */
     public Map<String, Object> markFrameAsSample(String state) {
@@ -447,6 +453,26 @@ public class ExecutionService {
             res.put("ok", false);
             res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
             return res;
+        }
+        // 与「存入待标注」同一套去重：写入 classify/ 前先与 capture/ + classify/ 全部同尺寸 PNG 做平均像素差异
+        // 比对（套用手动另存阈值 capture.diff-threshold-manual-percent，默认 0.3%）；只要与某张几乎重复即拒绝，
+        // 避免 classify/ 堆叠与既有样本（或 capture/ 待标注图）几乎一样的重复样本。阈值 ≤ 0（去重关闭）时不检查
+        double threshold = Math.round(captureProperties.getDiffThresholdManualPercent() * 100.0) / 100.0;
+        if (threshold > 0) {
+            ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame(), threshold);
+            if (dup != null) {
+                log.info("执行模式「存入分类」被去重拦截：画面与 {} 差异 {}% < 阈值 {}%，未存入分类「{}」",
+                        dup.name(), pctText(dup.diffPercent()), pctText(threshold), st);
+                res.put("ok", false);
+                res.put("kind", "dup");
+                res.put("dupOf", dup.name());
+                res.put("diffPercent", dup.diffPercent());   // 画面与该重复参考图的实际平均像素差异（%），前端/日志提示用
+                res.put("threshold", threshold);
+                res.put("message", "当前画面与样本「" + dup.name() + "」差异为 " + pctText(dup.diffPercent())
+                        + "%（低于 " + pctText(threshold) + "% 阈值），与既有样本几乎重复，未存入分类「" + st
+                        + "」。如需纠正分类，请在标注模式修改该样本的分类标注。");
+                return res;
+            }
         }
         try {
             Path dir = storage.classify();
@@ -490,10 +516,11 @@ public class ExecutionService {
      * 标注即可。执行画面本身不落盘，因此这里以「另存」方式与截图循环产物同目录、同命名风格。
      *
      * <p>保存前执行与自动截图循环同一套去重判定（{@link ScreenCaptureService#duplicateReference}），
-     * 但套用「手动另存」阈值 {@code capture.diff-threshold-manual-percent}（默认 1%，比自动截图
+     * 但套用「手动另存」阈值 {@code capture.diff-threshold-manual-percent}（默认 0.3%，比自动截图
      * 的 3% 更宽松）：画面须与 capture/ + classify/ 全部同尺寸 PNG 的平均像素差异都 ≥ 该阈值
      * 才算「新画面」才允许另存；只要与任意一张差异低于阈值（几乎同一画面）即拒绝保存，
-     * 避免手工存到待标注又落盘一张与历史几乎相同的截图。阈值 ≤ 0（关闭去重）时不检查、直接保存。</p>
+     * 避免手工存到待标注又落盘一张与历史几乎相同的截图。阈值 ≤ 0（关闭去重）时不检查、直接保存。
+     * 差异值与阈值在判定与提示前均先四舍五入到两位小数，拦截效果与提示文字严格一致。</p>
      *
      * @return ok=true + 新文件名；ok=false + kind=dup（差异不达标被拦截）/ message（HTTP 200，便于前端直接提示）
      */
@@ -505,11 +532,12 @@ public class ExecutionService {
             res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
             return res;
         }
-        double threshold = captureProperties.getDiffThresholdManualPercent();
+        // 与去重判定同一口径：阈值先四舍五入到两位小数再参与比较与提示（配置常为 0.3 / 3 这类 ≤2 位值，此处幂等）
+        double threshold = Math.round(captureProperties.getDiffThresholdManualPercent() * 100.0) / 100.0;
         if (threshold > 0) {
             ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame(), threshold);
             if (dup != null) {
-                // 手动另存去重：与自动截图用同一判定方法、但套手动阈值（默认 1%，更宽松），
+                // 手动另存去重：与自动截图用同一判定方法、但套手动阈值（默认 0.3%，更宽松），
                 // 只拦与历史画面几乎完全相同的另存，避免堆积重复待标注图
                 log.info("执行模式「存到待标注」被去重拦截：画面与 {} 差异 {}% < 阈值 {}%，未另存",
                         dup.name(), pctText(dup.diffPercent()), pctText(threshold));
@@ -555,10 +583,21 @@ public class ExecutionService {
         }
     }
 
-    /** 百分比显示文本：整数不带小数位（3.0 → "3"），否则保留一位小数（3.16 → "3.2"） */
+    /** 百分比显示文本：整数直显（1.0 → "1"）；非整数保留两位小数并去尾零（0.98 → "0.98"、0.5 → "0.5"）。
+     *  拒存提示会把实际差异与阈值并排比较：若只留一位小数，0.96%~1.0% 的差异会被四舍五入显示成 1%，
+     *  与 1% 阈值并列就出现「差异为 1%（低于 1% 阈值）」的观感矛盾——两位精度让“确实低于阈值”在文字上自洽。
+     *  （判定本身始终用原始差异值比较，与这里的展示精度无关。） */
     private static String pctText(double v) {
-        double one = Math.round(v * 10) / 10.0;
-        return one == Math.rint(one) ? String.valueOf((long) one) : String.valueOf(one);
+        if (v == Math.rint(v)) {
+            return String.valueOf((long) v);
+        }
+        String s = String.format(Locale.ROOT, "%.2f", v).replaceAll("0+$", "");
+        if (s.endsWith(".")) {
+            // 两位四舍五入后恰好成整数（如 0.998 → "1.00" → "1"）：距阈值太近仍可能观感并排相等，改三位
+            s = String.format(Locale.ROOT, "%.3f", v).replaceAll("0+$", "");
+            s = s.endsWith(".") ? s.substring(0, s.length() - 1) : s;
+        }
+        return s;
     }
 
     /** 生成 capture/ 下不冲突的新截图文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒追加 _2、_3…；

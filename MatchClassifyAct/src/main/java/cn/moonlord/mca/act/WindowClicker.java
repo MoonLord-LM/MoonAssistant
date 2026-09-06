@@ -80,6 +80,8 @@ public class WindowClicker {
 
         boolean SetCursorPos(int x, int y);
 
+        boolean GetCursorPos(WinDef.POINT point);
+
         void mouse_event(int dwFlags, int dx, int dy, int dwData, Pointer dwExtraInfo);
 
         WinDef.HWND GetForegroundWindow();
@@ -193,6 +195,9 @@ public class WindowClicker {
                     x, y, sx, sy);
         }
         sleep(executeProperties.getForegroundSettleMs());
+        // 记录点击前光标所在屏幕位置：点击完成后移回原处，避免把用户鼠标留在目标窗口画面上
+        WinDef.POINT origin = new WinDef.POINT();
+        boolean originOk = m.GetCursorPos(origin);
         boolean moved = m.SetCursorPos(sx, sy);
         if (!moved) {
             return new Result(false, MODE_SCREEN, "SetCursorPos 失败（无法移动鼠标到目标屏幕点）",
@@ -202,8 +207,15 @@ public class WindowClicker {
         m.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, null);
         sleep(60);
         m.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, null);
+        String back = "";
+        if (originOk) {
+            sleep(20);   // 等目标窗口完整处理完「抬起」事件再把光标移走，避免归位移动被误判为拖拽
+            back = m.SetCursorPos(origin.x, origin.y)
+                    ? "，点击后鼠标已移回原位 (" + origin.x + ", " + origin.y + ")"
+                    : "（提示：点击已生效，但鼠标移回原位 (" + origin.x + ", " + origin.y + ") 失败）";
+        }
         return new Result(true, MODE_SCREEN,
-                "前台焦点已确认归「" + window.getTitle() + "」，已在屏幕坐标 (" + sx + ", " + sy + ") 模拟鼠标左键点击",
+                "前台焦点已确认归「" + window.getTitle() + "」，已在屏幕坐标 (" + sx + ", " + sy + ") 模拟鼠标左键点击" + back,
                 x, y, sx, sy);
     }
 

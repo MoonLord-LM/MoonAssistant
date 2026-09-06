@@ -186,7 +186,7 @@ public class ThinkService {
 
     /**
      * 标注样本集合（classify/）发生变化后调用：约 3 秒防抖后，自动启动一轮后台汇总分析，
-     * 把「样本 ≥ 2 张且产物缺失 / 样本数有变」的分组全部补齐或重算。
+     * 把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
      * 只要样本变化，summary/ 下的七张对照图就会自动保持与最新样本一致，
@@ -518,7 +518,7 @@ public class ThinkService {
             g.put("action", action);
             g.put("dir", dir);
             g.put("sampleCount", marks.size());
-            g.put("canAnalyze", marks.size() >= 2);
+            g.put("canAnalyze", !marks.isEmpty());   // 有样本（≥1 张）即可分析：单张也生成七图，供执行模式匹配
             int[] cc = commonClick(marks);
             g.put("clickLeft", cc[0]);
             g.put("clickTop", cc[1]);
@@ -535,7 +535,12 @@ public class ThinkService {
                 // 样本数相较上次分析有变化，或产物生成规则版本不一致 → 标记为待重分析
                 Object fc = info.get("fileCount");
                 boolean ruleChanged = !Integer.valueOf(ART_RULE_VERSION).equals(info.get("artVer"));
-                g.put("stale", ruleChanged || (fc != null && !fc.equals(marks.size())));
+                // 「原分类内重定义动作/点击坐标」不改变样本数量，样本数与 artVer 都发现不了：
+                // 只有产物 info.json 记录的坐标与当前中心表定义（commonClick 按样本实时合成）不一致时才判 stale，
+                // 使 requestRecompute 重算刷新 summary/ 产物——否则执行模式将一直按 info.json 里的旧坐标点击。
+                boolean defChanged = infoClick(info.get("clickLeft")) != cc[0]
+                        || infoClick(info.get("clickTop")) != cc[1];
+                g.put("stale", ruleChanged || (fc != null && !fc.equals(marks.size())) || defChanged);
             } else {
                 g.put("coverage", null);
                 g.put("width", null);
@@ -548,8 +553,7 @@ public class ThinkService {
         // 覆盖率 = 交集图 ≥90% 样本同色的像素占比。覆盖率越高说明该组截图彼此差异越小——多为同一画面反复
         // 截取（采样不足，可信度反而低）；覆盖率越低说明采到了该状态不同时刻的真实差异（采样更充分）。
         // 故已分析（产物齐全且样本未变）组合：覆盖率低的靠前、高的靠后；同覆盖率按「分类标注 → 动作」文字升序。
-        // 其余（未分析 / 样本有变待重算）排后：其中样本 ≥2（尚可自动分析）在前，只有 1 张图的继续排在最后，
-        // 段内同样按「分类标注 → 动作」文字升序。
+        // 其余（未分析 / 样本有变待重算）排后：段内先按样本数从多到少，再按「分类标注 → 动作」文字升序。
         out.sort((a, b) -> {
             boolean ad = Boolean.TRUE.equals(a.get("analyzed")) && !Boolean.TRUE.equals(a.get("stale"));
             boolean bd = Boolean.TRUE.equals(b.get("analyzed")) && !Boolean.TRUE.equals(b.get("stale"));
@@ -565,11 +569,11 @@ public class ThinkService {
                     return c;
                 }
             } else {
-                // 仅 1 张图的组合（不可分析）恒排最后；样本 ≥2 但未分析 / 待重算的在前
-                int sa = ((Number) a.get("sampleCount")).intValue() >= 2 ? 0 : 1;
-                int sb = ((Number) b.get("sampleCount")).intValue() >= 2 ? 0 : 1;
-                if (sa != sb) {
-                    return Integer.compare(sa, sb);
+                // ≥1 张样本即可后台自动分析，未分析 / 待重算的组通常是产物刷新前的瞬时状态：样本多的排前
+                int ca = ((Number) a.get("sampleCount")).intValue();
+                int cb = ((Number) b.get("sampleCount")).intValue();
+                if (ca != cb) {
+                    return Integer.compare(cb, ca);
                 }
             }
             int c = String.valueOf(a.get("state")).compareTo(String.valueOf(b.get("state")));
@@ -630,7 +634,7 @@ public class ThinkService {
             }
             t.status = "done";
             t.message = todo.isEmpty()
-                ? "没有需要分析的组合（所有 ≥2 张样本的组合都已有分析结果）"
+                ? "没有需要分析的组合（已有样本的分组都已有分析结果）"
                 : String.format("完成 %d/%d 个分类的分析", processed, todo.size())
                     + (t.errors > 0 ? "（" + t.errors + " 个失败，详见日志）" : "");
             log.info("汇总分析批量分析结束：{}", t.message);
@@ -652,8 +656,8 @@ public class ThinkService {
                 group.add(p);
             }
         }
-        if (group.size() < 2) {
-            throw new IllegalStateException("样本不足 2 张");
+        if (group.isEmpty()) {
+            throw new IllegalStateException("该组合没有可用样本");
         }
 
         // click：最常见点击坐标（写入 info.json）
@@ -696,12 +700,13 @@ public class ThinkService {
                 imgs.add(bi);
             }
         }
-        if (imgs.size() < 2) {
-            throw new IOException("该组合样本解码成功数不足 2 张");
+        if (imgs.isEmpty()) {
+            throw new IOException("该组合的样本全部无法解码");
         }
         int S = imgs.size();
-        // same.png 判定：某像素颜色一致张数 ≥ needAgree（即 ≥90%，向上取整）即视为公共像素
-        final int needAgree = Math.max(2, (int) Math.ceil(S * SAME_AGREE_RATIO));
+        // same.png 判定：某像素颜色一致张数 ≥ needAgree（即 ≥90%，向上取整）即视为公共像素；
+        // 单样本时全部像素天然一致（交集图即原图本身），故下限放宽到 1
+        final int needAgree = Math.max(1, (int) Math.ceil(S * SAME_AGREE_RATIO));
 
         int n = w * h;
         int[] samePx = new int[n];   // 交集图：有效像素 = 该点颜色，其余保持 0（透明）
@@ -1016,6 +1021,11 @@ public class ThinkService {
             }
         }
         return best > 0 ? new int[]{(int) (bestKey >> 32), (int) bestKey} : new int[]{-1, -1};
+    }
+
+    /** info.json 里 clickLeft/clickTop 归一化为 int：null / 负数 → -1（与 commonClick 的「无有效坐标 = -1」同语义）。 */
+    private static int infoClick(Object v) {
+        return v instanceof Number n && n.intValue() >= 0 ? n.intValue() : -1;
     }
 
     /** 读取图片；尺寸与基准不一致时缩放到 w×h（同一窗口一般一致，仅兜底） */

@@ -53,7 +53,7 @@ public class ThinkController {
         return thinkService.groups();
     }
 
-    /** 启动批量异步分析（未分析或样本有变且 ≥2 张的分组 → 全部补齐/重算） */
+    /** 启动批量异步分析（未分析或样本有变的组合 → 全部补齐/重算；有 ≥1 张样本即可分析） */
     @PostMapping("/analyze")
     public ResponseEntity<?> analyze(@RequestBody(required = false) AnalyzeRequest req) {
         boolean force = req != null && req.force();

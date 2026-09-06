@@ -5,12 +5,15 @@ import cn.moonlord.mca.capture.WindowCaptureTask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -29,11 +32,15 @@ import java.util.Map;
  *       name 为新图文件名）或画面与已保存参考图差异低于阈值被丢弃（kind=dup，name 为参考图文件名，
  *       pct 为画面与该参考图的实际平均像素差异百分比、必然低于阈值）。每轮完成都记录、不节流，
  *       前端每 2s 轮询取走（截图节拍默认约 1s、可能快于轮询，轮询间隙内连续多条只展示最新一条，属单条替换预期行为）并以右下角轻提示即时展示；</li>
+ *   <li>{@code shotLog}（seq > 请求参数 shotAfter 的全部截图结果数组）：仅当请求带 {@code shotAfter}
+ *       （上次已取的最大 seq；-1 = 从头全量取）时返回。shotNotice 只是最近一条，轮询间隙被节流的
+ *       中间结果在这里补齐，供前端「历史日志」完整回溯（内存保存、随服务重启清空）。
+ *       {@code shotMaxSeq} = 当前已用的最大 seq：前端若发现本页基线已越过它，说明后端重启（seq 归零重计），下一轮自动重置基线重新全量。</li>
  *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
  *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）；</li>
- *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed}）：本次启动的历史重复清理结果
- *       （自动截图与手动另存两个去重阈值均 ≤ 0 时不执行）——按两者中较大者
- *       （默认 max(3, 1) = 3%）重扫 capture/ + classify/ 全部截图删除重复。不论是否删除了图片，
+ *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed, costMs}）：本次启动的历史重复清理结果
+ *       （自动截图与手动另存两个去重阈值均 ≤ 0 时不执行）——按两者启用阈值中的最低要求
+ *       （默认 min(3, 0.3) = 0.3%）重扫 capture/ + classify/ 全部截图删除重复。不论是否删除了图片，
  *       前端都会据此在右下角提示一次清理完成
  *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片）。</li>
  * </ul></p>
@@ -50,11 +57,12 @@ public class AppMetaController {
     private final long codeTs = detectCodeTimestamp();
 
     @GetMapping("/api/app/meta")
-    public Map<String, Object> meta() {
+    public Map<String, Object> meta(@RequestParam(name = "shotAfter", defaultValue = "-2") long shotAfter) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("codeTs", codeTs);
         m.put("startedAt", startedAt);
         m.put("savedSeq", windowCaptureTask.getSavedSeq());
+        m.put("shotMaxSeq", windowCaptureTask.getShotSeq());   // 当前已用的最大截图结果 seq（重启归零重计，供前端重置历史日志基线）
         String reason = windowCaptureTask.getAutoStopReason();
         if (reason != null) {
             m.put("captureStopReason", reason);   // 非空 = 截图任务刚因 resize 持续不成功而自动暂停
@@ -70,6 +78,26 @@ public class AppMetaController {
             }
             m.put("shotNotice", r);               // 非空 = 最近一次截图结果（成功保存 / 差异过小丢弃），前端即时轻提示
         }
+        // 历史日志增量：请求方带 shotAfter（上次已并入日志的最大 seq，-1 = 从第一条全量取），
+        // 返回该序号之后新增的全部截图结果——shotNotice 只保留“最近一条”，轮询间隙被节流的中间条只能靠这里补齐
+        if (shotAfter >= -1) {
+            List<WindowCaptureTask.ShotNotice> log = windowCaptureTask.shotHistorySince(shotAfter);
+            if (!log.isEmpty()) {
+                List<Map<String, Object>> arr = new ArrayList<>(log.size());
+                for (WindowCaptureTask.ShotNotice s : log) {
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("seq", s.seq);
+                    r.put("at", s.at);
+                    r.put("kind", s.kind);
+                    r.put("name", s.name);
+                    if ("dup".equals(s.kind)) {
+                        r.put("pct", s.diffPercent);   // dup 才带：画面与该参考图的实际平均像素差异（%）
+                    }
+                    arr.add(r);
+                }
+                m.put("shotLog", arr);
+            }
+        }
         // 启动历史重复清理结果：无论是否删除都提示一次，removed 供前端区分「删除重复 N 张 / 检查完成未发现重复」
         ScreenCaptureService.StartupDedupNotice dedup = screenCaptureService.getStartupDedupNotice();
         if (dedup != null) {
@@ -78,6 +106,7 @@ public class AppMetaController {
             d.put("threshold", dedup.threshold());
             d.put("scanned", dedup.scanned());
             d.put("removed", dedup.removed());
+            d.put("costMs", dedup.costMs());
             m.put("startupDedupNotice", d);
         }
         return m;
