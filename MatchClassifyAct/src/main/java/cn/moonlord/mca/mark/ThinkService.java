@@ -146,9 +146,16 @@ public class ThinkService {
     /** -unique 独有区图全量刷新时，同一尺寸类单一 kind 基础图文件总量上限：超过则本轮跳过，避免瞬时内存过高 */
     private static final long UNIQUE_CLASS_BYTES_LIMIT = 250L * 1024 * 1024;
 
-    /** 单线程池：像素比对较重，串行避免并发打满 CPU（手动分析任务 / 单图智能建议 / 自动重算共用） */
+    /** 计算池：像素比对较重，串行避免并发打满 CPU（手动批量分析任务 / 自动重算共用） */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "mca-think");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** 智能建议独立单线程池：与批量分析/自动重算隔开，长汇总分析不会阻塞「停留 1 秒」的单图建议即时出结果 */
+    private final ExecutorService suggestPool = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "mca-suggest");
         t.setDaemon(true);
         return t;
     });
@@ -177,6 +184,8 @@ public class ThinkService {
 
     /** 单图智能建议任务 */
     private final Map<String, SuggestTask> suggestTasks = new ConcurrentHashMap<>();
+    /** 最新一次建议请求：供排队中的旧建议任务启动时自检作废 */
+    private final AtomicReference<SuggestTask> latestSuggest = new AtomicReference<>();
     /** 建议结果缓存：key = 目标图|产物签名，避免同一张图反复重算（最多留 60 条，按访问序淘汰） */
     private final Map<String, List<Map<String, Object>>> suggestCache = new LinkedHashMap<>() {
         @Override
@@ -331,7 +340,7 @@ public class ThinkService {
         SuggestTask t = new SuggestTask(id, file);
         suggestTasks.put(id, t);
         latestSuggest.set(t);
-        pool.submit(() -> runSuggest(t, file));
+        suggestPool.submit(() -> runSuggest(t, file));
         return id;
     }
 
