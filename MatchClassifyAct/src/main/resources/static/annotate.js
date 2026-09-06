@@ -62,7 +62,8 @@ function defOf(state){ return DEF[state] || null; }
 
 /* ---------------- 提示 ---------------- */
 /* 历史日志：右下角出现过的消息全量保存到内存 LOG（弹窗回溯查看，与淡出展示互不影响）。
-   普通消息在 toast()、截图/去重等在 showShotTip() 内统一入库；meta 轮询还按 seq 增量把
+   普通消息在 toast()、截图/去重等在 showShotTip()、批量任务进度在 taskTip() 内统一入库（相同文本不重复）；
+   meta 轮询还按 seq 增量把
    轮询间隙被节流的截图结果（shotLog）补齐，保证截图开启时每秒一拍的记录也不丢。 */
 const KLOG_LABEL = { ok:"成功", err:"错误", skip:"跳过", warn:"注意" };
 let LOG = [];                    // {at, txt, kind}，按发生先后追加（最早在前）
@@ -181,9 +182,10 @@ function showShotTip(msg, kind){
 }
 
 /* 右下角单条「后台任务进度」提示：自动分析 / 全量重建等批量任务由轮询反复刷新当前进度时使用。
-   与截图提示同构——新进度直接替换旧内容，任务结束才淡出；不逐条写历史日志（避免一次任务几十条刷屏），
-   任务的开始 / 完成 / 失败仍由 toast() 正常入库记录 */
+   新进度直接替换旧内容，任务结束才淡出；进度文本每次变化写入历史日志（相同文本的重复轮询不重复入库，
+   避免一次任务几十条同文刷屏），任务的开始 / 完成 / 失败仍由 toast() 正常入库记录 */
 let taskTipTimer = 0;
+let lastTaskTipLog = "";        // 上一次已写入历史日志的任务提示文本
 function taskTip(msg, kind){
   const box = $("toasts");
   let el = box.querySelector(".toast.task");
@@ -195,6 +197,10 @@ function taskTip(msg, kind){
       setTimeout(()=> el.remove(), 280);
     }
     return;
+  }
+  if(msg !== lastTaskTipLog){          // 文本变化 → 记入历史日志
+    pushLog(msg, kind || "info");
+    lastTaskTipLog = msg;
   }
   if(!el){
     el = document.createElement("div");
@@ -1791,14 +1797,17 @@ async function pollAnalyze(id, label){
     if(t.status === "running"){
       // 后台为单线程串行计算池：任务刚提交 / 排在自动重算等其它分析后面时，total 尚未统计出来（0/0），
       // 此时只报“正在…”，避免把无意义的 0/0 当作卡死；total 确定后显示真实进度 processed/N。
-      // 进度不挤在列表头小角，改为：图片下方 dock 实时刷新进行态 + 右下角 taskTip 单条闪现
+      // 任务分 2 轮：第 1 轮逐分类生成 7 张基础对照图（processed/total 计数），第 2 轮生成各分类
+      // 7 张 -unique 独有区图（跨分类按 kind 推进，current 指示当前图种）。
+      // 进度不挤在列表头小角，改为：图片下方 dock 实时刷新进行态 + 右下角 taskTip 单条闪现（文本变化入库）
       const hasN = t.total > 0;
-      thinkBusyDock("正在" + label + "…" + (hasN
-        ? " " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "")
-        : ""));
-      taskTip(hasN
-        ? "分析中 " + t.processed + "/" + t.total + (t.current ? " · " + t.current : "")
-        : "正在" + label + "…");
+      const stage = t.stage === 2 ? 2 : 1;
+      const round = stage === 2 ? "第 2 轮 · -unique 独有区图" : "第 1 轮 · 基础对照图";
+      const prog = stage === 2
+        ? (t.current ? " · " + t.current : "")
+        : (hasN ? " " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "") : "");
+      thinkBusyDock("正在" + label + " · " + round + prog);
+      taskTip("正在" + round + prog);
       continue;
     }
     if(t.status === "error"){ taskTip(null); toast(t.message || "分析失败", "err"); return; }
@@ -2418,12 +2427,11 @@ function renderExecAll(){
   // 「匹配分类」= 识别命中的分类标注（state）：动作 / 点击坐标都取自该分类（summary/<分类>/info.json）。
   // 产物目录常规与分类标注同名（一个分类 = 一个比对分组），为避免同一名字在面板上出现两次，
   // 只在二者确不相同（历史数据同分类多动作遗留的“<分类>_<action>”目录）时才追加目录名说明。
+  // 匹配分类 = 差异分值最低的最近似分类；分值仅作参考、不设识别阈值，不再区分“已识别/未识别”
   let matchedTxt = "—", matchedCls = "";
   if(!idleWait && !(j.error && j.imageWidth <= 0 && !j.windowFound)){
-    if(j.recognized){
-      matchedTxt = j.state || "已识别"; matchedCls = "ok";
-    } else if(j.state){
-      matchedTxt = "未识别 · 最近似「" + j.state + "」"; matchedCls = "err";
+    if(j.state){
+      matchedTxt = j.state; matchedCls = "";
     }
   }
   if(matchedTxt !== "—" && j.state && j.matchedSample && j.matchedSample !== j.state){
@@ -2435,9 +2443,11 @@ function renderExecAll(){
   execSetVal("execCost", (matchedTxt !== "—" && j.captureMs >= 0 && j.classifyMs >= 0)
       ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
 
-  const clickable = !!(j.recognized && j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
+  // 动作/坐标取自最近似分类定义，可点与否不再受“识别阈值”门禁（差异分值仅作参考）；
+  // 分类定义了鼠标点击且有坐标即可展示执行，仅产物确无坐标时才提示回标注模式补齐
+  const clickable = !!(j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
   if(j.action === "click"){
-    execSetVal("execAction", clickable ? "鼠标点击" : "鼠标点击（坐标缺失，请回标注模式修正）", clickable ? "ok" : "err");
+    execSetVal("execAction", clickable ? "鼠标点击" : "鼠标点击（该分类尚无点击坐标，请回标注模式点选）", clickable ? "ok" : "err");
   } else if(matchedTxt !== "—"){
     // 「无动作」来自该分类的定义：只有确实命中 / 最近似某分类时才展示；
     // 尚未识别出分类（占位快照 / 无可比分类 / 识别失败）时保持 —，避免无依据的“无动作”
@@ -2447,8 +2457,7 @@ function renderExecAll(){
   }
   execSetVal("execPos", clickable ? "(" + j.left + ", " + j.top + ")" : "—");
   execSetVal("execDiff", (typeof j.bestDiffPercent === "number" && j.bestDiffPercent >= 0)
-      ? (j.bestDiffPercent.toFixed(2) + "%" + (j.recognized ? "（达标）" : "（超阈值）")) : "—",
-      j.recognized ? "ok" : (j.state ? "err" : ""));
+      ? j.bestDiffPercent.toFixed(2) + "%" : "—", "ok");
   if((j.totalSamples || 0) > 0){
     // 存在可比的分类总数时才显示分组进度；一个分类都没有（首次进入尚无产物）时保持 —，
     // 否则“已比对 0 / 全部 0 个分类”是无意义的无效信息
@@ -2539,7 +2548,7 @@ function renderExecCandidates(list){
     const fileTxt = (it.matchedFile && it.matchedFile !== it.state)
         ? ' <span style="color:#556;font-size:11px">' + execEsc(it.matchedFile) + "</span>" : "";
     row.innerHTML = '<span class="cst">' + stateTxt + fileTxt + "</span>" +
-                    '<span class="cd">差异 ' + diffTxt + "</span>";
+                    '<span class="cd">分值 ' + diffTxt + "</span>";
     if(Array.isArray(it.kinds) && it.kinds.length){
       const vbtn = document.createElement("button");
       vbtn.type = "button";
@@ -2593,8 +2602,8 @@ function openKindScores(it){
     const grid = (typeof ks.w === "number" && ks.w > 0 && typeof ks.h === "number" && ks.h > 0)
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
-        ? '<b style="color:' + (ks.score <= 25 ? "var(--green)" : "#e0a04e") + '">' + ks.score.toFixed(2) + "%</b>"
-        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或基础图公共区全空（无有效比对像素）。本轮未计入差异度（按 0 计，不报错）。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
+        ? '<b style="color:var(--green)">' + ks.score.toFixed(2) + "%</b>"
+        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或基础图公共区全空（无有效比对像素）。本轮未计入差异分值（按 0 计，不报错）。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:12.5px">' +
       '<span>' + escHtml(nm) +
         '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml((kf[ks.kind] || ks.kind + ".png") + " · " + grid) + "</span></span>" +
@@ -2820,9 +2829,11 @@ async function execAutoLoop(){
       // 未识别 / 该分类未定义点击动作：确认时间后直接下一轮（没有动作就没有“游戏响应”等待）
       const why = (j.imageWidth <= 0 && j.error)
           ? execEsc(j.error)
-          : (j.recognized
-              ? "识别为「" + execEsc(j.state || "") + "」但无「鼠标点击」动作，跳过动作"
-              : (j.state ? "未识别（最近似「" + execEsc(j.state) + "」），不动作" : "未识别出已标注分类，不动作"));
+          : (j.state
+              ? (j.action === "click"
+                  ? "识别为「" + execEsc(j.state) + "」但该分类尚无点击坐标，跳过动作"
+                  : "识别为「" + execEsc(j.state) + "」但该分类无「鼠标点击」动作，跳过动作")
+              : "未识别出已标注分类（可能尚无同尺寸样本），不动作");
       const k1 = await execAutoWait('第 ' + round + ' 轮：' + why + '。<b>{s} 秒后开始下一轮…</b>', 3, seq);
       if(!k1) return;
       continue;

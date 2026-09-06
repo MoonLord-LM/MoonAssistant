@@ -123,6 +123,9 @@
   .btn.exit:hover{background:var(--danger);color:#fff}
   .btn.log{border-color:rgba(96,165,250,.4);color:var(--accent);background:rgba(79,140,255,.06)}
   .btn.log:hover{background:rgba(79,140,255,.18)}
+  /* 右侧「重新生成全部」重建入口：蓝色描边 */
+  #btnRebuild{border-color:var(--accent);color:var(--accent);background:rgba(79,140,255,.08)}
+  #btnRebuild:hover{background:rgba(79,140,255,.22)}
   .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
   .btn.cap.on{border-color:rgba(47,191,113,.65);color:var(--green);background:rgba(47,191,113,.12);font-weight:600}
   .btn.cap.on:hover{background:var(--green);color:#04120a}

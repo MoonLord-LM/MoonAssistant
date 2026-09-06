@@ -700,16 +700,20 @@ public class ThinkService {
             // 全部分组的基础 7 图生成完成后，再刷新跨分类依赖的各 -unique 独有区图：
             // refreshUniqueArtifacts 内部带全集门禁（任一有样本分组的基础图未齐则整轮跳过），
             // 门禁通过后再按「各成员 7 张基础图 mtime 签名」增量检查（签名未变则跳过，成本只有 stat）
+            int uniqueClasses = 0;
             try {
-                refreshUniqueArtifacts(groups);
+                t.stage = 2;
+                t.current = "";
+                uniqueClasses = refreshUniqueArtifacts(groups, t);
             } catch (Exception e) {
                 log.warn("刷新 -unique 独有区图异常（不影响本轮分析结果）：{}", e.toString());
             }
             t.status = "done";
-            t.message = todo.isEmpty()
-                ? "没有需要分析的组合（已有样本的分组都已有分析结果）"
-                : String.format("完成 %d/%d 个分类的分析", processed, todo.size())
-                    + (t.errors > 0 ? "（" + t.errors + " 个失败，详见日志）" : "");
+            t.message = (todo.isEmpty()
+                    ? "没有需要分析的组合（已有样本的分组都已有分析结果）"
+                    : String.format("完成 %d/%d 个分类的基础对照图", processed, todo.size())
+                        + (t.errors > 0 ? "（" + t.errors + " 个失败，详见日志）" : ""))
+                + (uniqueClasses > 0 ? "；-unique 独有区图已同步刷新（" + uniqueClasses + " 个分类）" : "");
             log.info("汇总分析批量分析结束：{}", t.message);
         } catch (Exception e) {
             log.warn("汇总分析批量分析异常: {}", e.toString());
@@ -941,10 +945,11 @@ public class ThinkService {
      * 该尺寸类，因此自动重算频繁触发时成本仅为 stat。内存上逐 kind 单独处理：任一时点只保留一个 kind 的
      * 逐成员像素，且每种 kind 的文件总量超限即整类跳过本轮（签名不落盘，下轮自动重算会再尝试）。</p>
      */
-    private void refreshUniqueArtifacts(List<Map<String, Object>> groups) {
+    /** 刷新全部 -unique 独有区图；返回本轮实际刷新了多少个分类（门禁未过 / 无需变更返回 0） */
+    private int refreshUniqueArtifacts(List<Map<String, Object>> groups, Task t) {
         Path root = storage.summary();
         if (!Files.isDirectory(root)) {
-            return;
+            return 0;
         }
         // 先做全集门禁并收集互比目录：只放行「有样本且 7 张基础图齐全」的组
         List<Path> dirs = new ArrayList<>();
@@ -956,12 +961,12 @@ public class ThinkService {
             if (!artifactsComplete(d)) {
                 log.warn("分组 {} 的 7 张基础对照图尚未齐备，本轮跳过 -unique 独有区图刷新，等补齐后重算",
                     d.getFileName());
-                return;
+                return 0;
             }
             dirs.add(d);
         }
         if (dirs.isEmpty()) {
-            return;
+            return 0;
         }
         // 按 (宽,高) 归类：同尺寸才可逐像素同位比较
         Map<Long, List<Path>> byDim = new LinkedHashMap<>();
@@ -972,17 +977,21 @@ public class ThinkService {
             }
             byDim.computeIfAbsent((((long) wh[0]) << 32) | (wh[1] & 0xffffffffL), k -> new ArrayList<>()).add(d);
         }
+        int refreshed = 0;
         for (List<Path> cls : byDim.values()) {
             try {
-                refreshUniqueClass(cls);
+                if (refreshUniqueClass(cls, t)) {
+                    refreshed += cls.size();
+                }
             } catch (Exception e) {
                 log.warn("刷新 -unique 独有区图失败（{} 个同尺寸分类）：{}", cls.size(), e.toString());
             }
         }
+        return refreshed;
     }
 
-    /** 重算一个“同尺寸类”的全部 -unique 独有区图；签名未变且各 -unique 图齐全时整类跳过 */
-    private void refreshUniqueClass(List<Path> cls) throws IOException {
+    /** 重算一个“同尺寸类”的全部 -unique 独有区图；签名未变且各 -unique 图齐全时整类跳过。返回 true = 本轮实际执行了刷新 */
+    private boolean refreshUniqueClass(List<Path> cls, Task t) throws IOException {
         String sig = classSig(cls);
         boolean need = false;
         for (Path d : cls) {
@@ -1011,7 +1020,7 @@ public class ThinkService {
             }
         }
         if (!need) {
-            return;
+            return false;
         }
         int[] wh = pngSize(cls.get(0).resolve(FILE_SAME));
         // 内存防护：按 kind 单独处理，每种 kind 的文件总量都要在限内；任一种超限本轮跳过且不记录签名，
@@ -1028,12 +1037,17 @@ public class ThinkService {
             if (bytes > UNIQUE_CLASS_BYTES_LIMIT) {
                 log.warn("同尺寸 {} 基础图共约 {}MB，超过 {}MB 上限，本轮跳过 -unique 独有区图刷新",
                     kind, bytes >> 20, UNIQUE_CLASS_BYTES_LIMIT >> 20);
-                return;
+                return false;
             }
         }
         // 逐 kind 计算：以本分类该 kind 基础图为起点，剔除“其它分类同 kind 基础图同位同色”的像素
         Map<Path, Map<String, Double>> covOf = new LinkedHashMap<>();
+        int kindIndex = 0;
         for (String kind : BASE_KINDS) {
+            kindIndex++;
+            if (t != null) {
+                t.current = kindLabel(kind) + "（" + kindIndex + "/" + BASE_KINDS.size() + "）";
+            }
             Map<Path, Double> cov = refreshUniqueKind(cls, kind);
             for (Path d : cls) {
                 covOf.computeIfAbsent(d, k -> new LinkedHashMap<>()).put(kind + "-unique", cov.get(d));
@@ -1049,6 +1063,7 @@ public class ThinkService {
         }
         log.info("-unique 独有区图已刷新：{} 个同尺寸分类（{}×{}），每分类 7 张",
             cls.size(), wh == null ? 0 : wh[0], wh == null ? 0 : wh[1]);
+        return true;
     }
 
     /** 计算并落盘某一 kind 的 -unique 独有区图：把本分类该 kind 基础图中「其它分类同 kind 基础图同位同色」的点清透明 */
@@ -1324,6 +1339,20 @@ public class ThinkService {
         return CaptureMark.ACTION_CLICK.equals(a) ? "点击" : "无动作";
     }
 
+    /** kind → 中文短名（用于任务阶段提示文案） */
+    private String kindLabel(String kind) {
+        return switch (kind) {
+            case "same" -> "交集图";
+            case "max" -> "多数图";
+            case "avg" -> "均值图";
+            case "m8" -> "多数块 8×8";
+            case "a8" -> "均值块 8×8";
+            case "m32" -> "多数块 32×32";
+            case "a32" -> "均值块 32×32";
+            default -> kind;
+        };
+    }
+
     /** 一组标注中最常见的点击坐标；无有效坐标返回 {-1,-1} */
     private int[] commonClick(List<CaptureMark> marks) {
         Map<Long, Integer> freq = new HashMap<>();
@@ -1459,6 +1488,8 @@ public class ThinkService {
         public volatile int errors;
         /** 正在处理的分类展示文案 */
         public volatile String current = "";
+        /** 当前阶段：1 = 逐分类生成 7 张基础对照图；2 = 生成各分类 7 张 -unique 独有区图 */
+        public volatile int stage = 1;
 
         Task(String taskId, boolean force) {
             this(taskId, force, false);

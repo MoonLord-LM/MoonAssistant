@@ -497,7 +497,7 @@ public class FrameClassifier {
         long n = 0;
         for (int i = 0; i < a.length; i++) {
             int cb = b[i];
-            if (((cb >>> 24) & 0xff) < 0x80) {
+            if (((cb >>> 24) & 0xff) == 0) {
                 continue;
             }
             int ca = a[i];

@@ -388,11 +388,10 @@ public class ExecutionService {
     public Map<String, Object> act() {
         Map<String, Object> res = new LinkedHashMap<>();
         Snapshot s = refreshNow();      // 复核最新画面，避免界面停留期间状态已变化
-        if (!s.recognized()) {
+        // 以最近似分类为准执行，不设识别阈值门槛（差异分值仅作界面参考展示）
+        if (s.state() == null || s.state().isBlank()) {
             res.put("ok", false);
-            res.put("message", s.state == null
-                    ? "当前画面未能识别出任何已标注分类（可能尚无同尺寸样本），无法执行动作。"
-                    : "当前画面识别为「" + s.state + "」但差异度超出阈值，判定为未识别，不执行动作以避免误点。");
+            res.put("message", "当前画面未能识别出任何已标注分类（可能尚无同尺寸样本），无法执行动作。");
             return res;
         }
         if (!CaptureMark.ACTION_CLICK.equals(s.action()) || s.left() == null || s.top() == null) {
