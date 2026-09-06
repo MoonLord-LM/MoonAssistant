@@ -68,20 +68,21 @@
   .exec-ops .btn{flex:1;padding:9px 10px;font-size:13px;font-weight:600;border-radius:8px;white-space:nowrap;text-align:center}
   /* 自动识别（红色测试按钮）：整行独立 + 脉冲提示运行中；下方状态行显示当前循环阶段/倒计时 */
   #execAutoBtn{display:block;width:100%;margin-top:10px;border:1px solid rgba(255,92,108,.5);background:rgba(255,92,108,.1);color:var(--danger);font-weight:700}
-  /* 把当前画面存入待标注：与自动识别同级整行独立，蓝色描边（保存样本入口，非破坏性操作） */
-  #execSaveCap{display:block;width:100%;margin-top:8px;border:1px solid rgba(79,140,255,.55);background:rgba(79,140,255,.1);color:var(--accent);font-weight:700}
-  #execSaveCap:hover{background:rgba(79,140,255,.2)}
+  /* 候选分类头部行：标题居左，「存入待标注」按钮放在行右侧（与各候选行的「存入分类」同尺寸、蓝系区分，随候选区集中放置） */
+  .candhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+  .candhead>span{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;white-space:nowrap;min-width:0}
+  #execSaveCap{flex:none;font-size:11.5px;padding:2px 9px;border-radius:7px;border:1px solid rgba(79,140,255,.55);
+    background:rgba(79,140,255,.1);color:var(--accent);cursor:pointer;white-space:nowrap;display:inline-block;
+    width:auto;height:auto;margin:0;font-weight:600;line-height:1.6}
+  #execSaveCap:hover:not(:disabled){background:rgba(79,140,255,.25)}
+  #execSaveCap:disabled{opacity:.45;cursor:not-allowed}
   #execAutoBtn:hover:not(:disabled){background:var(--danger);color:#fff}
   #execAutoBtn.running{background:var(--danger);color:#fff;animation:execAutoPulse 1.5s ease-in-out infinite}
   #execAutoBtn:disabled{opacity:.5;cursor:wait}
-  /* 执行模式：把当前画面另存到 capture/ 待人工标注（画面本不落盘，需精确标注/修正坐标时才用） */
-  #execSaveCap{display:block;width:100%;margin-top:10px;font-size:12.5px}
-  #execSaveCap:hover:not(:disabled){border-color:var(--green);color:var(--green);background:rgba(47,191,113,.08)}
-  #execSaveCap:disabled{opacity:.5;cursor:not-allowed}
-  /* 执行模式四个操作按钮统一高度：立即识别 / 执行动作 / 开启自动识别 / 把当前画面存到待标注。
-     固定高 + flex 垂直水平居中，消除因字号/内边距差异导致的高矮不一（原两两一组上下错落） */
-  #execRefresh,#execAct,#execAutoBtn,#execSaveCap{height:34px;display:flex;align-items:center;justify-content:center;white-space:nowrap;line-height:1}
-  #execAutoBtn,#execSaveCap{width:100%}
+  /* 执行模式操作按钮统一高度：立即识别 / 执行动作 / 开启自动识别。
+     固定高 + flex 垂直水平居中，消除因字号/内边距差异导致的高矮不一 */
+  #execRefresh,#execAct,#execAutoBtn{height:34px;display:flex;align-items:center;justify-content:center;white-space:nowrap;line-height:1}
+  #execAutoBtn{width:100%}
   @keyframes execAutoPulse{50%{opacity:.72}}
   .execAutoState{display:none;margin-top:8px;padding:6px 9px;font-size:11.5px;line-height:1.55;color:var(--muted);border:1px dashed rgba(255,92,108,.35);border-radius:8px;background:rgba(255,92,108,.06)}
   .execAutoState.show{display:block}

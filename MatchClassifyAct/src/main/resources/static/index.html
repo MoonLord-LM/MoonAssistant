@@ -243,7 +243,11 @@
     </div>
 
     <div class="edsec">
-      <div class="edhead">候选分类（差异分值由小到大）</div>
+      <div class="candhead">
+        <span>候选分类（差异分值由小到大）</span>
+        <button type="button" id="execSaveCap" class="mbtn"
+          title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">存入待标注</button>
+      </div>
       <div id="execCandidates"><div class="hint">—</div></div>
       <div class="hint" style="font-size:11.5px;margin-top:8px;line-height:1.6">
         识别错了？点对应分类的「<b style="color:var(--green)">存入分类</b>」，
@@ -259,8 +263,6 @@
       </div>
       <button type="button" class="btn auto" id="execAutoBtn"
         title="自动循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选前台/后台方式动作 → 再等 3 秒游戏响应 → 下一轮。运行中再次点击即停止">开启自动识别</button>
-      <button type="button" class="btn" id="execSaveCap"
-        title="把当前画面临时存入截图区（capture/，未标注）：需要人工精确标注 / 修正鼠标点击坐标时，保存后切到「标注模式 → 未标注」即可看到这张图并按正常流程标注。画面本不落盘，此按钮 = 另存为待标注的原始截图">把当前画面存入待标注</button>
       <div class="execAutoState" id="execAutoState" aria-live="polite"></div>
     </div>
 

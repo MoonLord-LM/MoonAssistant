@@ -1952,7 +1952,8 @@ function smartTipVisible(){
   return FILTER === "unmarked" && !!cur() && !cur().marked;
 }
 
-/* 触发当前未标注图的智能分析（切图 / 清除标记 / 退出汇总分析等时机调用） */
+/* 触发当前未标注图的智能分析（切图 / 清除标记 / 退出汇总分析等时机调用）。
+   先停满 1 秒确认停留才发起，快速翻图不触发；期间切走、收起、已标注即取消 */
 function refreshSmartTip(){
   const it = cur();
   if(!smartTipVisible() || !it){ hideSmartTip(); return; }
@@ -1960,6 +1961,14 @@ function refreshSmartTip(){
   const file = it.name;
   const seq = ++sugSeq;
   sugStop();
+  hideSmartTip();
+  sugTimer = setTimeout(()=> startSmartAnalysis(seq, file), 1000);
+}
+
+/* 停留确认后发起建议：展示“智能分析中”并请求后端开始逐像素比对 */
+function startSmartAnalysis(seq, file){
+  if(seq !== sugSeq) return;
+  if(!smartTipVisible() || !cur() || cur().name !== file){ hideSmartTip(); return; }
   sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 14 张对照图（7 张基础图 + 7 张独有区图）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
@@ -2530,18 +2539,17 @@ function renderExecActBtn(j, clickable){
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
-/* 「把当前画面存入待标注」可用态：有画面且不在自动识别循环中
-   （自动循环每秒都在换帧，此时保存可能存的不是当前看到的那张） */
+/* 「存入待标注」可用态：有当前画面即可点（自动识别循环中也保持可用，画面随时可另存为待标注） */
 function renderExecSaveCap(j){
   const b = $("execSaveCap"); if(!b) return;
-  const can = !execAutoOn && !!(j && j.imageWidth > 0 && j.imageHeight > 0);
+  const can = !!(j && j.imageWidth > 0 && j.imageHeight > 0);
   b.disabled = !can;
 }
 
-/* 把当前画面另存为 capture/ 原始截图（未标注）：切到「标注模式 → 未标注」即可定位并按正常流程精确标注 / 修正坐标 */
+/* 把当前画面另存为 capture/ 原始截图（未标注）：切到「标注模式 → 未标注」即可定位并按正常流程精确标注 / 修正坐标（自动识别中也允许保存） */
 async function execSaveToCapture(){
   const b = $("execSaveCap");
-  if(!b || b.disabled || execAutoOn) return;
+  if(!b || b.disabled) return;
   b.disabled = true;
   const old = b.textContent;
   b.textContent = "保存中…";
@@ -2803,12 +2811,12 @@ function execIsClickable(){
   return !!(execLatest && execLatest.recognized && execLatest.action === "click"
       && Number.isInteger(execLatest.left) && Number.isInteger(execLatest.top));
 }
-/* 循环期间禁用手动「立即识别 / 执行动作」，停止后按最新结果恢复 */
+/* 循环期间禁用手动「立即识别 / 执行动作」，停止后按最新结果恢复；
+   「存入待标注」不在此锁定（自动识别中也可把当前画面另存为待标注） */
 function execAutoSetManual(locked){
   const r = $("execRefresh"); if(r) r.disabled = locked;
   renderExecActBtn(execLatest || { recognized:false }, !locked && execIsClickable());
-  if(locked){ const s = $("execSaveCap"); if(s) s.disabled = true; }
-  else renderExecSaveCap(execLatest);     // 停止自动循环后按当前画面恢复可用态
+  renderExecSaveCap(execLatest);
 }
 function execAutoStop(){
   if(!execAutoOn) return;

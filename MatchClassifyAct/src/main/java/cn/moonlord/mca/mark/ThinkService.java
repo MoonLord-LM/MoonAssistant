@@ -35,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /**
@@ -321,7 +322,7 @@ public class ThinkService {
         }
     }
 
-    /** 启动单图智能建议（与批量分析共用后台串行池，避免并发打满 CPU） */
+    /** 启动单图智能建议。与批量分析共用后台串行池，新请求使旧建议任务作废，只分析用户最新停留的一张图 */
     public String startSuggest(String file) {
         String id = UUID.randomUUID().toString();
         if (suggestTasks.size() > 100) {
@@ -329,6 +330,7 @@ public class ThinkService {
         }
         SuggestTask t = new SuggestTask(id, file);
         suggestTasks.put(id, t);
+        latestSuggest.set(t);
         pool.submit(() -> runSuggest(t, file));
         return id;
     }
@@ -339,6 +341,11 @@ public class ThinkService {
     }
 
     private void runSuggest(SuggestTask t, String file) {
+        /* 已被更新的建议请求取代 → 作废，不再占用计算 */
+        if (latestSuggest.get() != t) {
+            t.status = "done";
+            return;
+        }
         try {
             Path png = suggestPng(file);
             if (png == null) {
