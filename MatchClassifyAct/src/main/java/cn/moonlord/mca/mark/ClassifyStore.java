@@ -303,6 +303,23 @@ public class ClassifyStore {
         return cd == null ? null : toMark(st, cd);
     }
 
+    /** 某分类当前实际拥有的已标注样本数（样本 json 归属计数；与中心表定义是否残留无关） */
+    public synchronized int sampleCount(String state) {
+        ensureMigrated();
+        String st = state == null ? "" : state.trim();
+        if (st.isEmpty()) {
+            return 0;
+        }
+        int n = 0;
+        for (Path png : listClassifiedPngs()) {
+            CaptureMark m = readSample(png.getFileName().toString());
+            if (m != null && st.equals(trim(m.getState()))) {
+                n++;
+            }
+        }
+        return n;
+    }
+
     /** 全部已定义分类（含尚无样本图的定义），按分类名排序，供列表 / 前端提示使用 */
     public synchronized List<CaptureMark> definitions() {
         ensureMigrated();

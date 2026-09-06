@@ -22,8 +22,8 @@ mvn -DskipTests package
 java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 ```
 
-- 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台（`http://localhost:8080/annotate`，`--ui.auto-open=false` 可关），后端更新重启后页面自动刷新。
-- 截图**默认不开启**，需在页面右上角点「开启截图」；「退出程序」结束服务并自动关页。
+- 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台（`http://localhost:8080/annotate`，`--ui.auto-open=false` 可关）；页面会持续探测后端，检测到代码更新后**自动刷新**加载新版。
+- 截图**默认不开启**，需在页面右上角点「开启截图」；右上角「完全退出」结束服务并自动关页。
 - 日常重启用 `restart.cmd`（停旧进程 → 清 `target\` → 重新打包 → 启动，日志在 `log\`）；`stop&clean.cmd` 只停并清构建输出。
 - 数据都在运行目录下，启动自动创建；**可随时整目录拷贝/备份**。
 
@@ -57,8 +57,10 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 顶栏四段导航：**全部 / 未标注 / 已标注 / 汇总分析**。流程：看图 → 填分类标注 → 定匹配动作 → 保存并下一张。
 
 - **分类标注** = 画面状态名（登录页 / 主界面 / 弹窗…）。它同时用作汇总产物目录名，故不能含 `\ / : * ? " < > |` 等文件名非法符号（输入时自动剔除）。chip 上的 ✎ 可整体改名（中心表 key 与全部样本归属一并更新，旧产物目录自动清理）。
-- **匹配动作** = 无动作 / 鼠标点击（在图上点一下即记坐标）。每个分类只有一份定义：**首次**打标时确定，之后同分类加样本直接填分类保存即可，坐标自动沿用；在已标注图上改动作/坐标 = **重定义该分类**（全组同步）。
+- **匹配动作** = 无动作 / 鼠标点击（在图上点一下即记坐标）。每个分类只有一份定义：**首次**打标时确定，之后同分类加样本直接填分类保存即可，坐标自动沿用；在已标注图上改动作/坐标 = **重定义该分类**（全组同步）。唯一动作只约束**仍在使用（有样本）**的分类；样本删光后中心表残留的空定义视为全新分类，下次首标会直接重新定义，不会挡你新建。
 - 保存后自动带出上次标记并跳到未标注图，快捷键 `↑`/`↓` 切图、`Enter` 保存，可连续快速打标。
+- 「已标注」视图里点标签右侧的数字 = 只浏览该分类的已标注图并跳到第一张（再次点击同一数字取消过滤），不会跳去「全部」。
+- 左侧列表排序：全部、已标注按时间倒序（最新在上）；未标注按时间正序（最旧在上），从最早的开始逐张往下打标。
 - **图片像素 = 窗口坐标**（截图即窗口内容，resize 已逐像素对齐），坐标语义一直沿用到执行点击。
 
 ### 3.2 后台截图与去重
@@ -70,27 +72,27 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 
 ### 3.3 汇总分析（生成对照图）
 
-进入「汇总分析」段会自动异步分析每个「样本 ≥1 张且尚未分析」的分组；样本有变也会自动标记待重算。产物 = **14 张对照图**（7 张基础合成图 + 每张对应的 `-unique` 独有区图）+ `info.json`（样本数 / 覆盖率 / 公共点击坐标等），**仅供人工目检与执行识别，不参与任何标注决策**：
+进入「汇总分析」段会自动异步分析每个「样本 ≥1 张且尚未分析」的分组；样本有变也会自动标记待重算。产物 = **14 张对照图**（7 张基础合成图 + 每张对应的 `-unique` 独有区图）+ `info.json`（样本数 / 覆盖率 / 公共点击坐标等），**供人工目检，并作为执行模式实时识别 / 智能分析建议的比对源——只读使用，不自动改动任何标注**：
 
 | 产物 | 含义 |
 |------|------|
 | `same.png` 交集图 | 每像素取「覆盖率 >90%」的主流颜色，不足则透明 = 样本间公共（稳定）区 |
-| `max.png` 多数图 / `avg.png` 均值图 | 每像素取出现最多的颜色 / 全部样本 RGB 平均 |
-| `maj8.png` `avg8.png` `maj32.png` `avg32.png` | 8×8、32×32 块内「多数色 / 均值色」的降采样合成 |
-| `same-unique.png` `max-unique.png` `avg-unique.png` `maj8-unique.png` `avg8-unique.png` `maj32-unique.png` `avg32-unique.png`（7 张 -unique 独有区图） | 每张对应一种基础图：在**该 kind 基础图**上去掉「**其它分类同 kind 基础图**同位置同色」的像素，剩本分类独有区域，用来观察相近分类差在哪。均为跨分类产物：**要等全部分组的 7 张基础图都生成完才开始算**；**必须 14 张齐全**该分组才参与执行识别——基础图看整幅画面、独有区图只盯本分类独占区，两者互补拉开相近分类的差距 |
+| `major.png` 多数图 / `avg.png` 均值图 | 每像素取出现最多的颜色 / 全部样本 RGB 平均 |
+| `major8.png` `avg8.png` `major32.png` `avg32.png` | 8×8、32×32 块内「多数色 / 均值色」的降采样合成 |
+| 7 张 `-unique` 独有区图（`same-unique` / `major-unique` / `avg-unique` / `major8-unique` / `avg8-unique` / `major32-unique` / `avg32-unique`） | 每张对应一种基础图：在**该 kind 基础图**上去掉「**其它分类同 kind 基础图**同位置同色」的像素，剩本分类独有区域，用来观察相近分类差在哪。均为跨分类产物：**要等全部分组的 7 张基础图都生成完才开始算**；**必须 14 张齐全**该分组才参与执行识别——基础图看整幅画面、独有区图只盯本分类独占区，两者互补拉开相近分类的差距。接口 kind 短码与文件名对应：`m8`=`major8`、`m32`=`major32`、`a8`=`avg8`、`a32`=`avg32`，其余同基础图名 |
 
-已分析分组在列表中按交集图覆盖率**从低到高**排列（覆盖率越高说明样本越雷同、采样价值越低，放在前面便于优先补采），未分析/待重算分组排在其后；单击任一图放大查看，Esc 还原。
+已分析分组在列表中按交集图覆盖率**从低到高**排列：覆盖率越低 = 采到了该状态不同时刻的真实差异（样本更充分），排在前面；覆盖率越高 = 多为同一画面反复截取（采样不足），排在后面提示补采不同状态的画面。未分析 / 待重算分组排在其后（其中样本多的靠前）。单击任一图放大查看，Esc 还原。
 
 ### 3.4 执行模式（识别 + 点击）
 
-执行循环默认关闭，页面「▶ 开始执行循环」后按 `execute.interval-ms`（默认 2s）周期「截图 → 识别 → 刷新画面与结果」，也可点「立即识别一次」手动单轮。截图复用标注模式的找窗/调窗机制，**只用于识别与展示、不写盘**。
+切换过去即自动截图识别一轮并展示画面与结果，此后页面每 10 秒后台同步一次最新结果；点「立即识别」可手动单轮刷新。「开启自动识别」= 自动循环：每轮「截图识别 → 结果停留 3 秒供查看（可点按钮停止）→ 按下方所选方式执行点击 → 等 3 秒游戏响应」再进下一轮，运行中再次点击即停止。截图复用标注模式的找窗/调窗机制，**只用于识别与展示、不写盘**。
 
-- **识别口径**：把当前帧与 `summary/` 里各分组 **14 张对照图**（7 基础 + 7 -unique 独有区图，需齐全才参与）逐张比对（全幅图每隔 4 像素取 1 点抽样）。逐点判据按「代表色来源」分两套：**交集/多数类**（交集/多数/1·8、1·32 多数块图及各自 -unique，共 8 张）颜色是样本真实像素，要求**逐像素完全一致**（R/G/B 三通道差都为 0 才判「匹配」，画面同状态因 resize 逐像素对齐应能精确重现）；**均值类**（均值/1·8、1·32 均值块图及各自 -unique，共 6 张）颜色是样本平均色（真实画面不会恰好等于它），用逐通道容差（三通道差都 ≤ `execute.rgb-dist-threshold`（默认 255/3=85）判「匹配」，任一通道 > 它判「不匹配点」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS = **√(Σ占比²/14)**，固定按 14 张图归一；**最近似分组 ≤ `execute.match-threshold-percent`（默认 25%）才判「已识别」**，否则只展示最近似作参考、不执行动作（防误点）。
+- **识别口径**：把当前帧与 `summary/` 里各分组 **14 张对照图**（7 基础 + 7 -unique 独有区图，需齐全才参与）逐张比对（全幅图每隔 4 像素取 1 点抽样）。逐点判据按「代表色来源」分两套：**交集/多数类**（交集图 same / 多数图 major / 8×8·32×32 多数块图 major8·major32，及各自 -unique，共 8 张）颜色是样本真实像素，要求**逐像素完全一致**（R/G/B 三通道差都为 0 才判「匹配」，画面同状态因 resize 逐像素对齐应能精确重现）；**均值类**（均值图 avg / 8×8·32×32 均值块图 avg8·avg32，及各自 -unique，共 6 张）颜色是样本平均色（真实画面不会恰好等于它），用逐通道容差（三通道差都 ≤ `execute.rgb-dist-threshold`（默认 255/3=85）判「匹配」，任一通道 > 它判「不匹配点」）。分类差异度 = 各图「不匹配点占比」的**加权平均** = **(独有交集图×50 + 交集图×30 + 其余 12 张图平均×20) ÷ 100**（交集/独有交集锁定样本的公共稳定区与独占核心区，权重最高；其余图合计只占 20%，个别维明显差异不会被过度放大）；识别以最近似分组为准、**不设识别阈值门槛**（差异度仅作相近程度展示，不再区分「已识别/未识别」）。
 - **依赖前提**：目标画面需先在标注模式打好标并生成汇总产物（产物缺失或尺寸不符的分组不参与识别）。
-- **触发执行**：识别出「鼠标点击」动作后点「触发执行」，后端会**按最新画面先复核一次**，确认仍命中才发送点击：
-  - `post`（默认）：`PostMessage` 后台发送，不要求窗口前台、不抢占鼠标；
-  - `screen`：`SetForegroundWindow + SetCursorPos + mouse_event` 真实输入（要求窗口可见不被遮挡）。
-- 画面区实时帧上会叠加标出识别命中点，右栏展示识别结果与候选分类（差异度由小到大）。
+- **执行动作**：识别出「鼠标点击」动作后点「执行动作」，直接按右侧识别结果的坐标发送点击，**不再重新截图识别**（画面已变化请先点「立即识别」刷新结果）：
+  - `post`（默认，后台消息）：向目标窗口投递完整点击消息序列，不要求窗口前台/可见、不抢占鼠标（游戏 / 模拟器多忽略合成消息，此时应切 `screen`）；
+  - `screen`（前台点击）：`SetForegroundWindow + SetCursorPos + mouse_event` 真实输入（要求窗口可见不被遮挡）。
+- 画面区实时帧上用**红白准星**叠加标出识别命中点（点击坐标），右栏展示识别结果与候选分类（差异度由小到大）。
 
 ---
 
@@ -111,8 +113,8 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `ui.auto-open` | `true` | 启动后自动打开控制台应用窗口（找不到 Edge/Chrome 则回退系统浏览器） |
 | `ui.path` | `/annotate` | 自动打开的页面路径 |
 | `ui.window-size` `ui.center` | `1760x990` `true` | 控制台窗口尺寸 / 是否居中 |
-| `execute.interval-ms` | `2000` | 执行循环「截图→识别」间隔 |
-| `execute.match-threshold-percent` | `25` | 识别判定阈值：最近似差异度（RMS）≤ 它才算已识别 |
+| `execute.interval-ms` | `2000` | 后端「执行循环」接口（`POST /api/execute/start`）的周期截图识别间隔；当前控制台页由「立即识别 / 开启自动识别」驱动，不使用该周期 |
+| `execute.match-threshold-percent` | `25` | 差异度参考阈值：识别不设判定门槛，仅随识别结果返回供界面参考 |
 | `execute.rgb-dist-threshold` | `85`（255/3） | **均值型对照图**（avg/avg8/avg32 及各自 -unique）判不匹配的逐通道色差上限：R/G/B 任一通道差 > 它判「不匹配」，三通道都 ≤ 它才匹配；交集/多数型（same/major/major8/major32 及各自 -unique）固定「逐像素完全一致」，不受它影响 |
 | `execute.click-mode` | `post` | `post`=后台消息点击；`screen`=真实前台点击 |
 
@@ -130,8 +132,8 @@ MatchClassifyAct/
    ├─ capture/                         截图层：WindowFinder（找窗）→ ScreenCaptureService
    │                                   （调采集器、原子落盘、去重）→ WindowResizer（尺寸不符
    │                                   调窗重截）；WindowCaptureTask 周期任务 + StartupDedupCleaner
-   ├─ act/                             执行层：ExecutionService（循环主轴）→ FrameClassifier
-   │                                   （与 summary 对照图比对识别）→ WindowClicker（鼠标点击）
+   ├─ act/                             执行层：ExecuteController（REST）→ ExecutionService（截图+识别主轴）
+   │                                   → FrameClassifier（与 summary 对照图比对识别）→ WindowClicker
    └─ mark/                            标注层：ClassifyStore（中心表）→ AnnotateController /
                                         ThinkController（汇总分析）/ AppMetaController / SystemController
 src/main/resources/static/                控制台前端（标注 / 执行双模式，无外部依赖）
@@ -148,14 +150,14 @@ src/main/resources/static/                控制台前端（标注 / 执行双�
 - 多开多个相同目标程序时按标题取「面积最大」，暂无法指定具体实例。
 - `capture/` 持续落盘会积累：去重可挡静止/重复画面，长跑建议定期清理（`classify/` 是要保留的样本；`summary/` 可随时删除重算）。
 - 识别对轻微光照 / 色偏 / 动态区域敏感，动态画面较多的分类需多采样本覆盖（后续方向：局部 ROI / 特征匹配）。
-- 目前是「人工确认后触发执行」（防误点），尚未做「识别即自动执行」策略链与执行历史。
+- 自动点击通过「开启自动识别」进行（每轮留 3 秒可停止的确认窗口）；尚无可配置的策略链（失败重试 / 条件分支等）与执行历史记录。
 
 ## 附录
 
 ### A. REST API 摘要
 
 - 标注：`GET /api/annotate/images`（列图）、`image/{name}`（PNG）、`defs`（分类定义表）、`PUT/DELETE /api/annotate/mark/{name}`、`POST /api/annotate/rename`（分类整体改名）、`POST /api/annotate/delete`（移入系统回收站）。
-- 汇总分析：`GET /api/annotate/think/groups`、`POST /api/annotate/think/analyze`、`GET …/task/{id}`、`GET …/img/{kind}?dir={dirB64}`（`kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|m8|m8-unique|a8|a8-unique|m32|m32-unique|a32|a32-unique`，`dir` 为分类目录名 UTF-8 → Base64）。
+- 汇总分析：`GET /api/annotate/think/groups`、`POST /api/annotate/think/analyze`、`POST …/rebuild`（一键重建全部产物）、`GET …/task/{id}`、`GET …/img/{kind}?dir={dirB64}`（`kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|m8|m8-unique|a8|a8-unique|m32|m32-unique|a32|a32-unique`，`dir` 为分类目录名 UTF-8 → Base64）。
 - 截图：`GET /api/capture/status`、`POST /api/capture/pause|resume`。
 - 执行：`GET /api/execute/status`、`POST …/start|stop|refresh|act`、`GET …/latest|frame`。
 - 其它：`GET /api/app/meta`（版本探针 `codeTs`/最近截图结果）、`POST /api/system/shutdown`。

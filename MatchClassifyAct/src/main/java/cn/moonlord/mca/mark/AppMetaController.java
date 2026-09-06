@@ -75,6 +75,8 @@ public class AppMetaController {
             r.put("name", shot.name);
             if ("dup".equals(shot.kind)) {
                 r.put("pct", shot.diffPercent);   // dup：画面与该参考图的实际平均像素差异（%），必然低于阈值；saved 不带
+                r.put("refState", shot.refState); // dup：参考图所属分类（classify/ 已标注样本），capture/ 未标注图为 null
+                r.put("threshold", shot.threshold); // dup：本次判重阈值（%）
             }
             m.put("shotNotice", r);               // 非空 = 最近一次截图结果（成功保存 / 差异过小丢弃），前端即时轻提示
         }
@@ -92,6 +94,8 @@ public class AppMetaController {
                     r.put("name", s.name);
                     if ("dup".equals(s.kind)) {
                         r.put("pct", s.diffPercent);   // dup 才带：画面与该参考图的实际平均像素差异（%）
+                        r.put("refState", s.refState); // dup 才带：参考图所属分类（capture/ 未标注图为 null）
+                        r.put("threshold", s.threshold); // dup 才带：本次判重阈值（%）
                     }
                     arr.add(r);
                 }

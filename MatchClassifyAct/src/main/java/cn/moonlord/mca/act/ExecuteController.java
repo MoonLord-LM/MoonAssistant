@@ -26,7 +26,7 @@ import java.util.Map;
  *   <li>{@code POST /api/execute/refresh} —— 立即截图并识别一次；</li>
  *   <li>{@code GET  /api/execute/latest} —— 最近一次识别结果快照；</li>
  *   <li>{@code GET  /api/execute/frame} —— 最近快照对应的画面 PNG（供 <img> 展示）；</li>
- *   <li>{@code POST /api/execute/act} —— 触发执行：复核最新画面后向目标窗口发送鼠标点击；</li>
+ *   <li>{@code POST /api/execute/act} —— 触发执行：直接按最近一次识别结果的动作/坐标发送鼠标点击（不重新截图识别）；</li>
  *   <li>{@code POST /api/execute/save-to-capture} —— 把当前画面另存为 capture/ 的原始截图
  *       （未标注，供切回标注模式人工精确标注/修正坐标）。保存前会与 capture/ + classify/ 全部
  *       截图按手动另存阈值 {@code capture.diff-threshold-manual-percent}（默认 0.3%）做去重比对：
@@ -92,7 +92,7 @@ public class ExecuteController {
                 .body(png);
     }
 
-    /** 触发执行：复核最新画面后向目标窗口发送鼠标左键点击。 */
+    /** 触发执行：直接按最近一次识别结果的动作/坐标向目标窗口发送鼠标左键点击（不重新截图识别）。 */
     @PostMapping("/act")
     public Map<String, Object> act() {
         return executionService.act();

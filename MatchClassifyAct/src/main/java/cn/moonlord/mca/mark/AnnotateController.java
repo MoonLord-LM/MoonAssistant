@@ -165,7 +165,8 @@ public class AnnotateController {
      * <ul>
      *   <li>样本 json 只记录分类归属 {@code {state}}，动作与坐标收敛到 classify/data.json 中心表；</li>
      *   <li>该分类<b>尚无定义</b> → 以本次提交的 action/left/top 建立定义（首次固定，成为该分类唯一动作）；</li>
-     *   <li>该分类<b>已有定义</b> → 本图只登记归属，动作坐标一律以定义为准（提交的动作/坐标会被定义覆盖）；</li>
+     *   <li>该分类<b>已有定义且仍存在样本</b> → 本图只登记归属，动作坐标一律以定义为准（提交的动作/坐标会被定义覆盖）；</li>
+     *   <li>该分类<b>仅残留空定义（历史样本已删光）</b> → 界面上已无该分类的图，等同全新分类，允许按本次提交重新定义；</li>
      *   <li>对<b>已标注图</b>改自己的分类的动作/坐标（state 不变）→ 视为<b>重定义该分类</b>，同步到全组样本。</li>
      * </ul>
      * 若截图还在 capture/（未标注），写入成功后整体移到 classify/（进入“已标注”数据集）。
@@ -201,10 +202,12 @@ public class AnnotateController {
         boolean redef = alreadyClassified && oldState != null && !oldState.isEmpty()
             && oldState.equals(state);
         CaptureMark existingDef = classifyStore.definitionOf(state);
+        // 中心表定义可能残留自历史样本（样本删光后定义仍保留）；无样本的空分类等同全新，允许重新定义
+        boolean vacantDef = existingDef != null && classifyStore.sampleCount(state) == 0;
 
         CaptureMark adopted;
-        if (existingDef == null || redef) {
-            // 首次定义 / 原分类内重定义：以本次提交内容作为该分类的唯一动作
+        if (existingDef == null || redef || vacantDef) {
+            // 首次定义 / 原分类内重定义 / 空定义覆盖：以本次提交内容作为该分类的唯一动作
             String action = mark.getAction();
             Integer left = mark.getLeft();
             Integer top = mark.getTop();
@@ -306,7 +309,7 @@ public class AnnotateController {
 
     /**
      * 分类标注整体改名：中心表 data.json 的 key 与全部使用该分类的样本 json 的 state 一并改为新名，
-     * 并清理该分类旧的汇总分析产物目录（summary/&lt;from&gt;）。
+     * 该分类旧的汇总分析产物目录也随改名整体迁移为 summary/&lt;to&gt;（画面像素未变，无需后台重建）。
      * 目标名称若已有分类定义或被其它图片使用则拒绝（合并请先处理，避免动作语义混乱）。
      */
     @PostMapping("/rename")
@@ -335,10 +338,15 @@ public class AnnotateController {
             log.error("改名失败 [{} → {}]: {}", from, to, e.toString());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("改名失败：" + e.getMessage());
         }
-        int purged = thinkService.purgeArtifactsOfState(from);
-        thinkService.requestRecompute();   // 新分类名下样本集合已就位：后台自动生成新产物目录
-        log.info("分类标注改名「{}」→「{}」：更新 {} 张样本 json，清理旧产物目录 {} 个", from, to, updated, purged);
-        return ResponseEntity.ok(Map.of("updated", updated, "purged", purged));
+        // 产物目录随改名整体迁名（样本画面未变，无需后台重算，执行模式立即按新名参与比对）；
+        // 无旧产物可迁 / 有目录删除待重建时才触发后台补齐重建
+        ThinkService.RenameArtifactsResult ra = thinkService.renameArtifacts(from, to);
+        if (ra.moved() == 0 || ra.needRebuild() > 0) {
+            thinkService.requestRecompute();
+        }
+        log.info("分类标注改名「{}」→「{}」：更新 {} 张样本 json，产物目录迁移 {} 个、待后台重建 {} 个",
+                from, to, updated, ra.moved(), ra.needRebuild());
+        return ResponseEntity.ok(Map.of("updated", updated, "moved", ra.moved(), "needRebuild", ra.needRebuild()));
     }
 
     // ------------------------------------------------------------------ 删除（移入回收站）

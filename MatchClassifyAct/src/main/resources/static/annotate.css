@@ -39,10 +39,11 @@
   .exec-area{flex:1;min-height:0;display:flex;overflow:auto;padding:12px}
   .exec-wrap{position:relative;display:inline-block;line-height:0;margin:auto}
   #execImg{display:block;cursor:zoom-in}
-  #execDot{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;
-    background:radial-gradient(circle,rgba(47,191,113,.9) 0 28%,rgba(47,191,113,.3) 62%,transparent 75%);
-    border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.8);pointer-events:none;display:none;z-index:2}
-  #execVline,#execHline{position:absolute;background:rgba(47,191,113,.55);pointer-events:none;display:none;z-index:1}
+  /* 识别出的点击点：红白准星（与标注界面 #dot 同款），醒目易对齐像素 */
+  #execDot{position:absolute;width:16px;height:16px;border-radius:50%;background:rgba(255,51,85,.28);
+    border:2px solid #ff3355;box-shadow:0 0 0 2px rgba(255,255,255,.85);transform:translate(-50%,-50%);
+    pointer-events:none;display:none;z-index:2}
+  #execVline,#execHline{position:absolute;background:rgba(255,51,85,.55);pointer-events:none;display:none;z-index:1}
   #execVline{top:0;bottom:0;width:1px}
   #execHline{left:0;right:0;height:1px}
   /* 右栏宽度分隔条：可拖拽调节（拖中间竖条；双击复位；宽度存 localStorage） */

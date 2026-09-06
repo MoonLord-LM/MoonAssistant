@@ -237,7 +237,7 @@
       <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
       <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
       <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
-      <div class="kvrow" title="最近似分类 14 张对照图不匹配占比的均方根（0~100），越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
+      <div class="kvrow" title="最近似分类 14 张对照图不匹配占比的加权平均（独有交集×50 + 交集×30 + 其余 12 张平均×20，再 ÷100；0~100），越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
       <div class="kvrow"><span class="k">比对分组</span><span class="v" id="execSamples">—</span></div>
       <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
     </div>
@@ -271,7 +271,7 @@
       <label class="mopt"><input type="radio" name="execModeOpt" value="screen">
         <span><b>前台点击</b> —— 把窗口带到前台后模拟一次真实鼠标左键点击。<br><i>模拟器 / 游戏等只认真实输入的程序必须用此项，否则点击会被忽略。</i></span></label>
       <div class="hint" style="font-size:11.5px;line-height:1.6;margin-top:8px">
-        切换立即生效、无需重启；执行动作前会自动复核最新画面，点击点即画面上标记的位置。
+        切换立即生效、无需重启；点「执行动作」直接按已识别结果的坐标点击，不会自动截图识别（画面已变化请先点「立即识别」刷新结果）。
       </div>
     </div>
   </aside>

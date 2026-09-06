@@ -19,17 +19,20 @@ let px = null;         // {x,y} 图片像素（窗口相对坐标）
 let loading = null;    // 当前图片名，用于防异步竞态
 let lastMark = null;   // 上次输入/保存的标记草稿 {state,action,left,top}，切到未标注图时自动带入
 let DEF = {};          // 分类定义表快照 {state: {action,left,top}}，来自 /api/annotate/defs（中心表：动作坐标每分类一份）
-let stateFilter = null;   // 仅「全部」视图使用：null=不过滤；字符串=只显示该分类下已标注的截图
+let stateFilter = null;   // 分类过滤状态：作用于「全部 / 已标注」视图；null=不过滤，字符串=只显示该分类
 
 function listNow(){
   let L = FILTER === "all" ? ALL.slice() : ALL.filter(i => FILTER === "unmarked" ? !i.marked : i.marked);
-  if(FILTER === "all" && stateFilter) L = L.filter(i => i.marked && i.state === stateFilter);
+  if(stateFilter && (FILTER === "all" || FILTER === "marked")){
+    L = L.filter(i => i.marked && i.state === stateFilter);   // 「已标注」视图也可按分类过滤
+  }
+  if(FILTER === "all" || FILTER === "marked") L.reverse();   // 全部 / 已标注：最新在上；未标注：最旧在上（顺序打标）
   return L;
 }
 function curIndex(){ return listNow().findIndex(i => i.name===curName); }
 function cur(){ const L = listNow(); const p = curIndex(); return p>=0 ? L[p] : null; }
 function itemOf(name){ return ALL.find(i => i.name===name) || null; }
-/* 拉取图片列表并按文件名时间戳升序（时间靠前的截图在前） */
+/* 拉取图片列表，按文件名时间戳升序作为内部基准序；视图展示方向由 listNow 按筛选决定 */
 async function fetchAllSafe(){
   const resp = await fetch("/api/annotate/images");
   if(!resp.ok) throw new Error("HTTP " + resp.status);
@@ -234,8 +237,8 @@ async function loadList(preferName){
 }
 
 /* ---------------- 分类标签 chip：未标注 / 已标注 / 全部 三处共用同一结构、样式与交互 ----------------
-   一个 chip 分三个可点区域：文本 / 数字 = 在「全部」视图均为按该分类过滤左列表
-   （文本在「未标注 / 已标注」视图才是“选中作为设定”，把该分类设为当前图标注）；✎ = 重命名该分类。
+   一个 chip 分三个可点区域：✎ = 整体重命名；数字 = 按该分类过滤左列表
+   （「全部 / 已标注」过滤均在本视图内进行；「未标注」点数字转「全部」查看）；文本 = 全部过滤 / 未标注、已标注“选中作为设定”。
    高亮：on（绿）= 文本已被选为当前分类标注；fil（蓝）= 列表正按该分类过滤。 */
 function makeTagChip(box, state, count, o){
   const t = document.createElement("span");
@@ -263,8 +266,8 @@ function makeTagChip(box, state, count, o){
     const ed = document.createElement("button");
     ed.type = "button";
     ed.className = "ed";
-    ed.title = "重命名该分类标注（各视图同步）";
-    ed.setAttribute("aria-label", "重命名分类标注 " + state);
+    ed.title = "整体重命名该分类：样本、产物目录与动作定义一并迁移";
+    ed.setAttribute("aria-label", "整体重命名分类 " + state);
     ed.textContent = "✎";
     ed.addEventListener("click", (e)=>{
       e.stopPropagation();
@@ -288,7 +291,7 @@ function rebuildStates(){
   for(const i of ALL){ if(i.marked && i.state){ counts.set(i.state, (counts.get(i.state)||0) + 1); } }
   const curVal = $("stateInput").value.trim();
   for(const s of [...counts.keys()].sort((a,b)=>a.localeCompare(b,"zh"))){
-    makeTagChip(box, s, counts.get(s), { sel: s === curVal });
+    makeTagChip(box, s, counts.get(s), { sel: s === curVal, fil: FILTER === "marked" && stateFilter === s });
   }
 }
 
@@ -391,7 +394,7 @@ function startRenameTag(from, chip){
   inp.select();
 }
 
-/* 提交改名：后端批量更新该分类全部标注 json 的 state，并清理旧 summary/<旧名>/ 产物目录 */
+/* 提交改名：后端批量更新该分类全部标注 json 的 state，并把旧 summary/ 产物目录整体迁名为新名 */
 async function commitRename(from, inp){
   const chip = renChip;
   const to = inp.value.trim();
@@ -442,17 +445,17 @@ function stateUsage(state, excludeName){
   }
   return u;
 }
-/* 返回冲突原因（null = 可以保存）。定义表有值 → 以中心表定义为准；
-   定义表缺失时才参考同分类样本的历史动作（历史混杂数据） */
+/* 返回冲突原因（null = 可以保存）。仅“该分类名下仍有已标注样本”时才受唯一动作约束；
+   中心表可能残留自历史样本的定义（样本删光后仍保留）——空分类可被本次首次标注覆盖 */
 function actionConflict(state, act, excludeName, redefine){
   if(!state || redefine) return null;
   const def = defOf(state);
-  if(def && def.action !== act){
+  const u = stateUsage(state, excludeName);
+  if(def && def.action !== act && u.count > 0){
     return "「" + state + "」已定义动作「" + actLabel(def.action) + "」"
       + (def.action === "click" && def.left != null ? "（点击坐标 " + def.left + "," + def.top + "）" : "")
       + "；同一分类标注只对应一种动作/坐标，请改动作或换分类标注（如需重定义，请打开一张已标注该分类的图修改并保存）。";
   }
-  const u = stateUsage(state, excludeName);
   if(u.count > 0 && !u.actions.has(act)){
     return "「" + state + "」已被 " + u.count + " 张图使用，匹配动作统一为「"
       + [...u.actions].map(actLabel).join(" / ") + "」；同一分类标注只对应一种匹配动作，请改动作或换分类标注。";
@@ -469,13 +472,20 @@ function updateHints(){
     const curItem = cur();
     const redefHere = !!(curItem && curItem.marked && curItem.state === state);   // 本图已属该分类：改动=重定义分类
     const u = stateUsage(state, curName);
+    const vacant = !!def && u.count === 0;   // 有历史定义但当前无样本：可被首次标注重新定义
     if(def){
       if(redefHere && def.action !== actionSel){
         cls = "show info";
         msg = "本图属于「" + state + "」，把动作改为「" + actLabel(actionSel) + "」并保存会重定义该分类（动作/坐标全组同步，保存前会再次确认）。";
-      } else if(def.action !== actionSel){
+      } else if(def.action !== actionSel && !vacant){
         cls = "show bad";
         msg = "冲突：「" + state + "」分类定义动作是「" + actLabel(def.action) + "」，同一分类只对应一种动作/坐标；请改动作或换分类标注（如需重定义，请打开一张已标注该分类的图修改并保存）。";
+      } else if(def.action !== actionSel){
+        cls = "show info";
+        msg = "「" + state + "」旧定义是「" + actLabel(def.action) + "」但当前已无样本图，本次保存将把它重新定义为「" + actLabel(actionSel) + "」" + (actionSel === "click" ? "（需先在图上点选坐标）" : "") + "。";
+      } else if(vacant){
+        cls = "show ok";
+        msg = "「" + state + "」定义沿用于「" + actLabel(def.action) + "」，本次保存补入本图样本。";
       } else {
         cls = "show ok";
         msg = "「" + state + "」已定义动作「" + actLabel(def.action) + "」。";
@@ -521,7 +531,9 @@ function renderList(){
   const L = listNow();
   const ul = $("imgList"); ul.innerHTML = "";
   $("listCount").textContent = L.length + " 张";
-  $("lstTitle").textContent = (FILTER === "all" && stateFilter) ? "「" + stateFilter + "」分类截图" : "截图列表（按时间）";
+  $("lstTitle").textContent = stateFilter && (FILTER === "all" || FILTER === "marked")
+    ? "「" + stateFilter + "」分类" + (FILTER === "marked" ? "（已标注）" : "截图")
+    : (FILTER === "unmarked" ? "截图列表（最旧在上）" : "截图列表（最新在上）");
   if(FILTER === "all") renderFilterPanel();   // 分类过滤面板跟随最新计数刷新
   const curItem = cur();
   for(const item of L){
@@ -539,7 +551,7 @@ function renderList(){
     const d=document.createElement("li"); d.className="empty";
     // 目录里根本没有图片 → 统一说「没有图片」；有图片时才按当前筛选给具体提示
     d.textContent = ALL.length === 0 ? "没有图片"
-      : FILTER === "marked" ? "还没有已标记的图片"
+      : FILTER === "marked" ? (stateFilter ? "「" + stateFilter + "」分类下暂无已标注截图" : "还没有已标记的图片")
       : FILTER === "all" && stateFilter ? "「" + stateFilter + "」分类下暂无截图"
       : "🎉 全部图片都已标记";
     ul.appendChild(d);
@@ -561,18 +573,26 @@ function renderFilterPanel(){
 }
 
 function setStateFilter(state){
-  if(FILTER !== "all"){ stateFilter = null; return; }
+  if(FILTER !== "all" && FILTER !== "marked"){ stateFilter = null; return; }
   if(state === stateFilter) state = null;   // 再次点击当前分类 = 取消过滤
+  const old = stateFilter;
   stateFilter = state;
+  if(FILTER === "marked") rebuildStates();  // 标注视图：chips 蓝底跟随过滤状态
   const L = listNow();
   if(!L.length){
+    if(dirty){ stateFilter = old; rebuildStates(); return; }   // 有未保存编辑时不因过滤清屏
     curName = null;
     renderList();
-    showEmpty(state ? "「" + state + "」分类下暂无截图。" : "");
+    showEmpty(state
+      ? (FILTER === "marked" ? "「" + state + "」分类下暂无已标注截图。" : "「" + state + "」分类下暂无截图。")
+      : "");
     return;
   }
   const keep = itemOf(curName);
   const next = keep && L.some(i => i.name === keep.name) ? keep.name : L[0].name;
+  if(dirty && next !== curName && !confirm("当前标注尚未保存，确定切换到其他图片？")){
+    stateFilter = old; rebuildStates(); return;
+  }
   selectTarget(next);
 }
 
@@ -586,10 +606,11 @@ function setAsLabel(state){
 }
 
 /* 点标签“数字”：按该分类过滤左侧列表（再次点击同一分类 = 取消过滤）。
-   不在「全部」视图时先切到「全部」再过滤，保证未标注 / 已标注里的标签数字也能过滤。 */
+   「全部 / 已标注」视图在本视图内过滤：已标注视图停留并跳到该分类第一张，不再切去「全部」；
+   「未标注」视图本身不含已标注样本，点数字仍切到「全部」查看该分类。 */
 async function goFilter(state){
-  if(FILTER === "all"){ setStateFilter(state); return; }
-  if(FILTER === "unmarked" || FILTER === "marked"){
+  if(FILTER === "all" || FILTER === "marked"){ setStateFilter(state); return; }
+  if(FILTER === "unmarked"){
     await applyFilter("all");             // 复用顶部视图切换逻辑（含未保存确认 / 列表刷新）
     if(FILTER === "all") setStateFilter(state);
   }
@@ -603,6 +624,7 @@ async function applyFilter(f){
   if(FILTER === "think"){ exitThink(); curName = null; }
   FILTER = f;
   if(f !== "all") stateFilter = null;        // 分类过滤只属于「全部」视图，离开即重置
+  if(f === "unmarked" || f === "marked") rebuildStates();   // 标注视图：chips 的 sel/fil 随新视图刷新
   syncSugDock();                             // dock 浮层按当前是否有提示内容显示/隐藏（浮层不占布局）
   syncRightPanel();                          // 右栏随视图切换：all→分类标签 / unmarked、marked→标注编辑
   if(!dirty) await refreshSilent();          // 切到新视图前先把列表/计数同步到最新：挂机期间落盘的新截图即刻出现
@@ -654,6 +676,7 @@ function jumpToEdit(){
   if(FILTER === f) return false;
   FILTER = f;
   stateFilter = null;                 // 分类过滤只属于「全部」视图，离开即重置
+  rebuildStates();                    // 标注视图：chips 的 sel/fil 随视图重置
   syncSugDock();
   syncRightPanel();                   // 右栏：分类过滤 → 标注编辑
   selectTarget(item.name);            // 定位到当前这张图并载入标注，可直接点图改坐标
@@ -954,12 +977,12 @@ function setEditorEnabled(on){
   document.querySelectorAll('#edNorm input[name="action"]').forEach(r => { r.disabled = !on; });
 }
 
-/* 保存后按时间顺序取当前列表的下一张（列表已按文件名时间戳升序）；
+/* 保存后取当前列表视觉顺序的下一张（全部 / 已标注 = 最新在上；未标注 = 最旧在上）；
    未标注视图下走到末尾 = 全部标记完 → 清空画面并把右侧编辑按钮置灰 */
 function advanceAfterSave(item){
   const L = listNow();
   const p = L.findIndex(i => i.name === item.name);
-  // 未标注视图：保存后该图已移出列表，原位置被后续项顶替 → 原位置即“下一张”
+  // p>=0 直接下一行；p<0 仅发生在未标注视图（保存后该图已移出列表，列表仍为升序）→ 按名称找更晚的下一张
   const np = p >= 0 ? p + 1 : L.findIndex(i => i.name > item.name);
   if(np >= 0 && np < L.length){
     selectTarget(L[np].name);
@@ -1445,8 +1468,8 @@ function renderThinkDock(g){
     text = '样本有变：新增 / 改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
     const tail = g.hasUnique
-      ? '14 张对照图（7 张基础图 + 7 张 -unique 独有区图）已生成。'
-      : '对照图已生成；各 -unique 独有区图（本分类独有区域）将在随后的后台重算中补齐。';
+      ? '14 张对照图（7 张基础图 + 7 张独有区图）已生成。'
+      : '对照图已生成；各独有区图（本分类独有区域）将在随后的后台重算中补齐。';
     text = g.coverage != null
       ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，' + tail
       : tail;
@@ -1494,7 +1517,7 @@ function showThinkEmpty(cls, title){
 const THINK_EMPTY = "没有分类标注";
 /* 汇总分析对照图（顺序：每张基础图与其 -unique 独有区图成对出现：
    same/same-unique → max/max-unique → avg/avg-unique → maj8/maj8-unique → maj32/maj32-unique → avg8/avg8-unique → avg32/avg32-unique；
-   14 张都参与执行模式比对：差异度 = √(Σ各图不匹配占比²/14)，固定按 14 张图归一；
+   14 张都参与执行模式比对：差异度 = (独有交集图×50 + 交集图×30 + 其余 12 张平均×20)/100；
    -unique 图须等全部分组的 7 张基础图都生成完后由后台统一补算，未生成前本组先不展示独有区图卡片） */
 const IMG_IDS = ["imgSame","imgUnique","imgMax","imgMaxU","imgAvg","imgAvgU","imgM8","imgM8U","imgM32","imgM32U","imgA8","imgA8U","imgA32","imgA32U"];
 const TCS_IDS = ["tcsSame","tcsUnique","tcsMax","tcsMaxU","tcsAvg","tcsAvgU","tcsM8","tcsM8U","tcsM32","tcsM32U","tcsA8","tcsA8U","tcsA32","tcsA32U"];
@@ -1802,7 +1825,7 @@ async function pollAnalyze(id, label){
       // 进度不挤在列表头小角，改为：图片下方 dock 实时刷新进行态 + 右下角 taskTip 单条闪现（文本变化入库）
       const hasN = t.total > 0;
       const stage = t.stage === 2 ? 2 : 1;
-      const round = stage === 2 ? "第 2 轮 · -unique 独有区图" : "第 1 轮 · 基础对照图";
+      const round = stage === 2 ? "第 2 轮 · 独有区图" : "第 1 轮 · 基础对照图";
       const prog = stage === 2
         ? (t.current ? " · " + t.current : "")
         : (hasN ? " " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "") : "");
@@ -1937,7 +1960,7 @@ function refreshSmartTip(){
   const file = it.name;
   const seq = ++sugSeq;
   sugStop();
-  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 14 张对照图（7 张基础图 + 7 张 -unique 独有区图）做逐像素差异比对…</span>');
+  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 14 张对照图（7 张基础图 + 7 张独有区图）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
     try{
@@ -1982,11 +2005,11 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类各对照图「不匹配点占比」的均方根 RMS √(Σ占比²/14)，固定按 14 张图归一（越小越像） */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类 14 图不匹配占比的加权平均（独有交集×50 + 交集×30 + 其余 12 张平均×20，再 /100，越小越像） */
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
-      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（生成完整的 14 张图（7 张基础图 + 7 张 -unique 独有区图）即可参与比对）。</span>');
+      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（生成完整的 14 张图（7 张基础图 + 7 张独有区图）即可参与比对）。</span>');
     return;
   }
   const top = list[0];
@@ -2005,7 +2028,7 @@ function renderSuggest(list){
       ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图及各自的独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 14 张图不匹配点占比的加权平均（独有交集图×50 + 交集图×30 + 其余 12 张图平均×20，再 ÷100，越小越像；交集/独有交集锁定样本核心区，权重最高）；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2191,9 +2214,12 @@ async function checkAppVersion(){
       for(let i = 0; i < shotLog.length; i++){
         const s = shotLog[i];
         const saved = s.kind === "saved";
+        // dup：参考图是 classify/ 已标注样本时带出分类，capture/ 未标注图则只报文件名
+        const fname = s.name || "参考图";
+        const refWho = s.refState ? "「" + s.refState + "」分类的截图「" + fname + "」" : "截图「" + fname + "」";
         const txt = saved
-          ? "已保存截图 " + (s.name || "")
-          : "当前画面与截图「" + (s.name || "参考图") + "」差异小于 " + pctTxt(s.pct) + "%，本次不保存";
+          ? "已保存截图 " + fname
+          : "当前画面与" + refWho + "差异为 " + pctTxt(s.pct) + "%，小于阈值 " + pctTxt(s.threshold) + "%，不保存";
         if(i === shotLog.length - 1) showShotTip(txt, saved ? "ok" : "skip");   // 最新一条：右下角轻提示（内部已入日志）
         else pushLog(txt, saved ? "ok" : "skip", Number(s.at) || undefined);    // 轮询间隙的中间条：仅入历史日志
       }
@@ -2296,6 +2322,7 @@ function setAppMode(m){
     refreshSilent();     // 隐藏期间可能新增了截图：切回时同步一次列表
     syncRightPanel();    // 右栏按当前视图重置（可能停留在“全部”→ 显示分类过滤）
     syncCapStatus();     // 同步截图运行状态（开启/暂停按钮的文案与高亮）
+    if(FILTER === "think"){ refreshThink(true, true); }   // 切回仍停在「汇总分析」：同手动点 tab，自动补分析待生成的组合
   }
 }
 
@@ -2498,8 +2525,8 @@ function renderExecActBtn(j, clickable){
   b.textContent = "执行动作";
   b.title = clickable
       ? (execClickMode === "screen"
-          ? "将复核最新画面后把窗口带到前台做一次真实鼠标点击（前台点击模式，要求窗口可见、不被遮挡）"
-          : "将复核最新画面后向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起（后台消息模式，不抢前台）")
+          ? "直接按右侧识别结果做一次真实鼠标点击，不再重新截图识别（画面已变化请先点「立即识别」；前台点击要求窗口可见、不被遮挡）"
+          : "直接按右侧识别结果向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起，不再重新截图识别（画面已变化请先点「立即识别」；后台消息模式不抢前台）")
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
@@ -2547,13 +2574,13 @@ function renderExecCandidates(list){
     const fileTxt = (it.matchedFile && it.matchedFile !== it.state)
         ? ' <span style="color:#556;font-size:11px">' + execEsc(it.matchedFile) + "</span>" : "";
     row.innerHTML = '<span class="cst">' + stateTxt + fileTxt + "</span>" +
-                    '<span class="cd">分值 ' + diffTxt + "</span>";
+                    '<span class="cd">' + diffTxt + "</span>";
     if(Array.isArray(it.kinds) && it.kinds.length){
       const vbtn = document.createElement("button");
       vbtn.type = "button";
       vbtn.className = "mbtn";
       vbtn.textContent = "详细分值";
-      vbtn.title = "查看该分类 14 张对照图（基础图及其 -unique 独有区图）各自的不匹配点占比分值";
+      vbtn.title = "查看该分类 14 张对照图（基础图及其独有区图）各自的不匹配点占比分值";
       vbtn.addEventListener("click", () => openKindScores(it));
       row.appendChild(vbtn);
     }
@@ -2705,11 +2732,12 @@ function execFitImage(){
 function renderExecMarkers(){
   const j = execLatest, img = $("execImg");
   if(!j || !img || !execShownW || !execImgReady){ return; }
-  const clickable = !!(j.recognized && j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
+  // 与面板口径一致（最近似分类定义了鼠标点击且有坐标即标；CSS 默认 display:none，故显式用 block 才不会被样式表盖回去）
+  const clickable = !!(j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
   const dot = $("execDot"), vl = $("execVline"), hl = $("execHline");
   const sx = img.clientWidth / execShownW;
   const sy = img.clientHeight / execShownH;
-  const show = (el, on) => { if(el) el.style.display = on ? "" : "none"; };
+  const show = (el, on) => { if(el) el.style.display = on ? "block" : "none"; };
   show(vl, clickable); show(hl, clickable); show(dot, clickable);
   if(clickable && dot && vl && hl){
     const x = (j.left + 0.5) * sx;
@@ -2727,7 +2755,7 @@ async function execActNow(){
   if(!b || b.disabled || execActBusy) return;
   execActBusy = true;
   b.disabled = true;
-  b.textContent = "正在复核并发送点击…";
+  b.textContent = "正在发送点击…";
   const j = await execGet("/api/execute/act", { method:"POST" });
   execActBusy = false;
   b.disabled = false;
@@ -2735,7 +2763,7 @@ async function execActNow(){
   else if(j.ok){ toast("已执行：" + j.message, "ok"); }
   else { toast("无法执行：" + (j.message || "未知原因"), "err"); }
   renderExecActBtn(execLatest || { recognized:false }, false);
-  await execLoadLatest();       // 执行后立刻刷新一帧画面/结果
+  await execLoadLatest();       // 同步展示当前结果（点击不触发新识别，画面保持原样供核对）
 }
 
 /* ---- 模式切换 / 轮询入口（单次识别，无后台循环） ---- */
@@ -2842,10 +2870,10 @@ async function execAutoLoop(){
     const keep2 = await execAutoWait('第 ' + round + ' 轮：识别为「' + st + '」· 点击 (' + j.left + ',' + j.top + ')。'
         + '<b>{s} 秒后按「' + execModeZh(execClickMode) + '」执行…</b>', 3, seq);
     if(!keep2) return;
-    // 3) 按上面所选的前台 / 后台方式执行动作（后端按当前 clickMode 复核最新画面后点击）
+    // 3) 按所选前台 / 后台方式直接执行本轮已识别结果（后端不再重复截图识别）
     execAutoStatus('第 ' + round + ' 轮：正在按「' + execModeZh(execClickMode) + '」执行点击…');
     const r = await execGet("/api/execute/act", { method:"POST" });
-    await execLoadLatest();            // 后端复核后画面可能已更新：同步展示
+    await execLoadLatest();            // 同步展示最近结果（点击不产生新识别）
     if(!(execAutoOn && seq === execAutoSeq)) return;
     if(!r){
       const k3 = await execAutoWait('第 ' + round + ' 轮：执行请求失败（后端不可用）。<b>{s} 秒后开始下一轮…</b>', 2, seq);

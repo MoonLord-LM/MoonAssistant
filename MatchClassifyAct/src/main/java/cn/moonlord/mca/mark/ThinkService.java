@@ -312,7 +312,7 @@ public class ThinkService {
         public final String file;
         public volatile String status = "running";   // running / done / error
         public volatile String message = "";
-        /** 候选组，与执行模式同口径：按 7 图「不匹配点占比」的均方根 RMS（差异度）升序；每条含 diffPercent/recognized 等字段 */
+        /** 候选组，与执行模式同口径：按 14 图「不匹配占比」的加权平均差异度升序；每条含 diffPercent/recognized 等字段 */
         public volatile List<Map<String, Object>> candidates = List.of();
 
         SuggestTask(String taskId, String file) {
@@ -432,10 +432,10 @@ public class ThinkService {
      * 分别同尺度逐像素比对。判据按维度类别分两套：交集/多数类（交集图、多数图、1-8/1-32 多数块图及各自
      * -unique）逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值图、1-8/1-32 均值块图及各自 -unique）
      * 走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才算匹配，默认 255/3=85），
-     * 分类得分 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/14)（差异度，越小越像，
-     * 各维差值向量的长度按固定 14 维归一，任一张图差得远都会抬高总分），并按 execute
-     * 识别阈值（match-threshold-percent）判定是否「已识别」。不再维护“像素一致率 / 平均色差”的平行口径，
-     * 避免标注模式的建议与执行模式的真实判定不一致。
+     * 分类得分 = 各图「不匹配点占比」的加权平均差异度 = (独有交集图×50 + 交集图×30
+     * + 其余 12 张平均×20) / 100（交集 / 独有交集锁定公共稳定区与独占核心区，权重最高；
+     * 其余图合计只占 20%，个别维明显差异不会被过度放大）。识别不设阈值门槛：
+     * 有可比的最近似分类即视为已识别（差异度仅供展示参考）。
      */
     private List<Map<String, Object>> suggestWithClassifier(BufferedImage target) {
         FrameClassifier.Outcome oc = frameClassifier.classify(target);
@@ -449,11 +449,11 @@ public class ThinkService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("state", c.state());
             m.put("dir", c.matchedFile());
-            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 各对照图不匹配点占比的均方根 RMS（%）
+            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 14 图不匹配占比的加权平均差异度（%）
             if (i == 0) {
                 m.put("action", oc.action);    // 建议分类的动作只在最佳候选上读取（来自该分类 info.json）
             }
-            m.put("recognized", oc.recognized);          // 最近似差异度 ≤ execute 识别阈值 → 已识别
+            m.put("recognized", oc.recognized);          // 不设识别阈值：有可比的最近似分类即 true
             m.put("thresholdPercent", Math.round(thr * 100.0) / 100.0);
             List<Map<String, Object>> kinds = new ArrayList<>(c.kinds().size());
             for (FrameClassifier.KindScore ks : c.kinds()) {
@@ -713,7 +713,7 @@ public class ThinkService {
                     ? "没有需要分析的组合（已有样本的分组都已有分析结果）"
                     : String.format("完成 %d/%d 个分类的基础对照图", processed, todo.size())
                         + (t.errors > 0 ? "（" + t.errors + " 个失败，详见日志）" : ""))
-                + (uniqueClasses > 0 ? "；-unique 独有区图已同步刷新（" + uniqueClasses + " 个分类）" : "");
+                + (uniqueClasses > 0 ? "；独有区图已同步刷新（" + uniqueClasses + " 个分类）" : "");
             log.info("汇总分析批量分析结束：{}", t.message);
         } catch (Exception e) {
             log.warn("汇总分析批量分析异常: {}", e.toString());
@@ -1234,7 +1234,13 @@ public class ThinkService {
      * （新界面规则已不允许此类混用）。
      */
     private String dirNameOf(String state, String action, boolean multiAction) {
-        String s = trim(state)
+        String s = dirBaseName(state);
+        return multiAction ? s + "_" + action : s;
+    }
+
+    /** 分类标注 → 产物目录基础名（文件名安全化 + 截断；目录命名与改名迁移共用同一口径；静态方法内不便复用实例 trim） */
+    private static String dirBaseName(String state) {
+        String s = (state == null ? "" : state.trim())
             .replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_")   // 兜底：非法文件名符号
             .replaceAll("[\\.\\s]+$", "");                  // 兜底：Windows 禁止尾部的 . 与空格
         if (s.isEmpty()) {
@@ -1243,7 +1249,7 @@ public class ThinkService {
         if (s.length() > 120) {
             s = s.substring(0, 120);
         }
-        return multiAction ? s + "_" + action : s;
+        return s;
     }
 
     /** 汇总 classify/ 中所有已标注图片的分类标注 → 该标注用到的动作集合（判断是否混用） */
@@ -1282,35 +1288,90 @@ public class ThinkService {
         }
     }
 
+    /** 分类标注改名后产物迁移结果：moved = 成功迁名的目录数；needRebuild = 删除待后台重建的目录数 */
+    public record RenameArtifactsResult(int moved, int needRebuild) {
+    }
+
     /**
-     * 分类标注整体改名后调用：删除 summary/ 下所有记录 state 为该值的产物目录。
-     * 产物可随时由样本重算，因此直接删除，避免磁盘残留旧分类名目录。
+     * 分类标注整体改名后调用：把 summary/ 下该分类的产物目录整体迁名为新名，并把 info.json 的 state 改为新名。
+     * 样本画面未变，7 张基础图内容不变；-unique 独有区图按像素互比、与目录名无关，均无需重算——
+     * 改名即刻对执行模式生效，不再出现「删旧产物 + 后台重建」期间 14 张不全的半成品目录被识别到而报红字。
+     * 产物不齐 / 目录名不是标准同名目录 / 迁移失败的旧目录删除，交由后台按新名重建补齐。
      */
-    public int purgeArtifactsOfState(String state) {
-        if (state == null || state.trim().isEmpty()) {
-            return 0;
-        }
-        String st = state.trim();
+    public RenameArtifactsResult renameArtifacts(String from, String to) {
         Path sum = storage.summary();
-        if (!Files.isDirectory(sum)) {
-            return 0;
+        String f = trim(from);
+        String t = trim(to);
+        if (!Files.isDirectory(sum) || f.isEmpty() || t.isEmpty()) {
+            return new RenameArtifactsResult(0, 0);
         }
-        int n = 0;
+        String baseFrom = dirBaseName(f);
+        String baseTo = dirBaseName(t);
+        if (baseFrom.equals(baseTo)) {
+            return new RenameArtifactsResult(0, 0);
+        }
+        List<Path> dirs;
         try (Stream<Path> s = Files.list(sum)) {
-            for (Path d : (Iterable<Path>) s::iterator) {
-                if (!Files.isDirectory(d)) {
-                    continue;
-                }
-                if (st.equals(readInfo(d).get("state"))) {
+            dirs = s.filter(Files::isDirectory).toList();
+        } catch (IOException e) {
+            log.warn("枚举 summary/ 失败，跳过产物目录改名: {}", e.toString());
+            return new RenameArtifactsResult(0, 0);
+        }
+        int moved = 0;
+        int needRebuild = 0;
+        for (Path d : dirs) {
+            Object st = readInfo(d).get("state");
+            if (!f.equals(st == null ? "" : String.valueOf(st).trim())) {
+                continue;
+            }
+            String name = d.getFileName().toString();
+            String newName = name.equals(baseFrom) ? baseTo : null;
+            if (newName == null || !artifactsAllComplete(d)) {
+                // 名字非标准同名目录（历史遗留后缀等）或 14 张产物不齐：删除，后台按新名重建
+                try {
                     deleteTree(d);
-                    n++;
-                    log.info("分类标注改名后已删除旧产物目录 {}", d);
+                    needRebuild++;
+                    log.info("分类标注改名后旧产物目录 {} 无法直接迁移，删除待后台重建", d);
+                } catch (IOException e) {
+                    log.warn("删除 {} 失败: {}", d, e.toString());
+                }
+                continue;
+            }
+            Path target = sum.resolve(newName);
+            if (Files.exists(target)) {
+                try {
+                    deleteTree(target);
+                } catch (IOException e) {
+                    log.warn("删除 {} 失败: {}", target, e.toString());
                 }
             }
-        } catch (IOException e) {
-            log.warn("清理分类标注旧产物目录失败: {}", e.toString());
+            if (Files.exists(target)) {
+                try {
+                    deleteTree(d);
+                    needRebuild++;
+                    log.warn("目标产物目录 {} 清理失败，删除旧目录 {} 待后台重建", target, d);
+                } catch (IOException e) {
+                    log.warn("删除 {} 失败: {}", d, e.toString());
+                }
+                continue;
+            }
+            try {
+                Files.move(d, target);
+                Map<String, Object> info = readInfo(target);
+                info.put("state", t);
+                atomicWriteJson(target.resolve(FILE_INFO), info);
+                moved++;
+                log.info("分类标注改名后产物目录已迁移：{} → {}", d, target);
+            } catch (IOException e) {
+                log.warn("迁移产物目录 {} → {} 失败，删除待后台重建: {}", d, target, e.toString());
+                try {
+                    deleteTree(d);
+                } catch (IOException ignore) {
+                }
+                needRebuild++;
+            }
         }
-        return n;
+        return new RenameArtifactsResult(moved, needRebuild);
     }
 
     private void deleteTree(Path root) throws IOException {

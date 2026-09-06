@@ -40,8 +40,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>与「标注模式的截图循环」是同一层截图/调窗机制，但各自独立调度：
  * 执行循环按 {@code execute.interval-ms}（默认 2s）周期运行，截图只用于识别与展示、不写盘；
- * 两种循环可同时开启（都朝同一目标尺寸收敛，互不破坏）。执行动作（{@link #act()}）会先对
- * 最新画面再复核识别一次，随后向目标窗口发送鼠标点击事件。</p>
+ * 两种循环可同时开启（都朝同一目标尺寸收敛，互不破坏）。执行动作（{@link #act()}）不重新
+ * 截图识别，直接按最近一次识别结果的动作/坐标向目标窗口发送鼠标点击事件。</p>
  */
 @Slf4j
 @Service
@@ -122,7 +122,7 @@ public class ExecutionService {
     }
 
     /**
-     * 立即触发一轮「截图 + 识别」（等后台忙完后再执行）。供页面「立即识别」/ 执行动作前复核使用。
+     * 立即触发一轮「截图 + 识别」（等后台忙完后再执行）。供页面「立即识别」按钮使用。
      *
      * @return 本轮产生的最新快照（若后台正忙且等待超时，则返回当前已有快照）
      */
@@ -380,18 +380,18 @@ public class ExecutionService {
 
     /* ================================================================ 动作执行 ========== */
 
-    /**
-     * 触发执行：先按最新画面复核识别一次（确保“所见即所点”），再向目标窗口发送鼠标左键点击。
+    /** 触发执行：直接按「最近一次识别结果」的动作/坐标发送鼠标左键点击，不重新截图识别
+     *  （本页为人工复核/测试：画面已变化时请先点「立即识别」取得新结果再执行）。
      *
-     * @return 执行结果（业务未就绪时也返回 200 + ok=false + message，便于前端直接提示）
+     *  @return 执行结果（业务未就绪时也返回 200 + ok=false + message，便于前端直接提示）
      */
     public Map<String, Object> act() {
         Map<String, Object> res = new LinkedHashMap<>();
-        Snapshot s = refreshNow();      // 复核最新画面，避免界面停留期间状态已变化
+        Snapshot s = latestSnapshot();      // 不重新思考：直接复用最近一次识别的动作/坐标
         // 以最近似分类为准执行，不设识别阈值门槛（差异分值仅作界面参考展示）
         if (s.state() == null || s.state().isBlank()) {
             res.put("ok", false);
-            res.put("message", "当前画面未能识别出任何已标注分类（可能尚无同尺寸样本），无法执行动作。");
+            res.put("message", "还没有可执行的识别结果：请先点「立即识别」识别出已标注分类后再执行。");
             return res;
         }
         if (!CaptureMark.ACTION_CLICK.equals(s.action()) || s.left() == null || s.top() == null) {
