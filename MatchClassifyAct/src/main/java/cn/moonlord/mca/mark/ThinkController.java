@@ -23,13 +23,14 @@ import java.util.Map;
 
 /**
  * 汇总分析（同「分类标注（state）+ 匹配动作」截图像素分析）展示接口：
- * 生成七张对照图供人工目检，不参与任何标注 / 结论决策。
+ * 生成八张对照图供人工目检；其中独有交集图（same-unique.png）作为第 8 张对照图
+ * 一并参与执行模式 / 智能分析的匹配计算（缺失或独有区过小时自动跳过该图）。
  *
  * <pre>
  *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir）
  *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下七图）
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = same|max|avg|m8|a8|m32|a32；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = same|same-unique|max|avg|m8|a8|m32|a32；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */
@@ -91,7 +92,7 @@ public class ThinkController {
         return ResponseEntity.ok(t);
     }
 
-    /** 读取分析产物 PNG（kind = same | max | avg | m8 | a8 | m32 | a32；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
+    /** 读取分析产物 PNG（kind = same | same-unique | max | avg | m8 | a8 | m32 | a32；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
     @GetMapping("/img/{kind}")
     public ResponseEntity<?> image(@PathVariable String kind, @RequestParam String dir) {
         String folder = decodeDir(dir);

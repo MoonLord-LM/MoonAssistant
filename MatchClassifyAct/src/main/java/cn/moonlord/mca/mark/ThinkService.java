@@ -10,10 +10,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.util.Iterator;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,7 +44,7 @@ import java.util.stream.Stream;
  *
  * <p>界面语言里：分类标注 = 界面上的文本标签（数据字段 state），匹配动作 = none/click
  * （数据字段 action）；同一分类标注只允许一种匹配动作（控制台已按此规则约束）。
- * 本服务对每组截图逐像素分析，产出七张对照图：</p>
+ * 本服务对每组截图逐像素分析，产出八张对照图：</p>
  * <ol>
  *   <li><b>交集图</b>（same.png）：每个像素取“覆盖大于 90%”的值——统计所有样本在该像素的
  *       颜色，覆盖率 = 该颜色出现的样本占比；覆盖 &gt;90%（达标样本数向上取整）时该像素以该
@@ -57,11 +60,15 @@ import java.util.stream.Stream;
  *   <li><b>1/8 均值图</b>（avg8.png）：按 8×8 网格把所有样本对齐切块，将「同位置的块内全部
  *       像素」跨样本合并成一个集合，输出该集合全部像素 R/G/B 的总平均色。</li>
  *   <li><b>1/32 均值图</b>（avg32.png）：同上，块为 32×32。</li>
+ *   <li><b>独有交集图</b>（same-unique.png）：在<b>交集图</b>基础上，把「其它分类标注（同尺寸的已汇总分组）的
+ *       交集图在同一像素位置颜色完全相同」的像素剔除（那些位置对“区分本分类”没有贡献），只保留本分类独有的
+ *       画面区域，便于快速观察两两相近的分类到底差在哪里；同时作为执行 / 智能比对的第 8 张对照图
+ *       参与匹配计算——只在本分类独有区域计分，专为拉开相近分类的差异度。</li>
  * </ol>
  *
  * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
- * {@link StoragePaths}），七张图使用固定文件名：
- * {@code same.png / max.png / avg.png / maj8.png / avg8.png / maj32.png / avg32.png}，
+ * {@link StoragePaths}），八张图使用固定文件名：
+ * {@code same.png / max.png / avg.png / same-unique.png / maj8.png / avg8.png / maj32.png / avg32.png}，
  * 分析信息（样本数、覆盖率、公共点击坐标等）
  * 写入同目录 {@code info.json}。产物仅供人工目检展示，<b>不参与任何标注 / 结论决策</b>，
  * 画面标签一律以控制台的人工标注为准。</p>
@@ -92,9 +99,10 @@ public class ThinkService {
     private static final String FILE_A8 = "avg8.png";     // 1/8 均值图（8×8 块）
     private static final String FILE_M32 = "maj32.png";   // 1/32 多数图（32×32 块）
     private static final String FILE_A32 = "avg32.png";   // 1/32 均值图（32×32 块）
+    private static final String FILE_UNIQUE = "same-unique.png"; // 独有交集图（same-unique）：交集图里剔除“其它分类交集图同像素同色”后剩下的区域
     private static final String FILE_INFO = "info.json";
 
-    /** kind → 产物文件名 */
+    /** kind → 产物文件名（same-unique 独有交集图是参与执行 / 智能比对的第 8 张可选维度，缺失或独有区过小时自动跳过该图） */
     private static final Map<String, String> KIND_FILE = Map.of(
         "same", FILE_SAME,
         "max", FILE_MAX,
@@ -102,7 +110,8 @@ public class ThinkService {
         "m8", FILE_M8,
         "a8", FILE_A8,
         "m32", FILE_M32,
-        "a32", FILE_A32);
+        "a32", FILE_A32,
+        "same-unique", FILE_UNIQUE);
 
     /** 逐行像素处理时的行带高，控制峰值内存 */
     private static final int BAND_H = 64;
@@ -111,7 +120,10 @@ public class ThinkService {
     private static final double SAME_AGREE_RATIO = 0.90;
 
     /** 产物生成规则版本：改动产物生成逻辑后递增，使旧产物自动判 stale 并重算 */
-    private static final int ART_RULE_VERSION = 5;
+    private static final int ART_RULE_VERSION = 6;
+
+    /** 独有交集图全量刷新时，同一尺寸类的交集图像素总量（约 4 字节/像素）上限：超过则本轮跳过，避免瞬时内存过高 */
+    private static final long UNIQUE_CLASS_BYTES_LIMIT = 250L * 1024 * 1024;
 
     /** 单线程池：像素比对较重，串行避免并发打满 CPU（手动分析任务 / 单图智能建议 / 自动重算共用） */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
@@ -189,7 +201,7 @@ public class ThinkService {
      * 把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
-     * 只要样本变化，summary/ 下的七张对照图就会自动保持与最新样本一致，
+     * 只要样本变化，summary/ 下的对照图（含跨分类的独有交集图）就会自动保持与最新样本一致，
      * 供执行模式随时取用。与前端手动分析共用同一计算池，串行执行互不并发。
      */
     public void requestRecompute() {
@@ -376,9 +388,10 @@ public class ThinkService {
 
     /**
      * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
-     * 每个分类的 7 张对照图分别同尺度逐像素比对（单像素 RGB 三维距离 ≥ execute.rgb-dist-threshold 判为
-     * 不匹配点），分类得分 = 各图「不匹配点占比」的均方根 RMS = √(Σ占比²/图数)（差异度，越小越像，
-     * 7 维差值向量的欧氏长度按维数归一，任一张图差得远都会抬高总分），并按 execute
+     * 每个分类的 8 张对照图（交集 / 独有交集 / 多数 / 均值 / 1-8、1-32 块图）分别同尺度逐像素比对
+     * （单像素 RGB 三维距离 ≥ execute.rgb-dist-threshold 判为不匹配点），分类得分 = 各图「不匹配点占比」
+     * 的均方根 RMS = √(Σ占比²/图数)（差异度，越小越像，各维差值向量的欧氏长度按维数归一，任一张图
+     * 差得远都会抬高总分；独有交集图缺失或独有区过小时该图自动跳过），并按 execute
      * 识别阈值（match-threshold-percent）判定是否「已识别」。不再维护“像素一致率 / 平均色差”的平行口径，
      * 避免标注模式的建议与执行模式的真实判定不一致。
      */
@@ -394,7 +407,7 @@ public class ThinkService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("state", c.state());
             m.put("dir", c.matchedFile());
-            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 7 图不匹配点占比的均方根 RMS（%）
+            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 各对照图不匹配点占比的均方根 RMS（%）
             if (i == 0) {
                 m.put("action", oc.action);    // 建议分类的动作只在最佳候选上读取（来自该分类 info.json）
             }
@@ -528,6 +541,10 @@ public class ThinkService {
             boolean complete = artifactsComplete(gdir);
             g.put("analyzed", complete);   // 七张产物齐全才算完成
             if (complete) {
+                boolean hasUnique = Files.isRegularFile(gdir.resolve(FILE_UNIQUE));   // 独有交集图是否已随重算生成
+                g.put("hasUnique", hasUnique);
+                // 独有像素占全图的比例（与交集图 coverage 同口径的百分数值），旧产物未补算时为 null
+                g.put("uniqueCoverage", hasUnique ? info.get("uniqueCoverage") : null);
                 g.put("coverage", info.get("coverage"));
                 g.put("width", info.get("width"));
                 g.put("height", info.get("height"));
@@ -542,6 +559,8 @@ public class ThinkService {
                         || infoClick(info.get("clickTop")) != cc[1];
                 g.put("stale", ruleChanged || (fc != null && !fc.equals(marks.size())) || defChanged);
             } else {
+                g.put("hasUnique", false);
+                g.put("uniqueCoverage", null);
                 g.put("coverage", null);
                 g.put("width", null);
                 g.put("height", null);
@@ -631,6 +650,14 @@ public class ThinkService {
                     t.processed = ++processed;
                     t.errors++;
                 }
+            }
+            // 全部分组的基础 7 图生成完成后，再刷新跨分类依赖的 same-unique 独有交集图：
+            // refreshUniqueArtifacts 内部带全集门禁（任一有样本分组的基础图未齐则整轮跳过），
+            // 门禁通过后再按交集图 mtime 签名增量检查（签名未变则跳过，成本只有 stat）
+            try {
+                refreshUniqueArtifacts(groups);
+            } catch (Exception e) {
+                log.warn("刷新独有交集图异常（不影响本轮分析结果）：{}", e.toString());
             }
             t.status = "done";
             t.message = todo.isEmpty()
@@ -844,6 +871,187 @@ public class ThinkService {
         pruneObsoleteGroupDirs(state, action, dir);
         log.info("汇总分析 分类 [{}|{}] 完成：{} 张样本，公共像素覆盖率（≥90% 一致）{}% ，产物 → summary/{}/",
             trim(state), action, S, Math.round(coverage * 10000) / 100.0d, dir);
+    }
+
+    /* ---------------------------------------------------------------- 独有交集图（same-unique.png） */
+
+    /**
+     * 刷新「classify/ 中当前有样本（≥ 1 张）的全部分组」的 same-unique 独有交集图。
+     *
+     * <p>交集图只刻画“本分类稳定出现的画面”，而独有交集图进一步要求该稳定像素<b>只属于本分类</b>：
+     * 逐个与其它分类标注（同尺寸的已汇总分组）的交集图同位比较，凡其它分类交集图在该像素
+     * 颜色完全相同的点都从本图剔除（它们无助于区分分类），保留下来的即本分类独有的画面区域。
+     *
+     * <p><b>全集门禁</b>：独有交集图是跨分类产物——少算一个分类，其它分类“哪些像素独有”的判定
+     * 就不完整。因此只有「当前有样本的全部分组」的 7 张基础对照图都生成完毕，本方法才真正开始计算；
+     * 任一分组基础图尚未齐备（本轮新增样本的分组还没轮到、或该分组本轮生成失败留下残图），整轮直接跳过，
+     * 等下一轮补齐后再算——不允许在“分类集合不完整”的状态下过早生成。互比对象以 classify/ 有样本的
+     * 分组为准，而非简单枚举 summary/ 磁盘目录（历史遗留的孤儿目录不参与现行分类判定）。
+     *
+     * <p>尺寸不同的分组无法逐像素对齐，彼此不参与比较；同一尺寸类按“交集图文件 mtime 序列签名”
+     * 增量更新——自身或任一其它分类的交集图更新过、或 same-unique.png 缺失时才真正重算该尺寸类，
+     * 因此自动重算频繁触发时成本仅为 stat。</p>
+     */
+    private void refreshUniqueArtifacts(List<Map<String, Object>> groups) {
+        Path root = storage.summary();
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        // 先做全集门禁并收集互比目录：只放行「有样本且 7 张基础图齐全」的组
+        List<Path> dirs = new ArrayList<>();
+        for (Map<String, Object> g : groups) {
+            if (!Boolean.TRUE.equals(g.get("canAnalyze"))) {
+                continue;
+            }
+            Path d = groupDir(String.valueOf(g.get("dir")));
+            if (!artifactsComplete(d)) {
+                log.warn("分组 {} 的 7 张基础对照图尚未齐备，本轮跳过 same-unique 独有交集图刷新，等补齐后重算",
+                    d.getFileName());
+                return;
+            }
+            dirs.add(d);
+        }
+        if (dirs.isEmpty()) {
+            return;
+        }
+        // 按 (宽,高) 归类：同尺寸才可逐像素同位比较
+        Map<Long, List<Path>> byDim = new LinkedHashMap<>();
+        for (Path d : dirs) {
+            int[] wh = pngSize(d.resolve(FILE_SAME));
+            if (wh == null || wh[0] <= 0 || wh[1] <= 0) {
+                continue;
+            }
+            byDim.computeIfAbsent((((long) wh[0]) << 32) | (wh[1] & 0xffffffffL), k -> new ArrayList<>()).add(d);
+        }
+        for (List<Path> cls : byDim.values()) {
+            try {
+                refreshUniqueClass(cls);
+            } catch (Exception e) {
+                log.warn("刷新独有交集图失败（{} 个同尺寸分类）：{}", cls.size(), e.toString());
+            }
+        }
+    }
+
+    /** 重算一个“同尺寸类”的独有交集图；签名未变且 same-unique.png 齐全时整类跳过 */
+    private void refreshUniqueClass(List<Path> cls) throws IOException {
+        String sig = classSig(cls);
+        boolean need = false;
+        for (Path d : cls) {
+            Map<String, Object> info = readInfo(d);
+            if (!Files.isRegularFile(d.resolve(FILE_UNIQUE))
+                || !sig.equals(String.valueOf(info.get("uniqueSig")))
+                || info.get("uniqueCoverage") == null) {   // 旧产物缺独有像素占比字段 → 一并补算
+                need = true;
+                break;
+            }
+        }
+        if (!need) {
+            return;
+        }
+        int[] wh = pngSize(cls.get(0).resolve(FILE_SAME));
+        int w = wh[0];
+        int h = wh[1];
+        // 内存防护：交集图总量超限（同尺寸分类过多或图过大）时本轮跳过且不记录签名，
+        // 之后每轮自动重算会再尝试，避免瞬时峰值内存过高
+        long bytes = 0;
+        for (Path d : cls) {
+            try {
+                bytes += Files.size(d.resolve(FILE_SAME));
+            } catch (IOException ignore) {
+                // 文件刚被重算替换：按 0 计，让签名差异触发下一轮重试
+            }
+        }
+        if (bytes > UNIQUE_CLASS_BYTES_LIMIT) {
+            log.warn("同尺寸交集图共约 {}MB，超过 {}MB 上限，本轮跳过独有交集图刷新",
+                bytes >> 20, UNIQUE_CLASS_BYTES_LIMIT >> 20);
+            return;
+        }
+        int n = w * h;
+        Map<Path, int[]> pxOf = new LinkedHashMap<>();
+        Map<Path, String> stateOf = new HashMap<>();
+        for (Path d : cls) {
+            BufferedImage img = ImageIO.read(d.resolve(FILE_SAME).toFile());
+            if (img == null || img.getWidth() != w || img.getHeight() != h) {
+                log.warn("交集图读取失败/尺寸不一致，跳过该尺寸类的独有交集图刷新：{}", d.getFileName());
+                return;
+            }
+            pxOf.put(d, img.getRGB(0, 0, w, h, null, 0, w));
+            Object st = readInfo(d).get("state");
+            stateOf.put(d, st == null ? "" : String.valueOf(st));
+        }
+        for (Path me : cls) {
+            int[] own = pxOf.get(me);
+            int[] uniq = own.clone();   // 起点 = 交集图本身；命中“其它分类同像素同色”的点逐个清透明
+            String myState = stateOf.get(me);
+            for (Path other : cls) {
+                if (other.equals(me) || myState.equals(stateOf.get(other))) {
+                    continue;   // 同分类标注的其它动作目录不算“其它分类”
+                }
+                int[] op = pxOf.get(other);
+                for (int i = 0; i < n; i++) {
+                    if (uniq[i] == 0) {
+                        continue;                       // 自身交集图透明，或已被判定非独有
+                    }
+                    int oc = op[i];
+                    if (oc != 0 && (oc & 0xffffff) == (uniq[i] & 0xffffff)) {
+                        uniq[i] = 0;                    // 其它分类交集图同位同色 → 非本分类独有
+                    }
+                }
+            }
+            long uniqueCount = 0;                        // 剔完后保留的独有像素数
+            for (int i = 0; i < n; i++) {
+                if (uniq[i] != 0) {
+                    uniqueCount++;
+                }
+            }
+            BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+            out.setRGB(0, 0, w, h, uniq, 0, w);
+            atomicWritePng(out, me.resolve(FILE_UNIQUE));
+            Map<String, Object> info = readInfo(me);
+            info.put("uniqueSig", sig);
+            // 独有像素占全图的比例（百分数值，口径与交集图 coverage 一致：0.5 = 0.5%）
+            info.put("uniqueCoverage", Math.round(uniqueCount * 1000000.0 / n) / 10000.0);
+            atomicWriteJson(me.resolve(FILE_INFO), info);
+        }
+        log.info("独有交集图已刷新：{} 个同尺寸分类（{}×{}）", cls.size(), w, h);
+    }
+
+    /** 尺寸类签名 = 各成员目录“目录名=交集图最后修改时刻”排序后拼接：任一成员更新即变化 */
+    private String classSig(List<Path> cls) {
+        List<String> parts = new ArrayList<>(cls.size());
+        for (Path d : cls) {
+            long m = 0;
+            try {
+                m = Files.getLastModifiedTime(d.resolve(FILE_SAME)).toMillis();
+            } catch (IOException ignore) {
+                // 读取失败按 0 计：签名必变，触发下一轮重算
+            }
+            parts.add(d.getFileName().toString() + "=" + m);
+        }
+        parts.sort(String::compareTo);
+        return String.join("|", parts);
+    }
+
+    /** 轻量读取 PNG 尺寸（只解析文件头，不整图解码） */
+    private int[] pngSize(Path p) {
+        try (ImageInputStream in = ImageIO.createImageInputStream(p.toFile())) {
+            if (in == null) {
+                return null;
+            }
+            Iterator<ImageReader> it = ImageIO.getImageReaders(in);
+            if (!it.hasNext()) {
+                return null;
+            }
+            ImageReader r = it.next();
+            try {
+                r.setInput(in, true, true);
+                return new int[]{r.getWidth(0), r.getHeight(0)};
+            } finally {
+                r.dispose();
+            }
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     /* ---------------------------------------------------------------- 产物工具 */

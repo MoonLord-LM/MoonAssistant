@@ -1,13 +1,6 @@
-target/
-# 三阶段数据目录（旧版单目录 captures/ 迁移后不再产生）
 capture/
 classify/
 summary/
-# 旧版单目录（仅供首次启动自动迁移，迁移完成即空/删除）
-captures/
-# Windows 可执行文件（WindowsCapture.exe 由 native/windowcap/build.bat 本地编译，不入库）
+
 *.exe
 *.log
-.idea/
-*.iml
-.vscode/

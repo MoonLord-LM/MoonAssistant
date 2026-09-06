@@ -285,6 +285,7 @@
   .tcimg img{display:block;max-width:none;cursor:zoom-in}
   .tbar{height:3px;border-radius:2px;background:#242c40;overflow:hidden;margin-top:5px}
   .tbar i{display:block;height:100%;background:var(--green)}
+  .tbar i.full{background:var(--accent)}   /* 交集图覆盖率 100%：满格用蓝色区分，表示样本高度一致 / 无浪费像素 */
   .row .actx{color:var(--amber);font-weight:600;font-size:11px;margin-left:2px}
   .tkstat{font-size:13px;line-height:1.9;margin-bottom:12px}
   .tkstat b{color:var(--text)}
@@ -431,6 +432,10 @@
           <div class="tcimg"><img id="imgSame" alt="交集图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
+          <div class="tch"><span class="tn">same-unique（独有交集图）</span><span class="tcs" id="tcsUnique">—</span></div>
+          <div class="tcimg"><img id="imgUnique" alt="same-unique 独有交集图" title="在交集图基础上删除其它分类交集图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
           <div class="tch"><span class="tn">多数图（每个像素取覆盖率最多的值）</span><span class="tcs" id="tcsMax">—</span></div>
           <div class="tcimg"><img id="imgMax" alt="多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
@@ -571,9 +576,8 @@
   <aside class="exec-side" id="execSide">
     <div class="edsec">
       <div class="edhead">识别结果</div>
-      <div class="kvrow"><span class="k">匹配分组</span><span class="v" id="execMatched">—</span></div>
+      <div class="kvrow" title="当前画面识别命中的分类标注；动作与点击坐标都取自该分类。每个分类在 summary/ 下对应一个比对分组，二者常规同名，故合并为一行展示"><span class="k">匹配分类</span><span class="v" id="execMatched">—</span></div>
       <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
-      <div class="kvrow"><span class="k">分类标注</span><span class="v" id="execState">—</span></div>
       <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
       <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
       <div class="kvrow"><span class="k">差异度</span><span class="v" id="execDiff">—</span></div>
@@ -2015,7 +2019,7 @@ function renderThinkDock(g){
     if(g.canAnalyze){
       cls = "warn";
       text = '「<b>' + escHtml(g.state) + '</b>」样本已达 <b>' + g.sampleCount
-        + ' 张</b>，正在后台合成七张对照图，完成后自动显示在上方。';
+        + ' 张</b>，正在后台合成对照图，完成后自动显示在上方。';
     }else{
       cls = "bad";
       text = '该分类还没有可用的标注截图，无法合成对照图；标注 1 张后会自动生成。';
@@ -2024,9 +2028,10 @@ function renderThinkDock(g){
     cls = "warn";
     text = '样本有变：新增 / 改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
+    const tail = g.hasUnique ? '八张对照图已生成。' : '对照图已生成；same-unique（独有交集图）将在随后的后台重算中补齐。';
     text = g.coverage != null
-      ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，七张对照图已生成。'
-      : '七张对照图已生成。';
+      ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，' + tail
+      : tail;
   }
   b.hidden = false;
   b.className = "thinkbar" + (cls ? " " + cls : "");
@@ -2041,9 +2046,10 @@ function showThinkEmpty(cls, title){
   te.style.display = "flex";
 }
 const THINK_EMPTY = "没有分类标注";
-/* 汇总分析七张对照图（顺序：交集 / 多数 / 均值 / 1-8多数 / 1-32多数 / 1-8均值 / 1-32均值） */
-const IMG_IDS = ["imgSame","imgMax","imgAvg","imgM8","imgM32","imgA8","imgA32"];
-const TCS_IDS = ["tcsSame","tcsMax","tcsAvg","tcsM8","tcsM32","tcsA8","tcsA32"];
+/* 汇总分析对照图（顺序：交集 / 独有交集 / 多数 / 均值 / 1-8多数 / 1-32多数 / 1-8均值 / 1-32均值；
+   八张都参与执行模式比对：独有交集图是第 8 个比对维度，缺失/独有区过小时该图自动跳过、按其余图计分） */
+const IMG_IDS = ["imgSame","imgUnique","imgMax","imgAvg","imgM8","imgM32","imgA8","imgA32"];
+const TCS_IDS = ["tcsSame","tcsUnique","tcsMax","tcsAvg","tcsM8","tcsM32","tcsA8","tcsA32"];
 
 /* ---- 对照图加载容错：快速切换分组时，同一 <img> 连续换 src 会中止上一组在途请求，
    浏览器偶发把中止/瞬时失败残留成裂图（此时服务端文件其实完好——再点裂图在弹窗里能正常加载）。
@@ -2135,7 +2141,8 @@ function renderThinkList(){
       '<span class="actx">' + (ACT_LABEL[g.action] || g.action) + '</span></div>' +
       '<div class="r2">' + extra.replace(/</g,"&lt;") + '</div>' +
       (g.analyzed && !g.stale && g.coverage != null
-        ? '<div class="tbar"><i style="width:' + Math.max(0, Math.min(100, Number(g.coverage))) + '%"></i></div>'
+        ? '<div class="tbar"><i class="' + (Number(g.coverage) >= 100 ? "full" : "") + '" style="width:'
+            + Math.max(0, Math.min(100, Number(g.coverage))) + '%"></i></div>'
         : '');
     li.addEventListener("click", ()=> openGroup(g));
     ul.appendChild(li);
@@ -2180,7 +2187,7 @@ function autoPick(){
 }
 
 /* ---------------- 汇总分析 · 对照图“原图一半”列表排版 ----------------
-   七张图统一按“原图的一半”展示：交集/多数/均值 = 原尺寸平滑缩到 1/2；
+   全幅对照图（交集/独有交集/多数/均值）统一按“原图的一半”展示：原尺寸平滑缩到 1/2；
    1/8、1/32 压缩图按整数倍放大到与半尺寸接近（保留像素锐利），保证一行视觉整齐 */
 let thinkMeta = null;       // { halfW, halfH } 当前组的列表基准尺寸
 
@@ -2263,9 +2270,16 @@ function openGroup(g){
                    ["m8","imgM8","tcsM8", sz8(W) + "×" + sz8(H) + " · 多数"],
                    ["m32","imgM32","tcsM32", sz32(W) + "×" + sz32(H) + " · 多数"],
                    ["a8","imgA8","tcsA8", sz8(W) + "×" + sz8(H) + " · 均值"],
-                   ["a32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"]];
+                   ["a32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"],
+                   ["same-unique","imgUnique","tcsUnique", fmtCov(g.uniqueCoverage)]];   // 独有像素占比，与交集图覆盖率同口径；旧产物尚未补算时为 —
     for(const [kind,imgId,tcsId,label] of kinds){
       const el = $(imgId), card = el.closest(".tcard");
+      if(kind === "same-unique" && !g.hasUnique){
+        // 独有交集图需跨分类对比：本组尚未经包含新产物的那次重算生成 → 先不展示（重新分析或样本变化后自动补齐）
+        $(tcsId).textContent = "";
+        card.style.display = "none";
+        continue;
+      }
       const url = artUrl(kind, g.dir, g.mtime);
       el.src = url;
       armThinkRetry(el, url);                                   // 记录本次加载目标：瞬时失败可按需自动重试
@@ -2324,8 +2338,12 @@ async function pollAnalyze(id){
       t = await r.json();
     }catch(_){ continue; }     // 服务短暂中断则等下一轮
     if(t.status === "running"){
-      $("listCount").textContent = "分析中 " + t.processed + "/" + t.total
-        + (t.current ? " · " + t.current : "");
+      // 后台为单线程串行计算池：任务刚提交 / 排在自动重算等其它分析后面时，total 尚未统计出来（0/0），
+      // 此时只显示“分析中…”，避免把无意义的 0/0 当作卡死；total 确定后再显示真实进度 processed/N
+      $("listCount").textContent = t.total > 0
+        ? "分析中 " + t.processed + "/" + t.total
+            + (t.current ? " · " + t.current : "")
+        : "分析中…";
       continue;
     }
     if(t.status === "error"){ toast(t.message || "分析失败", "err"); return; }
@@ -2434,7 +2452,7 @@ function refreshSmartTip(){
   const file = it.name;
   const seq = ++sugSeq;
   sugStop();
-  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 7 张对照图（交集 / 多数 / 均值 / 1/8、1/32 多尺度）做逐像素差异比对…</span>');
+  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 8 张对照图（交集 / 独有交集 / 多数 / 均值 / 1/8、1/32 多尺度）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
     try{
@@ -2479,11 +2497,11 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类 7 张对照图「不匹配点占比」的均方根 RMS √(Σ占比²/7)（越小越像） */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类各对照图「不匹配点占比」的均方根 RMS √(Σ占比²/图数)（越小越像） */
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
-      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成七张对照图（7 图齐全才会参与比对）。</span>');
+      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（汇总分析完成即可参与比对；独有交集图缺失时自动按其余图计分）。</span>');
     return;
   }
   const top = list[0];
@@ -2504,7 +2522,7 @@ function renderSuggest(list){
       (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 7 张对照图（交集 / 多数 / 均值 / 1/8、1/32 多尺度）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/7)，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 8 张对照图（交集 / 独有交集 / 多数 / 均值 / 1/8、1/32 多尺度）分别同尺度逐点比对，单像素按 RGB 三维距离 ≥ execute 阈值判为「不匹配」，分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/图数)，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；独有交集图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，缺失或区域过小时自动跳过该图；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2917,37 +2935,51 @@ function renderExecAll(){
   if(meta) meta.textContent = (j.imageWidth > 0 && j.imageHeight > 0)
       ? (j.imageWidth + "×" + j.imageHeight) : "—";
 
-  execSetVal("execMatched", j.matchedSample || "—", j.recognized ? "ok" : (j.state ? "err" : ""));
-  execSetVal("execCost", (j.captureMs >= 0 && j.classifyMs >= 0)
-      ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
-
   // 尚无可展示画面且不是已确认的失败：识别一轮在途，或后端只是“还没产生过结果”（占位快照）→ 属等待态
   const idleWait = execPending || String(j.error || "").indexOf("尚未产生识别结果") === 0;
 
-  if(idleWait){
-    execSetVal("execState", "—", "");
-  } else if(j.error && j.imageWidth <= 0 && !j.windowFound){
-    execSetVal("execState", "—", "err");
-  } else if(j.recognized){
-    execSetVal("execState", j.state || "已识别", "ok");
-  } else if(j.state){
-    execSetVal("execState", "未识别 · 最近似「" + j.state + "」", "err");
-  } else {
-    execSetVal("execState", "—", "");
+  // 「匹配分类」= 识别命中的分类标注（state）：动作 / 点击坐标都取自该分类（summary/<分类>/info.json）。
+  // 产物目录常规与分类标注同名（一个分类 = 一个比对分组），为避免同一名字在面板上出现两次，
+  // 只在二者确不相同（历史数据同分类多动作遗留的“<分类>_<action>”目录）时才追加目录名说明。
+  let matchedTxt = "—", matchedCls = "";
+  if(!idleWait && !(j.error && j.imageWidth <= 0 && !j.windowFound)){
+    if(j.recognized){
+      matchedTxt = j.state || "已识别"; matchedCls = "ok";
+    } else if(j.state){
+      matchedTxt = "未识别 · 最近似「" + j.state + "」"; matchedCls = "err";
+    }
   }
+  if(matchedTxt !== "—" && j.state && j.matchedSample && j.matchedSample !== j.state){
+    matchedTxt += "（产物目录 " + j.matchedSample + "）";
+  }
+  execSetVal("execMatched", matchedTxt, matchedCls);
+  // 耗时只在已产生可展示识别结果（命中 / 最近似某分类）时显示；
+  // 首进尚无结果（或本次没比到任何分类）时不亮，保持 —，截图识别完成后随整面板一起刷新
+  execSetVal("execCost", (matchedTxt !== "—" && j.captureMs >= 0 && j.classifyMs >= 0)
+      ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
 
   const clickable = !!(j.recognized && j.action === "click" && Number.isInteger(j.left) && Number.isInteger(j.top));
   if(j.action === "click"){
     execSetVal("execAction", clickable ? "鼠标点击" : "鼠标点击（坐标缺失，请回标注模式修正）", clickable ? "ok" : "err");
-  } else {
+  } else if(matchedTxt !== "—"){
+    // 「无动作」来自该分类的定义：只有确实命中 / 最近似某分类时才展示；
+    // 尚未识别出分类（占位快照 / 无可比分类 / 识别失败）时保持 —，避免无依据的“无动作”
     execSetVal("execAction", "无动作", "");
+  } else {
+    execSetVal("execAction", "—", "");
   }
   execSetVal("execPos", clickable ? "(" + j.left + ", " + j.top + ")" : "—");
   execSetVal("execDiff", (typeof j.bestDiffPercent === "number" && j.bestDiffPercent >= 0)
       ? (j.bestDiffPercent.toFixed(2) + "%" + (j.recognized ? "（达标）" : "（超阈值）")) : "—",
       j.recognized ? "ok" : (j.state ? "err" : ""));
-  execSetVal("execSamples", "已比对 " + (j.scannedSamples || 0) + " / 全部 " + (j.totalSamples || 0) + " 个分类",
-      j.scannedSamples > 0 && j.totalSamples > j.scannedSamples ? "err" : "");
+  if((j.totalSamples || 0) > 0){
+    // 存在可比的分类总数时才显示分组进度；一个分类都没有（首次进入尚无产物）时保持 —，
+    // 否则“已比对 0 / 全部 0 个分类”是无意义的无效信息
+    execSetVal("execSamples", "已比对 " + (j.scannedSamples || 0) + " / 全部 " + j.totalSamples + " 个分类",
+        j.scannedSamples > 0 && j.totalSamples > j.scannedSamples ? "err" : "");
+  } else {
+    execSetVal("execSamples", "—", "");
+  }
   execSetVal("execWin", j.windowFound
       ? (j.windowTitle || "已找到窗口")
       : (idleWait ? "正在识别（尚未产生结果）…" : (j.error || "未找到目标窗口")),
@@ -3018,7 +3050,7 @@ function renderExecCandidates(list){
   const box = $("execCandidates"); if(!box) return;
   box.innerHTML = "";
   if(!list || !list.length){
-    box.innerHTML = '<div class="hint">暂无可用比对分组：请在标注模式为每个分类保存 ≥1 张同尺寸样本，并到「汇总分析」生成对照图（7 图齐全才会参与识别）。</div>';
+    box.innerHTML = '<div class="hint">暂无可用比对分组：请在标注模式为每个分类保存 ≥1 张同尺寸样本，并到「汇总分析」生成对照图（汇总分析完成即可参与识别）。</div>';
     return;
   }
   const done = execShownMarked;
@@ -3054,19 +3086,21 @@ function renderExecCandidates(list){
   });
 }
 
-/* ---- 7 图分值明细弹层：某候选分类 summary 产物目录里 7 张对照图各自的分值 ---- */
+/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（含独有交集图）的分值 ---- */
 function openKindScores(it){
   if(!it || !Array.isArray(it.kinds) || !it.kinds.length){
-    toast("该候选缺少 7 图分值明细（服务端版本过旧或未参与比对）", "err");
+    toast("该候选缺少对照图分值明细（未参与比对）", "err");
     return;
   }
   if($("kindScoreModal")) $("kindScoreModal").remove();
-  const zh = { same:"交集图（全部样本公共区）", max:"逐像素多数合成", avg:"逐像素均值合成",
+  const zh = { same:"交集图", "same-unique":"same-unique（独有交集图）",
+               max:"逐像素多数合成", avg:"逐像素均值合成",
                m8:"8×8 块 · 多数色", a8:"8×8 块 · 均值色", m32:"32×32 块 · 多数色", a32:"32×32 块 · 均值色" };
   const rows = it.kinds.map(ks => {
     const nm = zh[ks.kind] || ks.kind;
+    const isBlock = ks.kind === "m8" || ks.kind === "a8" || ks.kind === "m32" || ks.kind === "a32";
     const grid = (typeof ks.w === "number" && ks.w > 0 && typeof ks.h === "number" && ks.h > 0)
-        ? (ks.kind === "same" ? "产物尺寸 " : "块网格 ") + ks.w + "×" + ks.h : "—";
+        ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
         ? '<b style="color:' + (ks.score <= 25 ? "var(--green)" : "#e0a04e") + '">' + ks.score.toFixed(2) + "%</b>"
         : '<span style="color:#778">跳过</span>';

@@ -12,7 +12,7 @@ import java.nio.file.Paths;
  * <pre>
  *   capture/   捕获的原始截图（未标注）
  *   classify/  标注后的截图 + 同名 .json 标注数据
- *   summary/   汇总分析产物：&lt;分类标注&gt;/ 下七张对照图 + info.json
+ *   summary/   汇总分析产物：&lt;分类标注&gt;/ 下八张对照图（含独有交集图）+ info.json
  * </pre>
  *
  * <p>均以进程工作目录为基准取绝对路径，便于直接查看/备份数据目录。</p>
