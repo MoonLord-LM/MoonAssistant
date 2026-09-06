@@ -55,8 +55,7 @@ import java.util.stream.Stream;
  * 独有区图没有任何独有像素时同样按 0 计（有 ≥1 个独有点就按实测占比计）；
  * 只有全部 14 张都不可比时才剔除该目录）。
  * 不同分类按各自的 RMS 比较，最小者即为最近似分类。
- * 仅当最近似 RMS ≤ {@code execute.match-threshold-percent}（默认 25%）时才判定为「已识别」，
- * 否则视为未识别画面（最近似分类仅作参考展示）。
+ * 执行以最近似分类为准、不设识别阈值门槛：差异度（RMS）仅作参考展示（越小表示画面越接近该分类的样本）。
  *
  * <p>坐标可靠性：整个工程靠 resize 把窗口/截图尺寸强制对齐到与标注样本一致，summary 产物
  * 与当前画面天然等尺寸、像素一一对应，因此命中分类记录在 info.json 里的点击坐标可直接用于执行动作。
@@ -146,8 +145,11 @@ public class FrameClassifier {
             "major32.png", "major32-unique.png",
             "avg32.png", "avg32-unique.png");
 
-    /** 产物像素缓存的 LRU 容量上限，防止分类数量膨胀时内存失控。 */
-    private static final int MAX_CACHE = 400;
+    /** 产物像素缓存的 LRU 容量上限。每轮识别会顺序扫描 summary/ 下全部产物（当前 48 个分类 × 14 张 ≈ 672 张），
+     *  容量小于产物总数时 LRU 会把本轮扫过的图挤出，导致下一轮重新 ImageIO.read 解码数百张 PNG（一次约数十~百毫秒/张），
+     *  识别被拖到十几秒。容量需明显大于典型产物总量才无需每轮重解码；2000 张 ≈ 当前产物数（约 672）的 3 倍余量，
+     *  按全幅抽样 + 块图降采样后估算全部常驻约数百 MB 堆，注意与 JVM -Xmx 匹配。 */
+    private static final int MAX_CACHE = 2000;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -177,7 +179,7 @@ public class FrameClassifier {
 
     /** 识别输出（内部使用，ExecutionService 负责把它转成对外 Snapshot）。 */
     public static final class Outcome {
-        /** 是否「已识别」：最近似分类的差异度（RMS）≤ 阈值。 */
+        /** 是否已有可参考的最近似分类（有分类参与比对并得出最近似结果即为 true；已不再用差异度阈值区分已识别/未识别）。 */
         public boolean recognized;
         /** 最近似分类标注（未识别时也填最近似结果，便于界面展示参考）。 */
         public String bestState;
@@ -324,7 +326,8 @@ public class FrameClassifier {
             out.action = top.action;
             out.clickLeft = top.clickLeft;
             out.clickTop = top.clickTop;
-            out.recognized = top.diff <= executeProperties.getMatchThresholdPercent();
+            // 已去掉识别阈值门槛：只要有可比的最近似分类即视为可用（差异度仅作展示，不再判已识别/未识别）
+            out.recognized = true;
         }
         out.elapsedMs = System.currentTimeMillis() - t0;
         if (log.isDebugEnabled()) {

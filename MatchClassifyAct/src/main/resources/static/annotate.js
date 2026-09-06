@@ -1991,23 +1991,21 @@ function renderSuggest(list){
   }
   const top = list[0];
   const pct = (typeof top.diffPercent === "number") ? top.diffPercent.toFixed(2) + "%" : "—";
-  const thr = (typeof top.thresholdPercent === "number") ? top.thresholdPercent.toFixed(0) + "%" : "25%";
-  const ok = !!top.recognized;
+  // 识别已不设阈值门槛（与执行模式一致）：差异度仅作相近程度参考，不再按阈值区分「已识别 / 未识别」
   const actTxt = (top.action && top.action !== "none") ? "（" + escHtml(actLabel(top.action)) + "）" : "";
   const cands = list.slice(0, 3)
     .map(g => '<b>' + escHtml(g.state) + '</b> ' +
         ((typeof g.diffPercent === "number") ? g.diffPercent.toFixed(2) + "%" : "—"))
     .join('　·　');
-  const lowNote = ok ? "" :
-    '<div style="margin-top:6px">差异度超阈值（&gt;' + thr + '）：与执行模式判定一致，该画面属于「未识别」——多半是还没有对照样本的新画面，直接人工标注即可把它归入对应分类的样本池。</div>';
+  const lowNote =
+    '<div style="margin-top:6px">差异度越低表示该画面与该分类的样本越接近；若差异度明显偏高，多半是还没有对照样本的新画面——直接人工标注即可把它归入对应分类的样本池。</div>';
   sugRender(
     '<span class="sb-title">智能分析</span>' +
     '<span class="sug">建议分类标注：<b>「' + escHtml(top.state) + '」</b>' + actTxt +
-      ' <span style="color:' + (ok ? "var(--green)" : "#e0a04e") + '">差异度 ' + pct +
-      (ok ? '（≤' + thr + ' 达标）' : '（&gt;' + thr + ' 未达标）') + '</span></span>' +
+      ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；≤ execute 识别阈值判为「已识别」，超阈值判「未识别」；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图 + 各自 -unique 独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 各图「不匹配点占比」的均方根 RMS（√(Σ占比²/14)，固定按 14 张图归一，越小越像；任一张图差得远都会抬高总分）；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；-unique 独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2439,9 +2437,10 @@ function renderExecAll(){
   }
   execSetVal("execMatched", matchedTxt, matchedCls);
   // 耗时只在已产生可展示识别结果（命中 / 最近似某分类）时显示；
-  // 首进尚无结果（或本次没比到任何分类）时不亮，保持 —，截图识别完成后随整面板一起刷新
+  // 首进尚无结果（或本次没比到任何分类）时不亮，保持 —，截图识别完成后随整面板一起刷新。
+  // captureMs = 整轮（截图+识别+组装）总耗时，classifyMs = 其中纯识别比对耗时，主值括号标注识别子项更科学
   execSetVal("execCost", (matchedTxt !== "—" && j.captureMs >= 0 && j.classifyMs >= 0)
-      ? ("截图 " + j.captureMs + " ms / 识别 " + j.classifyMs + " ms") : "—");
+      ? (j.captureMs + " ms（识别 " + j.classifyMs + " ms）") : "—");
 
   // 动作/坐标取自最近似分类定义，可点与否不再受“识别阈值”门禁（差异分值仅作参考）；
   // 分类定义了鼠标点击且有坐标即可展示执行，仅产物确无坐标时才提示回标注模式补齐
