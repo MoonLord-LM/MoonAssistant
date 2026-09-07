@@ -33,6 +33,10 @@
 <main class="layout mark-only">
   <aside class="sidebar">
     <div class="listhead"><span id="lstTitle">截图列表（按时间）</span><span id="listCount"></span></div>
+    <div class="thinkfil" id="thinkFil" hidden title="按匹配动作过滤分类列表：点击切换，再点已选中的按钮恢复全部">
+      <button type="button" data-a="none">无动作</button>
+      <button type="button" data-a="click">鼠标点击</button>
+    </div>
     <ul id="imgList"></ul>
   </aside>
 
@@ -59,12 +63,24 @@
       </div>
       <div id="thinkPane" style="display:none">
         <div class="tcard">
-          <div class="tch"><span class="tn">交集图（每个像素取覆盖大于90%的值）</span><span class="tcs" id="tcsSame">—</span></div>
-          <div class="tcimg"><img id="imgSame" alt="交集图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+          <div class="tch"><span class="tn">交集图 90% 主档（每个像素取覆盖≥90%的值，参与识别）</span><span class="tcs" id="tcsSame">—</span></div>
+          <div class="tcimg"><img id="imgSame" alt="交集图90%" title="交集图主档：覆盖≥90% 的样本公共画面，参与识别比对与独有区互比；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
-          <div class="tch"><span class="tn">交集图独有区</span><span class="tcs" id="tcsUnique">—</span></div>
-          <div class="tcimg"><img id="imgUnique" alt="交集图独有区图" title="在交集图基础上删除其它分类交集图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+          <div class="tch"><span class="tn">交集图 90% 独有区</span><span class="tcs" id="tcsUnique">—</span></div>
+          <div class="tcimg"><img id="imgUnique" alt="交集图独有区图" title="在交集图 90% 主档基础上删除其它分类交集图(90%)同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">交集图 80% 展示档（覆盖≥80%，仅目检）</span><span class="tcs" id="tcsSame80">档位 ≥80%</span></div>
+          <div class="tcimg"><img id="imgSame80" alt="交集图80%" title="交集图展示档：放宽到覆盖≥80% 的公共画面，仅供人工目检，不参与识别与独有区互比；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">交集图 70% 展示档（覆盖≥70%，仅目检）</span><span class="tcs" id="tcsSame70">档位 ≥70%</span></div>
+          <div class="tcimg"><img id="imgSame70" alt="交集图70%" title="交集图展示档：放宽到覆盖≥70% 的公共画面，仅供人工目检，不参与识别与独有区互比；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">交集图 60% 展示档（覆盖≥60%，仅目检）</span><span class="tcs" id="tcsSame60">档位 ≥60%</span></div>
+          <div class="tcimg"><img id="imgSame60" alt="交集图60%" title="交集图展示档：放宽到覆盖≥60% 的公共画面，仅供人工目检，不参与识别与独有区互比；单击打开弹窗"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">多数图（每个像素取覆盖率最多的值）</span><span class="tcs" id="tcsMax">—</span></div>
@@ -114,13 +130,21 @@
           <div class="tch"><span class="tn">1/32 均值图独有区</span><span class="tcs" id="tcsA32U">—</span></div>
           <div class="tcimg"><img id="imgA32U" alt="1/32 均值图独有区图" title="在 1/32 均值图基础上删除其它分类 1/32 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">点击区 1/8 交集图（以点击坐标为中心的方框）</span><span class="tcs" id="tcsC8">—</span></div>
+          <div class="tcimg"><img id="imgC8" alt="点击区1/8交集图" title="以本分类统一点击坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），聚焦要点击的位置；框中心固定不向画幅内收敛，越出画面的部分为透明；仅点击动作分类生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">点击区 1/32 交集图（以点击坐标为中心的方框）</span><span class="tcs" id="tcsC32">—</span></div>
+          <div class="tcimg"><img id="imgC32" alt="点击区1/32交集图" title="以本分类统一点击坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22）；框中心固定不向画幅内收敛，越出画面的部分为透明；仅点击动作分类生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
       </div>
       <div id="thinkEmpty"><b id="teTitle"></b></div>
-      <div class="sugdock" id="smartDock">
-        <button type="button" class="dismiss" id="dockX" title="收起本图的智能分析提示（图片保持当前显示大小）" hidden>✕</button>
-        <div class="smartbar" id="smartBar" hidden></div>
-        <div class="thinkbar" id="thinkBar" hidden></div>
-      </div>
+    </div>
+    <div class="sugdock" id="smartDock">
+      <button type="button" class="dismiss" id="dockX" title="收起本图的智能分析提示（图片保持当前显示大小）" hidden>✕</button>
+      <div class="smartbar" id="smartBar" hidden></div>
+      <div class="thinkbar" id="thinkBar" hidden></div>
     </div>
   </section>
 
@@ -181,7 +205,7 @@
     <div class="edHead">
       <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
       <button type="button" class="btn" id="btnRebuild" style="margin-left:auto;font-size:12px"
-        title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类的 14 张对照图（历史遗留的旧文件一并清除）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
+        title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类适用的对照图（10 张基础合成图含交集 90/80/70/60 四档 + 7 张独有区图，点击动作分类另含 2 张点击区交集图；交集 80/70/60 为仅目检展示档；历史遗留的旧文件一并清除）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
     </div>
     <div class="tkstat" id="tkInfo" style="margin-top:10px">左侧选择分类标注查看对照图。</div>
     <div id="tkExplain" style="margin-top:4px;font-size:12px;color:var(--muted);line-height:1.8"></div>
@@ -191,7 +215,7 @@
     <div class="edHead">
       <h3 style="margin:0;font-size:14px">分类标签</h3>
     </div>
-    <div class="fHint">「全部」视图用于浏览与筛选：点分类的「文本」或「数字」都让左侧只显示该分类（再点一次取消过滤）；点「✎」重命名；点「全部」chip 显示全部截图。若要把某张图设定为分类标注，先在左侧选中该图，再点下方「修改这张图的标记」。</div>
+    <div class="fHint">「全部」视图用于浏览与筛选：点分类的「文本」或「数字」都让左侧只显示该分类（再点一次取消过滤）；点「✎」重命名。若要把某张图设定为分类标注，先在左侧选中该图，再点下方「修改这张图的标记」。</div>
     <div class="cats" id="catList"></div>
   </div>
 
@@ -237,7 +261,7 @@
       <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
       <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
       <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
-      <div class="kvrow" title="最近似分类 14 张对照图不匹配占比的加权平均（独有交集×50 + 交集×30 + 其余 12 张平均×20，再 ÷100；0~100），越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
+      <div class="kvrow" title="最近似分类对照图不匹配占比的加权平均（独有交集×50 + 交集×30 + 其余可判成员平均×20，再 ÷100；点击动作分类的「其余成员」含 2 张点击区交集图，缺失维度不参与平均；0~100），越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
       <div class="kvrow"><span class="k">比对分组</span><span class="v" id="execSamples">—</span></div>
       <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
     </div>

@@ -46,9 +46,10 @@ public class CaptureProperties {
 
     /**
      * 汇总分析产物保存目录（相对程序运行目录）：每个分类标注一个子目录，
-     * 内含 14 张对照图（7 张基础图 same / max / avg / major8 / avg8 / major32 / avg32
-     * + 各自 -unique 独有区图）与 info.json；
-     * 样本取自 classifyDir，可随时整目录删除后重算。
+     * 内含对照图（交集 90 主档 + 80/70/60 展示档 + 多数/均值/8·32 块图共 10 张基础合成图；
+     * 主档交集与其余 6 张核心基础图各带 -unique 独有区图，共 7 张；
+     * 点击动作且有坐标的分类另有 2 张点击区交集图；交集 80/70/60 展示档仅目检、不参与识别）
+     * 与 info.json；样本取自 classifyDir，可随时整目录删除后重算。
      */
     private String summaryDir = "summary";
 

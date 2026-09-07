@@ -125,9 +125,9 @@
   .btn.exit:hover{background:var(--danger);color:#fff}
   .btn.log{border-color:rgba(96,165,250,.4);color:var(--accent);background:rgba(79,140,255,.06)}
   .btn.log:hover{background:rgba(79,140,255,.18)}
-  /* 右侧「重新生成全部」重建入口：蓝色描边 */
-  #btnRebuild{border-color:var(--accent);color:var(--accent);background:rgba(79,140,255,.08)}
-  #btnRebuild:hover{background:rgba(79,140,255,.22)}
+  /* 「重新生成全部」重建入口 + 「使用上次标记」：白字白描边，便于在深色面板上辨认 */
+  #btnRebuild,#btnLast{border-color:rgba(255,255,255,.85);color:#fff;background:rgba(255,255,255,.07)}
+  #btnRebuild:hover,#btnLast:hover{background:rgba(255,255,255,.18)}
   .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
   .btn.cap.on{border-color:rgba(47,191,113,.65);color:var(--green);background:rgba(47,191,113,.12);font-weight:600}
   .btn.cap.on:hover{background:var(--green);color:#04120a}
@@ -136,6 +136,11 @@
   .layout{display:flex;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0}
   .sidebar{width:318px;flex:none;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
   .listhead{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
+  .thinkfil{display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border)}
+  .thinkfil[hidden]{display:none}
+  .thinkfil button{font-size:11.5px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);cursor:pointer;white-space:nowrap}
+  .thinkfil button:hover{border-color:#3a4560;color:var(--text)}
+  .thinkfil button.on{background:var(--accent);border-color:var(--accent);color:#fff}
   #imgList{flex:1;overflow:auto;margin:0;padding:6px;list-style:none}
   .row{padding:8px 10px;border-radius:8px;border:1px solid transparent;cursor:pointer;margin-bottom:3px}
   .row:hover{background:var(--panel2)}
@@ -147,7 +152,7 @@
   .chip.u{color:var(--amber);background:rgba(240,168,60,.12)}
   .row .r2{color:var(--muted);font-size:12px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .empty{padding:24px 12px;text-align:center;color:var(--muted);font-size:13px}
-  .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative}   /* 底部 dock 浮层以本容器为锚点，不随内部滚动区（.imgarea）一起滚动 */
   .stagebar{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)}
   .stagebar .fname{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
   .stagebar .sub{color:var(--muted);font-size:12px}
@@ -271,16 +276,19 @@
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
   .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
   .sb-btn:hover{background:var(--accent);color:#fff}
-  /* 汇总分析 · 对照图卡片：按“原图一半”对齐的网格（列宽由 openGroup 按组分辨率动态设定） */
+  /* 汇总分析 · 对照图卡片：按“原图一半”对齐的网格（列宽由 openGroup 按组分辨率动态设定）。
+     网格本身带 min-width:0 滚动（在主图区 imgarea 内纵向滚），容器不够高时不压缩图、加滚动条 */
   #thinkPane{display:none;gap:12px;align-content:start;justify-content:center;width:100%;padding:12px;margin:0}
   #thinkPane.g{display:grid}
-  .tcard{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#000}
+  .tcard{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#000;min-width:0}
   .tch{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:12px}
   .tch .tn{flex:1 1 auto;min-width:150px;line-height:1.45}
   .tch .tcs{color:var(--amber);font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap}
-  .tcimg{display:flex;align-items:center;justify-content:center;padding:8px;min-height:110px;
+  .tcimg{display:flex;align-items:center;justify-content:center;padding:8px;min-height:110px;min-width:0;max-width:100%;
          background-color:#0e1320;background-image:repeating-conic-gradient(#131a29 0% 25%,#0a0e16 0% 50%);background-size:16px 16px}
-  .tcimg img{display:block;max-width:none;cursor:zoom-in}
+  /* 图强制按长宽比完整展示：无论加载到多大都不得超出卡片内容宽被 overflow:hidden 裁掉；
+     尺寸目标仍由 JS 定为“原图一半”，仅在空间不足时等比缩小以完整容纳 */
+  .tcimg img{display:block;max-width:100%;min-width:0;height:auto;cursor:zoom-in}
   .tbar{height:3px;border-radius:2px;background:#242c40;overflow:hidden;margin-top:5px}
   .tbar i{display:block;height:100%;background:var(--green)}
   .tbar i.full{background:var(--accent)}   /* 交集图覆盖率 100%：满格用蓝色区分，表示样本高度一致 / 无浪费像素 */
@@ -298,12 +306,10 @@
   /* 智能提示浮层展开期间，「汇总分析」的对照图网格底部多留一块空间，
      最后一行内容不会被浮条盖住（网格不缩小、仅在其下留白） */
   body.sugdock-on #thinkPane{padding-bottom:72px}
-  /* 「全部」视图右栏 = 按分类过滤（标注编辑仅用于「未标注 / 已标注」视图） */
+  /* 「全部」视图右栏 = 按分类过滤（标注编辑仅用于「未标注 / 已标注」视图）。
+     不加 justify-content 覆盖，让右栏内容整体垂直居中、与标注视图一致；「修改这张图」紧随分类过滤之下 */
   .fHint{color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px}
   .cats{display:flex;flex-wrap:wrap;gap:6px}
-  /* 「全部」视图：右栏内容从顶部顺序排布；「修改这张图」入口紧跟在下方分类过滤标签之后
-     （不吸底贴右下角，避免被右下角的提示消息遮挡） */
-  aside.editor.jump-mode{justify-content:flex-start}
   #edJump{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)}
   #edJump .jbtn{width:100%}
   /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率 */

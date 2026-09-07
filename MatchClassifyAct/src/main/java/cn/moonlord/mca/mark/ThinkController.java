@@ -23,18 +23,23 @@ import java.util.Map;
 
 /**
  * 汇总分析（同「分类标注（state）+ 匹配动作」截图像素分析）展示接口：
- * 生成 14 张对照图供人工目检——7 张基础合成图（交集 same / 多数 max / 均值 avg /
- * major8·avg8·major32·avg32 块降采样）加每张对应的 -unique 独有区图
- * （same-unique / max-unique / avg-unique / major8-unique·avg8-unique·major32-unique·avg32-unique）；
- * 独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，是跨分类产物、等全部分组的
- * 7 张基础图生成完后才统一计算，并与基础图一起构成 14 个固定比对维度参与执行模式 / 智能分析的匹配。
+ * 生成对照图供人工目检——交集图按覆盖率阈值分 90/80/70/60 四档（90 为主档），连同
+ * 多数 max / 均值 avg / major8·avg8·major32·avg32 块降采样共 10 张基础合成图；
+ * 主档交集图与其余 6 张核心基础图各对应一张 -unique 独有区图
+ * （same90-unique / max-unique / avg-unique / major8-unique·avg8-unique·major32-unique·avg32-unique）；
+ * 交集图 80/70/60 三档为仅目检展示档，无独有区图。
+ * 点击动作且有坐标的分类另生成 2 张点击区交集图（click8-same / click32-same，以点击坐标为中心的
+ * 1/8、1/32 方框交集小图）。独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，
+ * 是跨分类产物、等全部分组的 7 张核心基础图生成完后才统一计算，并与核心基础图一起构成固定比对维度
+ * 参与执行模式 / 智能分析的匹配（交集 80/70/60 展示档不参与识别，点击区交集图无 -unique 版、
+ * 也不参与独有区互比）。
  *
  * <pre>
- *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir）
- *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下七图，随后补 -unique 独有区图）
+ *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir / 是否有点击区交集图 hasClick）
+ *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下十图与点击区图，随后补 -unique 独有区图）
  *   POST /api/annotate/think/rebuild                        一键重建：清空 summary/ 全部产物后全量重算 → {taskId}
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 14 图之一：same|same-unique|max|max-unique|avg|avg-unique|major8|major8-unique|avg8|avg8-unique|major32|major32-unique|avg32|avg32-unique；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 图之一：same90|same90-unique|same80|same70|same60|max|max-unique|avg|avg-unique|major8|major8-unique|avg8|avg8-unique|major32|major32-unique|avg32|avg32-unique|click8-same|click32-same；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */
@@ -103,7 +108,7 @@ public class ThinkController {
         return ResponseEntity.ok(t);
     }
 
-    /** 读取分析产物 PNG（kind = 14 图之一，与类头说明一致；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
+    /** 读取分析产物 PNG（kind = 类头 19 种图之一；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
     @GetMapping("/img/{kind}")
     public ResponseEntity<?> image(@PathVariable String kind, @RequestParam String dir) {
         String folder = decodeDir(dir);

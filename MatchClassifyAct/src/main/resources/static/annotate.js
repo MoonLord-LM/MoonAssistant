@@ -230,53 +230,50 @@ async function loadList(preferName){
   ALL = arr;
   try{ DEF = await fetchDefs(); }catch(_){ /* 列表优先，定义表下次刷新再试 */ }
   rebuildStates();
-  if(ALL.length===0){ renderList(); showEmpty(); return; }
-  let target = preferName ? itemOf(preferName) : null;
-  if(!target){ const um = ALL.find(i=>!i.marked); target = um || ALL[0]; }
-  selectTarget(target.name);
+  const L = listNow();
+  // 当前视图可见列表：未标注视图只含未打标截图
+  let target = null;
+  if(preferName && L.some(i => i.name === preferName)) target = preferName;
+  // 视图内无偏好项才取视图首项
+  if(!target && L.length) target = L[0].name;
+  // 本视图无内容则只显示空态，不回退到其他视图的图
+  if(!target){ renderList(); showEmpty(); return; }
+  selectTarget(target);
 }
 
-/* ---------------- 分类标签 chip：未标注 / 已标注 / 全部 三处共用同一结构、样式与交互 ----------------
+/* ---------------- 分类标签 chip：未标注 / 已标注 编辑区与「全部」视图分类列共用同一结构、样式与交互 ----------------
    一个 chip 分三个可点区域：✎ = 整体重命名；数字 = 按该分类过滤左列表
-   （「全部 / 已标注」过滤均在本视图内进行；「未标注」点数字转「全部」查看）；文本 = 全部过滤 / 未标注、已标注“选中作为设定”。
+   （「全部 / 已标注」过滤均在本视图内进行；「未标注」点数字转「全部」查看）；文本 = 「全部」视图按分类过滤 / 未标注、已标注“选中作为设定”。
    高亮：on（绿）= 文本已被选为当前分类标注；fil（蓝）= 列表正按该分类过滤。 */
 function makeTagChip(box, state, count, o){
   const t = document.createElement("span");
   t.className = "tag";
   if(o && o.sel) t.classList.add("on");
   if(o && o.fil) t.classList.add("fil");
-  const label = state === null ? "全部" : state;
   const txt = document.createElement("span");
   txt.className = "txt";
-  txt.textContent = label;
-  txt.title = state === null
-    ? "当前未按分类过滤，点此保持显示全部截图"
-    : (FILTER === "all"
-      ? "让左侧只显示「" + state + "」分类的截图（再点一次取消过滤；与点数字一致）"
-      : "把当前图片的分类标注设为「" + state + "」（自动带出该分类统一的动作与点击坐标）");
+  txt.textContent = state;
+  txt.title = FILTER === "all"
+    ? "让左侧只显示「" + state + "」分类的截图（再点一次取消过滤；与点数字一致）"
+    : "把当前图片的分类标注设为「" + state + "」（自动带出该分类统一的动作与点击坐标）";
   const n = document.createElement("span");
   n.className = "cnt";
   n.textContent = count;
-  n.title = state === null
-    ? ("共 " + count + " 张截图，点此取消过滤显示全部")
-    : (count + " 张已标注截图在使用该分类；点此让左侧列表只显示该分类");
+  n.title = count + " 张已标注截图在使用该分类；点此让左侧列表只显示该分类";
   t.appendChild(txt);
   t.appendChild(n);
-  if(state !== null){
-    const ed = document.createElement("button");
-    ed.type = "button";
-    ed.className = "ed";
-    ed.title = "整体重命名该分类：样本、产物目录与动作定义一并迁移";
-    ed.setAttribute("aria-label", "整体重命名分类 " + state);
-    ed.textContent = "✎";
-    ed.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      startRenameTag(state, t);
-    });
-    t.appendChild(ed);
-  }
+  const ed = document.createElement("button");
+  ed.type = "button";
+  ed.className = "ed";
+  ed.title = "整体重命名该分类：样本、产物目录与动作定义一并迁移";
+  ed.setAttribute("aria-label", "整体重命名分类 " + state);
+  ed.textContent = "✎";
+  ed.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    startRenameTag(state, t);
+  });
+  t.appendChild(ed);
   txt.addEventListener("click", ()=> {
-    if(state === null){ goFilter(null); return; }        // 「全部」chip：取消过滤，显示全部截图
     if(FILTER === "all"){ goFilter(state); return; }     // 「全部」视图：点文本与点数字一致 = 按该分类过滤
     setAsLabel(state);                                    // 未标注 / 已标注视图：把该分类设为当前图标注
   });
@@ -560,13 +557,12 @@ function renderList(){
   refreshJumpBar();   // 「全部」视图底部「修改这张图」入口随当前图/选中态刷新
 }
 
-/* ---------------- 「全部」视图：分类标签（文本=设定当前图标注；数字=过滤；✎=重命名） ---------------- */
+/* ---------------- 「全部」视图：分类标签（点文本或数字 = 按该分类过滤，再点一次取消；✎=重命名） ---------------- */
 function renderFilterPanel(){
   const box = $("catList"); if(!box) return;
   const counts = new Map();
   for(const i of ALL){ if(i.marked && i.state) counts.set(i.state, (counts.get(i.state)||0)+1); }
   box.innerHTML = "";
-  makeTagChip(box, null, ALL.length, { fil: stateFilter === null });   // 「全部」：高亮 = 当前未按分类过滤
   for(const s of [...counts.keys()].sort((a,b)=>a.localeCompare(b,"zh"))){
     makeTagChip(box, s, counts.get(s), { fil: stateFilter === s });    // 高亮 = 列表正按该分类过滤
   }
@@ -599,7 +595,6 @@ function setStateFilter(state){
 /* 点标签“文本”：把该分类设为当前图片的分类标注（“选中作为设定”）。
    未标注/已标注视图直接填入编辑器并带出该分类统一动作/坐标；「全部」视图先跳到该图所属编辑视图再填入。 */
 function setAsLabel(state){
-  if(state === null){ goFilter(null); return; }
   if(!cur()){ toast("请先在左侧选择一张图片，再点标签文本设定分类标注。", "warn"); return; }
   if(FILTER === "unmarked" || FILTER === "marked"){ adoptCategory(state); return; }
   if(FILTER === "all" && jumpToEdit()){ adoptCategory(state); }
@@ -642,8 +637,6 @@ function syncRightPanel(){
   $("edNorm").style.display = (FILTER === "unmarked" || FILTER === "marked") ? "" : "none";
   $("edFilter").style.display = FILTER === "all" ? "" : "none";
   $("edJump").style.display = FILTER === "all" ? "" : "none";
-  const ed = document.querySelector("aside.editor");
-  if(ed) ed.classList.toggle("jump-mode", FILTER === "all");   // all：内容置顶、「修改这张图」紧随分类过滤之下
   if(FILTER === "all") renderFilterPanel();
   refreshJumpBar();
 }
@@ -693,7 +686,14 @@ function showEmpty(msg){
   $("placeholder").style.display = "";
   showZoomCtl(false);
   resetZoom();
-  $("placeholder").textContent = msg || "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。";
+  // 默认文案按当前视图给，调用方传 msg 时以其为准
+  $("placeholder").textContent = msg || (ALL.length
+    ? (FILTER === "unmarked"
+      ? "没有待标注的截图：列表里的图片都已打上分类标注。可切到「已标注」复核，或开启截图任务采集新图。"
+      : FILTER === "marked"
+        ? "还没有已标注的截图：到「未标注」给截图打上分类标注后即会出现在这里。"
+        : "当前视图下暂无可显示的截图。")
+    : "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。");
   $("fname").textContent = ""; $("fsub").textContent = ""; $("imgDims").textContent = "";
   $("stateInput").value = ""; setAction("none"); px=null; renderDot();
   updateTagActive();
@@ -977,13 +977,15 @@ function setEditorEnabled(on){
   document.querySelectorAll('#edNorm input[name="action"]').forEach(r => { r.disabled = !on; });
 }
 
-/* 保存后取当前列表视觉顺序的下一张（全部 / 已标注 = 最新在上；未标注 = 最旧在上）；
-   未标注视图下走到末尾 = 全部标记完 → 清空画面并把右侧编辑按钮置灰 */
+/* 保存后取当前列表视觉顺序的下一张（全部 / 已标注 = 最新在上；未标注 = 最旧在上）。
+   未标注视图：保存后该图已移出列表，仍有剩余未标注就继续下一张，列表真空才提示全部标记完 */
 function advanceAfterSave(item){
   const L = listNow();
   const p = L.findIndex(i => i.name === item.name);
-  // p>=0 直接下一行；p<0 仅发生在未标注视图（保存后该图已移出列表，列表仍为升序）→ 按名称找更晚的下一张
-  const np = p >= 0 ? p + 1 : L.findIndex(i => i.name > item.name);
+  // p>=0 直接下一行；p<0 仅发生在未标注视图：优先找名字更晚的一张，
+  // 已是最晚但仍剩更旧未标注时回到列表头，避免把“下方还有”误判成全部完成
+  let np = p >= 0 ? p + 1 : L.findIndex(i => i.name > item.name);
+  if(p < 0 && np < 0 && L.length) np = 0;
   if(np >= 0 && np < L.length){
     selectTarget(L[np].name);
     const li = $("imgList").children[np]; if(li) li.scrollIntoView({block:"nearest"});
@@ -1131,9 +1133,9 @@ function navStep(d){
   const li = $("imgList").children[np]; if(li) li.scrollIntoView({block:"nearest"});
 }
 
-/* 汇总分析模式下 ↑/↓ 在组合队列里移动 */
+/* 汇总分析模式下 ↑/↓ 在当前动作过滤后的组合队列里移动 */
 function navThinkStep(d){
-  const L = GROUPS;
+  const L = thinkShown();
   if(!L.length){ toast("没有可浏览的分类标注"); return; }
   let p = L.findIndex(g => gkey(g) === selKey);
   if(p<0){ p = d>0 ? -1 : L.length; }
@@ -1426,6 +1428,8 @@ const escHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;
 
 let GROUPS = [];              // 后端组合总览（state×action）
 let selKey = null;            // 当前选中组合 key = state\u0001action
+let thinkActFil = null;       // 列表动作过滤：null=全部，none/click=只看该动作
+const thinkShown = () => thinkActFil ? GROUPS.filter(g => g.action === thinkActFil) : GROUPS;
 let thinkBusy = false;        // 后台是否正在批量分析
 let thinkTaskMsg = "";        // 批量任务进行中主图 dock 的进行态文案（切换分组时仍保持显示）
 let lastThinkSig = "";        // 组合列表签名（避免无变化时反复刷新闪烁）
@@ -1468,7 +1472,7 @@ function renderThinkDock(g){
     text = '样本有变：新增 / 改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
     const tail = g.hasUnique
-      ? '14 张对照图（7 张基础图 + 7 张独有区图）已生成。'
+      ? '对照图已生成：10 张基础合成图（含交集 90/80/70/60 四档）+ 7 张独有区图' + (g.hasClick ? ' + 2 张点击区交集图' : '') + '。'
       : '对照图已生成；各独有区图（本分类独有区域）将在随后的后台重算中补齐。';
     text = g.coverage != null
       ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，' + tail
@@ -1515,12 +1519,15 @@ function showThinkEmpty(cls, title){
   te.style.display = "flex";
 }
 const THINK_EMPTY = "没有分类标注";
-/* 汇总分析对照图（顺序：每张基础图与其 -unique 独有区图成对出现：
-   same/same-unique → max/max-unique → avg/avg-unique → major8/major8-unique → major32/major32-unique → avg8/avg8-unique → avg32/avg32-unique；
-   14 张都参与执行模式比对：差异度 = (独有交集图×50 + 交集图×30 + 其余 12 张平均×20)/100；
-   -unique 图须等全部分组的 7 张基础图都生成完后由后台统一补算，未生成前本组先不展示独有区图卡片） */
-const IMG_IDS = ["imgSame","imgUnique","imgMax","imgMaxU","imgAvg","imgAvgU","imgM8","imgM8U","imgM32","imgM32U","imgA8","imgA8U","imgA32","imgA32U"];
-const TCS_IDS = ["tcsSame","tcsUnique","tcsMax","tcsMaxU","tcsAvg","tcsAvgU","tcsM8","tcsM8U","tcsM32","tcsM32U","tcsA8","tcsA8U","tcsA32","tcsA32U"];
+/* 汇总分析对照图（每张基础图与其 -unique 独有区图成对出现：交集 90 主档 → 90 主档独有区 →
+  交集 80/70/60 三张展示档（仅目检、不参与识别，无独有区）→ max/max-unique →
+  avg/avg-unique → major8/major8-unique → major32/major32-unique → avg8/avg8-unique → avg32/avg32-unique；
+  点击动作分类另有 click8-same / click32-same 两张点击区交集图，仅该分类展示）。
+  全部适用的图都参与执行模式比对：差异度 = (独有交集图×50 + 交集图×30 + 其余可判成员平均×20)/100，
+  其余成员 = 块图 + 独有区图（点击动作分类含两张点击区交集图，缺失维不参与平均）；
+  -unique 图须等全部分组的 7 张核心基础图都生成完后由后台统一补算，未生成前本组先不展示独有区图卡片） */
+const IMG_IDS = ["imgSame","imgUnique","imgSame80","imgSame70","imgSame60","imgMax","imgMaxU","imgAvg","imgAvgU","imgM8","imgM8U","imgM32","imgM32U","imgA8","imgA8U","imgA32","imgA32U","imgC8","imgC32"];
+const TCS_IDS = ["tcsSame","tcsUnique","tcsSame80","tcsSame70","tcsSame60","tcsMax","tcsMaxU","tcsAvg","tcsAvgU","tcsM8","tcsM8U","tcsM32","tcsM32U","tcsA8","tcsA8U","tcsA32","tcsA32U","tcsC8","tcsC32"];
 
 /* ---- 对照图加载容错：快速切换分组时，同一 <img> 连续换 src 会中止上一组在途请求，
    浏览器偶发把中止/瞬时失败残留成裂图（此时服务端文件其实完好——再点裂图在弹窗里能正常加载）。
@@ -1571,6 +1578,8 @@ function enterThink(){
   hideSmartTip();          // 汇总分析模式下不显示「未标注」智能分析建议条
   syncSugDock();           // 汇总分析：处理状态浮层按 thinkBar 内容自动显示
   $("lstTitle").textContent = "分类标注列表（按匹配度）";
+  thinkActFil = null;            // 动作过滤复位为「全部」
+  $("thinkFil").hidden = false;  // 显示列表动作过滤行
   selKey = null;
   openGroup(null);
   refreshThink(true, false);
@@ -1589,6 +1598,8 @@ function exitThink(){
   $("edThink").style.display = "none";
   $("edNorm").style.display = "";
   $("lstTitle").textContent = "截图列表（按时间）";
+  thinkActFil = null;
+  $("thinkFil").hidden = true;
   for(const id of IMG_IDS){
     const el = $(id);
     el.removeAttribute("src");
@@ -1599,9 +1610,10 @@ function exitThink(){
 
 function renderThinkList(){
   setSegState();   // 筛选按钮仍显示全部/未标注/已标注的截图计数，选中态切到“汇总分析”
-  $("listCount").textContent = GROUPS.length + " 个";   // 任务进度不再挤进列表头小角，改由右下角 taskTip 闪现提示
+  const L = thinkShown();
+  $("listCount").textContent = (thinkActFil ? L.length + " / " : "") + GROUPS.length + " 个";   // 任务进度不再挤进列表头小角，改由右下角 taskTip 闪现提示
   const ul = $("imgList"); ul.innerHTML = "";
-  for(const g of GROUPS){
+  for(const g of L){
     const li = document.createElement("li");
     li.className = "row" + (selKey === gkey(g) ? " on" : "");
     let extra = g.sampleCount + " 张";
@@ -1618,9 +1630,11 @@ function renderThinkList(){
     li.addEventListener("click", ()=> openGroup(g));
     ul.appendChild(li);
   }
-  if(!GROUPS.length){
+  if(!L.length){
     const d = document.createElement("li"); d.className = "empty";
-    d.textContent = THINK_EMPTY;
+    d.textContent = GROUPS.length
+      ? "没有「" + (ACT_LABEL[thinkActFil] || thinkActFil) + "」动作的分类"
+      : THINK_EMPTY;
     ul.appendChild(d);
   }
 }
@@ -1651,16 +1665,41 @@ async function refreshThink(autoAnalyze, silent){
   if(autoAnalyze) startAnalyzeIfNeeded();
 }
 
-/* 自动选中一组：在当前子筛选可见的组合里优先挑已分析的 */
+/* 自动选中一组：在当前（动作过滤后）可见的组合里优先挑已分析的 */
 function autoPick(){
-  if(!GROUPS.length){ openGroup(null); return; }
-  openGroup(GROUPS.find(x => x.analyzed && !x.stale) || GROUPS[0]);
+  const L = thinkShown();
+  if(!L.length){ openGroup(null); return; }
+  openGroup(L.find(x => x.analyzed && !x.stale) || L[0]);
 }
+
+/* 动作过滤按钮：互斥单选，再点已选中的按钮取消（回全部）；当前选中组被过滤掉时自动改选可见组 */
+function toggleThinkFil(a){
+  thinkActFil = thinkActFil === a ? null : a;
+  for(const b of $("thinkFil").querySelectorAll("button")) b.classList.toggle("on", b.dataset.a === thinkActFil);
+  renderThinkList();
+  if(!thinkActFil) return;
+  const g = selKey ? GROUPS.find(x => gkey(x) === selKey) : null;
+  if(!(g && g.action === thinkActFil)) autoPick();
+}
+$("thinkFil").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if(b && b.dataset.a) toggleThinkFil(b.dataset.a);
+});
 
 /* ---------------- 汇总分析 · 对照图“原图一半”列表排版 ----------------
    全幅对照图（交集/多数/均值及各自 -unique 独有区图）统一按“原图的一半”展示：原尺寸平滑缩到 1/2；
    1/8、1/32 压缩图按整数倍放大到与半尺寸接近（保留像素锐利），保证一行视觉整齐 */
 let thinkMeta = null;       // { halfW, halfH } 当前组的列表基准尺寸
+let thinkColT = null;       // 窗口 resize 时对照图列宽重排的防抖计时器
+
+/* 对照图网格列宽：宽度足够 → 按卡片标准宽（图“原图一半”+卡片留白）等宽多列排布；
+   主图区可用宽连一列都放不下 → 列收窄到可用宽，配合 .tcimg img{max-width:100%} 让图等比缩小，
+   保证图永不被卡片 overflow 裁切或横向溢出（不完整显示） */
+function setThinkCols(tp, colW){
+  const cw = tp.clientWidth - 24;             // 网格内容可用宽（减去左右 padding 各 12）
+  const minW = (cw > 0 && cw < colW) ? cw : colW;
+  tp.style.gridTemplateColumns = "repeat(auto-fit, minmax(" + minW + "px, " + colW + "px))";
+}
 
 function cardTargetScale(nw, nh){
   if(!thinkMeta || !thinkMeta.halfW || !thinkMeta.halfH) return { s:1, pixel:false };
@@ -1731,14 +1770,17 @@ function openGroup(g){
     const W = Number(g.width) || 0, H = Number(g.height) || 0;
     if(W && H){
       thinkMeta = { halfW: Math.max(1, Math.round(W / 2)), halfH: Math.max(1, Math.round(H / 2)) };
-      tp.style.gridTemplateColumns = "repeat(auto-fit, " + (thinkMeta.halfW + 20) + "px)";
+      setThinkCols(tp, thinkMeta.halfW + 20);
     } else {
-      tp.style.gridTemplateColumns = "repeat(auto-fit, 700px)";
+      setThinkCols(tp, 700);
     }
     // 独有区图覆盖率（kind → 独有像素占该图全图百分比；未生成时为 —）
     const uc = kind => fmtCov(g.uniqueCov ? g.uniqueCov[kind] : null);
-    const kinds = [["same","imgSame","tcsSame",fmtCov(g.coverage)],
-                   ["same-unique","imgUnique","tcsUnique", uc("same-unique")],
+    const kinds = [["same90","imgSame","tcsSame",fmtCov(g.coverage)],
+                   ["same90-unique","imgUnique","tcsUnique", uc("same90-unique")],
+                   ["same80","imgSame80","tcsSame80","档位 ≥80%"],
+                   ["same70","imgSame70","tcsSame70","档位 ≥70%"],
+                   ["same60","imgSame60","tcsSame60","档位 ≥60%"],
                    ["max","imgMax","tcsMax", W + "×" + H],
                    ["max-unique","imgMaxU","tcsMaxU", uc("max-unique")],
                    ["avg","imgAvg","tcsAvg", W + "×" + H],
@@ -1751,6 +1793,17 @@ function openGroup(g){
                    ["avg8-unique","imgA8U","tcsA8U", uc("avg8-unique")],
                    ["avg32","imgA32","tcsA32", sz32(W) + "×" + sz32(H) + " · 均值"],
                    ["avg32-unique","imgA32U","tcsA32U", uc("avg32-unique")]];
+    // 点击区交集图卡片：仅点击动作且两张产物已生成的组展示；其余组整卡隐藏，避免留出空框
+    const clickCards = [["click8-same","imgC8","tcsC8"], ["click32-same","imgC32","tcsC32"]];
+    if(g.hasClick){
+      kinds.push(["click8-same","imgC8","tcsC8", sz8(W) + "×" + sz8(H) + " · 点击区"],
+                 ["click32-same","imgC32","tcsC32", sz32(W) + "×" + sz32(H) + " · 点击区"]);
+    } else {
+      for(const [,imgId,tcsId] of clickCards){
+        $(tcsId).textContent = "";
+        $(imgId).closest(".tcard").style.display = "none";
+      }
+    }
     for(const [kind,imgId,tcsId,label] of kinds){
       const el = $(imgId), card = el.closest(".tcard");
       if(kind.endsWith("-unique") && !g.hasUnique){
@@ -1846,7 +1899,7 @@ async function pollAnalyze(id, label){
    不会与自动重算/其它分析互踩；产物由 classify/ 已标注样本派生，删除不影响原始截图与标注 */
 async function rebuildThink(){
   if(thinkBusy){ toast("已有分析任务进行中，请稍候", "warn"); return; }
-  if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类的 14 张对照图。\n原始截图与标注不受影响。\n\n确定继续？")) return;
+  if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类适用的对照图（10 张基础合成图含交集 90/80/70/60 四档 + 7 张独有区图，点击动作分类另含 2 张点击区交集图；交集 80/70/60 为仅目检展示档）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
   thinkBusy = true; renderThinkList();
   thinkBusyDock("正在全量重建全部对照图…（将先清空 summary/ 旧产物）");
   try{
@@ -1913,7 +1966,7 @@ function toggleLbMode(){
   applyLbZoom();
 }
 
-/* ---------------- 智能分析：未标注图 × 执行模式同一匹配口径（14 张对照图差异度） ---------------- */
+/* ---------------- 智能分析：未标注图 × 执行模式同一匹配口径（各分类适用对照图的差异度） ---------------- */
 let sugSeq = 0;          // 目标切换序号：用于丢弃过期轮询
 let sugTimer = 0;        // 建议任务轮询定时器
 let sugDismiss = new Set();  // 用户手动收起的智能分析（按文件名），对应图不再自动弹出
@@ -1969,7 +2022,7 @@ function refreshSmartTip(){
 function startSmartAnalysis(seq, file){
   if(seq !== sugSeq) return;
   if(!smartTipVisible() || !cur() || cur().name !== file){ hideSmartTip(); return; }
-  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类的 14 张对照图（7 张基础图 + 7 张独有区图）做逐像素差异比对…</span>');
+  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类适用的对照图（基础图 + 独有区图，点击动作分类另含点击区交集图）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
     try{
@@ -2014,11 +2067,11 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类 14 图不匹配占比的加权平均（独有交集×50 + 交集×30 + 其余 12 张平均×20，再 /100，越小越像） */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 该分类各图不匹配占比的加权平均（独有交集×50 + 交集×30 + 其余可判成员平均×20，再 /100；其余成员 = 块图 + 独有区图，点击动作分类含 2 张点击区交集图，越小越像） */
 function renderSuggest(list){
   if(!list.length){
     sugRender('<span class="sb-title">智能分析</span>' +
-      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（生成完整的 14 张图（7 张基础图 + 7 张独有区图）即可参与比对）。</span>');
+      '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（生成该分类适用的全部对照图——基础图 + 独有区图，点击动作分类另含点击区交集图——即可参与比对）。</span>');
     return;
   }
   const top = list[0];
@@ -2037,7 +2090,7 @@ function renderSuggest(list){
       ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
     '<span class="cand">候选（差异度由小到大）：' + cands + '</span>' +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类的 14 张对照图（7 张基础图：交集/多数/均值/8·32 块图及各自的独有区图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 14 张图不匹配点占比的加权平均（独有交集图×50 + 交集图×30 + 其余 12 张图平均×20，再 ÷100，越小越像；交集/独有交集锁定样本核心区，权重最高）；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类适用的对照图（7 张核心基础图：交集(90 主档)/多数/均值/8·32 块图及各自的独有区图；交集图另有 80/70/60 三档仅供目检的展示图、不参与比对；点击动作且坐标有效的分类另有 click8-same / click32-same 两张点击区交集图——以点击坐标为中心的 1/8、1/32 方框交集图）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数/点击区类（交集/多数/多数块图/点击区交集图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/均值块图及各自 -unique）颜色是样本平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 各图不匹配点占比的加权平均（独有交集图×50 + 交集图×30 + 其余可判成员平均×20，再 ÷100，越小越像；「其余成员」为块图与独有区图，点击动作分类含两张点击区交集图，缺失维度不参与平均；交集/独有交集锁定样本核心区，权重最高）；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 计；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2064,7 +2117,7 @@ document.querySelectorAll("#filterSeg button").forEach(b=>{
 /* 「全部」视图右栏底部「修改这张图」：一键跳转到当前图所属的未标注/已标注视图并进入标注编辑 */
 $("btnJumpMark").addEventListener("click", jumpToEdit);
 
-/* 汇总分析七图：load 后按“原图一半”排版；error 时若仍为当前分组目标则自动重试；单击卡片打开 80% 视口弹窗 */
+/* 汇总分析对照图：load 后按“原图一半”排版；error 时若仍为当前分组目标则自动重试；单击卡片打开 80% 视口弹窗 */
 for(const id of IMG_IDS){
   const el = $(id);
   el.addEventListener("load", ()=>{
@@ -2133,6 +2186,13 @@ document.addEventListener("keydown", (e)=>{
 window.addEventListener("resize", ()=>{
   if($("imgwrap").style.display !== "none" && naturalW) applyMainZoom();
   renderDot();
+  // 汇总分析网格打开期间窗口尺寸变化 → 重算列宽（窄时收窄单列、图等比缩小；宽时回到等宽多列）
+  if(FILTER === "think" && $("thinkPane").style.display === "grid"){
+    clearTimeout(thinkColT);
+    thinkColT = setTimeout(()=>{
+      setThinkCols($("thinkPane"), thinkMeta ? thinkMeta.halfW + 20 : 700);
+    }, 120);
+  }
 });
 
 /* ---------------- 自动刷新 ---------------- */
@@ -2147,6 +2207,11 @@ async function refreshSilent(){
   rebuildStates();
   renderList();
   updateNavButtons();
+  // 列表从“全部完成”空态补进新图时自动载入第一张，占位提示随之消失
+  if(!curName){
+    const L = listNow();
+    if(L.length) selectTarget(L[0].name);
+  }
   return true;
 }
 
@@ -2515,7 +2580,8 @@ function renderExecAll(){
     execShownMarked = false;      // 新画面：允许再次「存入分类」
     execLoadFrame();
   } else if(j.imageWidth > 0){
-    renderExecMarkers();      // 同一帧：只刷新标记/缩放
+    renderExecMarkers();      // 同一帧：只刷新标记
+    execFitImage();           // 同一帧：按当前画面区重排一次，修正进入前窗口变化留下的过期缩放
   } else if(idleWait){
     // 识别在途 / 尚未产生过结果（占位快照）：画面区保持「正在截图识别…」转圈，
     // 不要用“请先点立即识别”这类文案覆盖——进入执行模式 / 自动识别本身无需手动操作，误导且打断等待。
@@ -2588,7 +2654,7 @@ function renderExecCandidates(list){
       vbtn.type = "button";
       vbtn.className = "mbtn";
       vbtn.textContent = "详细分值";
-      vbtn.title = "查看该分类 14 张对照图（基础图及其独有区图）各自的不匹配点占比分值";
+      vbtn.title = "查看该分类各对照图（基础图及其独有区图，点击动作分类另有点击区交集图）各自的不匹配点占比分值";
       vbtn.addEventListener("click", () => openKindScores(it));
       row.appendChild(vbtn);
     }
@@ -2606,28 +2672,30 @@ function renderExecCandidates(list){
   });
 }
 
-/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（7 基础图 + 7 -unique 独有区图）的分值 ---- */
+/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（7 基础图 + 7 -unique 独有区图，点击动作分类另含 2 张点击区交集图）的分值 ---- */
 function openKindScores(it){
   if(!it || !Array.isArray(it.kinds) || !it.kinds.length){
     toast("该候选缺少对照图分值明细（未参与比对）", "err");
     return;
   }
   if($("kindScoreModal")) $("kindScoreModal").remove();
-  const zh = { same:"交集图", "same-unique":"独有交集图",
+  const zh = { same90:"交集图", "same90-unique":"独有交集图",
                max:"多数图", "max-unique":"独有多数图",
                avg:"均值图", "avg-unique":"独有均值图",
                major8:"多数块 8×8", "major8-unique":"独有多数块 8×8",
                avg8:"均值块 8×8", "avg8-unique":"独有均值块 8×8",
                major32:"多数块 32×32", "major32-unique":"独有多数块 32×32",
-               avg32:"均值块 32×32", "avg32-unique":"独有均值块 32×32" };
+               avg32:"均值块 32×32", "avg32-unique":"独有均值块 32×32",
+               "click8-same":"点击区交集 1/8", "click32-same":"点击区交集 1/32" };
   // kind → 磁盘文件名（仅 max/max-unique 映射 major 名，其余与 kind 同名 + ".png"）
-  const kf = { same:"same.png", "same-unique":"same-unique.png",
+  const kf = { same90:"same90.png", "same90-unique":"same90-unique.png",
                max:"major.png", "max-unique":"major-unique.png",
                avg:"avg.png", "avg-unique":"avg-unique.png",
                major8:"major8.png", "major8-unique":"major8-unique.png",
                avg8:"avg8.png", "avg8-unique":"avg8-unique.png",
                major32:"major32.png", "major32-unique":"major32-unique.png",
-               avg32:"avg32.png", "avg32-unique":"avg32-unique.png" };
+               avg32:"avg32.png", "avg32-unique":"avg32-unique.png",
+               "click8-same":"click8-same.png", "click32-same":"click32-same.png" };
   const rows = it.kinds.map(ks => {
     const nm = zh[ks.kind] || ks.kind;
     const isBlock = ks.kind === "major8" || ks.kind === "major8-unique" || ks.kind === "avg8"
@@ -2637,7 +2705,7 @@ function openKindScores(it){
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
         ? '<b style="color:var(--green)">' + ks.score.toFixed(2) + "%</b>"
-        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或基础图公共区全空（无有效比对像素）。本轮未计入差异分值（按 0 计，不报错）。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
+        : '<span style="color:#778" title="该图不可比：产物缺失/解码失败，或无可判像素。交集/独有交集图按 0 计；「其余图」成员不参与平均（避免分母被缺维稀释），不报错。独有区图不在此列：0 个独有点按 0.00% 计，有 ≥1 个独有点即正常计分">跳过</span>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:12.5px">' +
       '<span>' + escHtml(nm) +
         '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml((kf[ks.kind] || ks.kind + ".png") + " · " + grid) + "</span></span>" +
@@ -2652,7 +2720,7 @@ function openKindScores(it){
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "标注分类：" + escHtml(it.state || "—") + "<br>" +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按维度类别分两套：交集/多数类（交集/多数/多数块图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致）</div>" +
+        "色差按维度类别分两套：交集/多数类（交集/多数/多数块图/点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致）。点击区交集图是点击动作分类以点击坐标为中心的 1/8、1/32 方框交集图</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";
@@ -2726,6 +2794,7 @@ function execLoadFrame(){
 
 function execFitImage(){
   const img = $("execImg"), area = $("execArea");
+  if(appMode !== "exec") return;    // 标注模式下 execPane 隐藏、画面区无尺寸，重排会把旧帧误缩成小图
   if(!img || !area || !execShownW || !execImgReady) return;
   const pad = 24;
   const aw = Math.max(120, area.clientWidth - pad);
