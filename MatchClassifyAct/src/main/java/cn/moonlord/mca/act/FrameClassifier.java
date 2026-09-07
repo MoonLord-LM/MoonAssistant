@@ -10,12 +10,13 @@ import org.springframework.stereotype.Service;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Iterator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,11 +64,13 @@ import java.util.stream.Stream;
  * 并统计各自的「不匹配点占比」（0~100，
  * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区、点击区图内不一致的像素、
  * 以及点击区框越出画幅的出界点（画面与产物同处都填透明对齐）都被剔除）。
- * 把各图的占比当作该分类在对应比对维度上的分值，所有能判出分值的适用图一律等权、
- * 直接算术平均即为分类差异度（含全部交集档及其独有区图，点击动作分类另含 10 张点击区交集图；
- * 独有区图没有任何独有像素时该维判不可比、不参与平均；
- * 缺失 / 无法有效读出的个别图同样不参与平均——没有可判“不一致”的像素就不增加分歧；
- * 只有全部适用的对照图都不可比时才剔除该目录）。
+ * 各图的占比先按 A~E 五族做族内等权平均（A 全图交集 10 张权 50 → B 多数族 6 张权 15 →
+ * C 均值族 6 张权 10 → D 去重均值族 6 张权 10 → E 点击区交集 10 张权 15，仅点击动作分类有 E），
+ * 再按 (50A+15B+10C+10D+15E)/W 加权为分类差异度：W = 适用族的权重之和
+ * （点击分类五族齐全 W=100；无点击坐标分类无 E、W=85），各图照常全量参与。
+ * 没有有效像素的图（基础图公共区全空 / 独有区图没有任何独有像素等）视为完全匹配、按 0 计，
+ * 照常参与所在族均值，不给该分类增加分歧；-1 只出现在产物缺失 / 比对口径不符的异常防御路径
+ * （产物齐全时不会出现），该图才跳过。
  * 不同分类按各自的差异度比较，最小者即为最近似分类。
  * 执行以最近似分类为准、不设识别阈值门槛：差异度仅作参考展示（越小表示画面越接近该分类的样本）。
  *
@@ -193,8 +196,10 @@ public class FrameClassifier {
             Map.entry("click32-same60", "click32-same60.png"),
             Map.entry("click32-same50", "click32-same50.png"));
 
-    /** 对照图的固定展示/比较顺序（每张基础图紧跟其 -unique 独有区图：交集五档 → 多数 → 均值 →
-     *  去重均值 → 8 块 → 32 块 → 点击区交集图（1/8 → 1/32，各五档）：每个分类按其适用维度参与，
+    /** 对照图的固定展示/比较顺序（每张基础图紧跟其 -unique 独有区图：
+     *  全图交集五档 same90→same50（共 10 张）→ 多数族 max/major8/major32（共 6 张）→
+     *  均值族 avg/avg8/avg32（共 6 张）→ 去重均值族 dedup-avg/dedup-avg8/dedup-avg32（共 6 张）→
+     *  点击区交集图 click8 → click32（各五档，无 -unique，共 10 张）；每个分类按其适用维度参与，
      *  无点击坐标的分类自然跳过最后 10 个）。 */
     private static final List<String> KIND_ORDER = List.of(
             "same90", "same90-unique",
@@ -203,19 +208,36 @@ public class FrameClassifier {
             "same60", "same60-unique",
             "same50", "same50-unique",
             "max", "max-unique",
-            "avg", "avg-unique",
-            "dedup-avg", "dedup-avg-unique",
             "major8", "major8-unique",
-            "avg8", "avg8-unique",
-            "dedup-avg8", "dedup-avg8-unique",
             "major32", "major32-unique",
+            "avg", "avg-unique",
+            "avg8", "avg8-unique",
             "avg32", "avg32-unique",
+            "dedup-avg", "dedup-avg-unique",
+            "dedup-avg8", "dedup-avg8-unique",
             "dedup-avg32", "dedup-avg32-unique",
             "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
             "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
 
+    /** 差异度五族权重与其包含的 kind（覆盖全部 38 张适用图）：A 全图交集 10（same90→50 各带 -unique）
+     *  权 50 → B 多数族 6（max/major8/major32 各带 -unique）权 15 → C 均值族 6（avg/avg8/avg32
+     *  各带 -unique）权 10 → D 去重均值族 6（dedup-avg/8/32 各带 -unique）权 10 → E 点击区交集 10
+     *  （click8→32 × 各档，无 -unique）权 15。每族先对族内各图「不匹配点占比」等权平均得族均值，
+     *  差异度 = (50A+15B+10C+10D+15E)/W：W = 适用族的权重之和，点击分类五族齐全 W=100，
+     *  无点击坐标分类无 E、W=85；无有效像素的图按 0 完全匹配计、照常参与。 */
+    private static final int[] FAMILY_WEIGHTS = {50, 15, 10, 10, 15};
+    private static final List<List<String>> FAMILY_KINDS = List.of(
+            List.of("same90", "same90-unique", "same80", "same80-unique", "same70", "same70-unique",
+                    "same60", "same60-unique", "same50", "same50-unique"),
+            List.of("max", "max-unique", "major8", "major8-unique", "major32", "major32-unique"),
+            List.of("avg", "avg-unique", "avg8", "avg8-unique", "avg32", "avg32-unique"),
+            List.of("dedup-avg", "dedup-avg-unique", "dedup-avg8", "dedup-avg8-unique",
+                    "dedup-avg32", "dedup-avg32-unique"),
+            List.of("click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
+                    "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50"));
+
     /** 每个分类都必须齐全的 28 张产物对照图（14 基础 + 14 -unique，含交集五档及全部独有区图）：
-     *  任一缺失 = 该分类产物未齐，整目录跳过不参与识别（差异度按各适用对照图等权平均聚合，
+     *  任一缺失 = 该分类产物未齐，整目录跳过不参与识别（差异度按五族加权聚合，
      *  缺图无法保证口径；旧目录未重算补齐前不参与，后台重算后恢复）。 */
     private static final Set<String> MATCH_CORE_FILES = Set.of(
             "same90.png", "same90-unique.png",
@@ -239,20 +261,21 @@ public class FrameClassifier {
             "click8-same90.png", "click8-same80.png", "click8-same70.png", "click8-same60.png", "click8-same50.png",
             "click32-same90.png", "click32-same80.png", "click32-same70.png", "click32-same60.png", "click32-same50.png");
 
-    /** 产物像素缓存 LRU 上限，按「缓存全常驻、免每轮重解码」设计：全幅对照图约 3.7MB/张（1280×720 int[]）。
-     *  每组现含 26 张全幅图（交集五档及 max/avg/dedup-avg 共 8 基础 + 8 -unique + 点击区交集图 10）
-     *  ≈96MB + 12 张 8/32 块图（多数/均值/去重均值及各自 -unique）≈0.1GB——全幅图翻倍后内存随分组
-     *  线性上升（50 组全常驻 ≈5GB），已超 restart.cmd 的 -Xmx4g；LRU 上限 2000 只防失控，分组多时
-     *  会按需淘汰少量重解码。真溢出请上调 -Xmx 或调低本上限。 */
-    private static final int MAX_CACHE = 2000;
-
+    /** 产物像素缓存无界常驻：不设 LRU 上限，堆装得下就全保留、免每轮重解码。
+     *  全幅对照图约 3.7MB/张，当前 72 组 2636 张产物约 5GB，靠 restart.cmd 的 -Xmx8g 支撑；
+     *  分组/产物继续增多时同步上调 -Xmx，真溢出 OOM 属预期。 */
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final StoragePaths storage;
     private final ExecuteProperties executeProperties;
 
-    /** 产物像素缓存：key = 产物文件绝对路径。 */
-    private final Map<String, CachedPx> cache = new LinkedHashMap<>(64, 0.75f, true);
+    /** 产物像素缓存：key = 产物文件绝对路径，无界常驻不淘汰。 */
+    private final Map<String, CachedPx> cache = new HashMap<>();
+
+    /** classify/ 已标注原始图的全幅像素缓存（供「原图直比」候选行每帧与画面逐像素比对，免每帧重解码）：
+     *  key = 原图绝对路径，带 mtime/size 失效、无界常驻。每张约 3.7MB（1280×720），样本继续增多时
+     *  与产物缓存一起按 -Xmx 预算评估（当前 classify 数百张量级可接受）。 */
+    private final Map<String, CachedPx> rawPxCache = new HashMap<>();
 
     private static final class CachedPx {
         final long lastModified;
@@ -305,7 +328,7 @@ public class FrameClassifier {
         public boolean recognized;
         /** 最近似分类标注（无任何可对比目录时为空）。 */
         public String bestState;
-        /** 最近似分类的「各适用对照图不匹配占比等权平均」百分比（0~100，越低越像）。 */
+        /** 最近似分类的「五族加权」差异度百分比（0~100，越低越像）。 */
         public double bestDiffPercent = Double.NaN;
         /** 最近似分类的汇总产物目录名（summary/<dir>），无最近似分类时 null。 */
         public String bestFile;
@@ -319,8 +342,13 @@ public class FrameClassifier {
         public int scannedSamples;
         /** summary/ 下存在有效分类标注的产物目录数（含核心对照图不全被跳过的）。 */
         public int totalSamples;
-        /** 各分类的最近似结果，按差异度（等权平均）升序排列（前几个即“候选分类”）。 */
+        /** 各分类的最近似结果，按差异度（五族加权）升序排列（前几个即“候选分类”）。 */
         public List<Candidate> candidates = new ArrayList<>();
+        /** 「按已分类原图匹配」直比命中：classify/ 全部已标注原始截图里与画面逐像素完全一致比对后
+         *  不匹配点占比最低的一张（只含文件名与分值，归属分类/动作由 ExecutionService 按样本标注解析）。
+         *  对照图是分类的合成概括图，个别画面可能被它误配，直比原始截图最直接可信；
+         *  无任何同尺寸已标注样本可比时为 null。 */
+        public RawHit rawHit;
         /** 识别耗时（毫秒）。 */
         public long elapsedMs;
     }
@@ -329,8 +357,12 @@ public class FrameClassifier {
     public record KindScore(String kind, String file, int w, int h, double score) {
     }
 
-    /** 一个候选：某分类各对照图占比的等权平均差异度 + 各图各自的分值明细（matchedFile 目录下的产物）。 */
-    public record Candidate(String state, double diffPercent, String matchedFile, List<KindScore> kinds) {
+    /** 一个候选：某分类的五族加权差异度 + 各图各自的分值明细（matchedFile 目录下的产物）。 */
+    public record Candidate(String state, double diffPercent, String matchedFile, List<KindScore> kinds, boolean raw) {
+    }
+
+    /** 原图直比命中：命中的 classify/ 原图文件名 + 不匹配点占比（0~100，0.00% = 与画面逐像素完全相同）。 */
+    public record RawHit(String file, double diffPercent) {
     }
 
     private static final class GroupBest {
@@ -409,7 +441,7 @@ public class FrameClassifier {
                 work = new FrameWork(framePxFull, fw, fh);
             }
             int kindCount = 0;
-            Map<String, KindScore> scores = new LinkedHashMap<>();   // 该目录各对照图的分值（缺失/不可比 = -1）
+            Map<String, KindScore> scores = new LinkedHashMap<>();   // 该目录各对照图的分值（无有效像素按 0；-1 仅异常防御）
             for (String kind : KIND_ORDER) {
                 String file = KIND_FILE.get(kind);
                 CachedPx ref = loadCached(dir.resolve(file), kind);
@@ -425,9 +457,10 @@ public class FrameClassifier {
                 continue;   // 该分类适用的对照图全部无法有效读出 → 该目录不参与（正常产物不会出现）
             }
             scanned++;
-            // 差异度 = 所有能判出分值（score ≥ 0）的适用对照图「不匹配点占比」的等权算术平均；
-            // 缺失/无法有效读出的个别图不参与平均（无可用判别像素 = 不产生分歧）
-            double diff = avgDiff(scores);
+            // 差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W（A~E = 各族「不匹配点占比」的族内等权均值，
+            // 权重 A50/B15/C10/D10/E15；W = 适用族的权重之和：点击分类 100、无点击分类无 E 为 85；
+            // 无有效像素按 0 参与族均值；-1 仅产物缺失/口径不符的异常路径、该图跳过）
+            double diff = aggregateDiff(scores);
             GroupBest g = perState.computeIfAbsent(state, s -> new GroupBest());
             g.state = state;
             if (diff < g.diff) {
@@ -442,7 +475,7 @@ public class FrameClassifier {
 
         List<GroupBest> sorted = new ArrayList<>(perState.values());
         sorted.sort((a, b) -> Double.compare(a.diff, b.diff));
-        List<GroupBest> topFew = sorted.size() > 6 ? new ArrayList<>(sorted.subList(0, 6)) : sorted;
+        List<GroupBest> topFew = sorted.size() > 7 ? new ArrayList<>(sorted.subList(0, 7)) : sorted;
         out.candidates = candidatesOf(topFew);
 
         out.scannedSamples = scanned;
@@ -458,6 +491,9 @@ public class FrameClassifier {
             // 已去掉识别阈值门槛：只要有可比的最近似分类即视为可用（差异度仅作展示，不再判已识别/未识别）
             out.recognized = true;
         }
+        // 「按已分类原图匹配」候选：遍历 classify/ 全部已标注原始截图，与画面逐像素完全一致直比，
+        // 取不匹配点占比最低的一张（归属分类 / 动作由 ExecutionService 按样本标注解析后并入候选列表）
+        out.rawHit = rawOriginalHit(framePxFull, fw, fh);
         out.elapsedMs = System.currentTimeMillis() - t0;
         if (log.isDebugEnabled()) {
             log.debug("画面识别完成：recognized={}, best={} ({}) diff={}%, compared={}/{}",
@@ -467,21 +503,32 @@ public class FrameClassifier {
         return out;
     }
 
-    /** 各图「不匹配点占比」的等权算术平均即分类差异度（0~100，越小越像）：所有能判出分值
-     *  （score ≥ 0）的适用对照图一律参与（含全部交集档及其独有区图、max/avg/块图族与其 -unique，
-     *  点击动作分类另含 10 张点击区交集图），无点击坐标的分类天然少点击区十图。缺失 /
-     *  无法有效读出的图（-1），以及没有任何有效像素的图（基础图公共区全空 / 独有区图无独有点），
-     *  一律不参与平均——没有可判“不一致”的像素就不增加分歧，避免分母被缺维稀释。 */
-    private static double avgDiff(Map<String, KindScore> scores) {
+    /** 分类差异度 = 五族加权平均 (50A+15B+10C+10D+15E)/W（0~100，越小越像）：各族对族内各图的
+     *  「不匹配点占比」等权平均（A 全图交集 10 张 / B 多数 6 / C 均值 6 /
+     *  D 去重均值 6 / E 点击区交集 10，权重 50/15/10/10/15）；W = 适用族的权重之和——
+     *  点击动作分类五族齐全 W=100，无点击坐标分类无 E 族、W=85。
+     *  无有效像素（基础图公共区全空 / 独有区图无独有点）的图在比对侧已按 0 完全匹配计、照常参与；
+     *  -1 仅产物缺失 / 比对口径不符的异常防御路径返回（产物齐全时不会出现），该图跳过不参与族均值。 */
+    private static double aggregateDiff(Map<String, KindScore> scores) {
         double sum = 0;
-        int n = 0;
-        for (KindScore ks : scores.values()) {
-            if (ks.score() >= 0) {
-                sum += ks.score();
-                n++;
+        int wsum = 0;
+        for (int i = 0; i < FAMILY_KINDS.size(); i++) {
+            double fsum = 0;
+            int n = 0;
+            for (String kind : FAMILY_KINDS.get(i)) {
+                KindScore ks = scores.get(kind);
+                if (ks != null && ks.score() >= 0) {
+                    fsum += ks.score();
+                    n++;
+                }
             }
+            if (n == 0) {
+                continue;   // 整族全为异常 -1 → 权重不进 W（正常产物齐全不会出现）
+            }
+            sum += FAMILY_WEIGHTS[i] * fsum / n;
+            wsum += FAMILY_WEIGHTS[i];
         }
-        return n == 0 ? 0.0 : sum / n;
+        return wsum == 0 ? 0.0 : sum / wsum;
     }
 
     private static List<Candidate> candidatesOf(List<GroupBest> sorted) {
@@ -494,9 +541,106 @@ public class FrameClassifier {
                     kinds.add(ks);
                 }
             }
-            out.add(new Candidate(g.state, g.diff, g.dir, kinds));
+            out.add(new Candidate(g.state, g.diff, g.dir, kinds, false));
         }
         return out;
+    }
+
+    /* ---------------- 已分类原始图直比（「按已分类原图匹配」候选） ---------------- */
+
+    /**
+     * 遍历 classify/ 下全部已标注原始截图（img_*.png），与画面逐像素完全一致比对
+     * （RGB 低 24 位全等、忽略 alpha；仅同分辨率可直比，尺寸不同直接跳过），
+     * 返回不匹配点占比最低的一张；无任何同尺寸样本时为 null。
+     * 判定复用 {@link #mismatchPercent} 的完全一致口径（与产物交集/多数类同判据），
+     * 与对照图候选的差异分值可直接比大小。
+     */
+    private RawHit rawOriginalHit(int[] full, int fw, int fh) {
+        Path dir = storage.classify();
+        if (!Files.isDirectory(dir)) {
+            return null;
+        }
+        List<Path> pngs;
+        try (Stream<Path> s = Files.list(dir)) {
+            pngs = s.filter(p -> {
+                String n = p.getFileName().toString().toLowerCase();
+                return Files.isRegularFile(p) && n.startsWith("img_") && n.endsWith(".png");
+            }).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+        } catch (IOException e) {
+            return null;
+        }
+        RawHit best = null;
+        double bestDiff = Double.POSITIVE_INFINITY;
+        for (Path p : pngs) {
+            CachedPx ref = loadRawPx(p, fw, fh);
+            if (ref == null) {
+                continue;
+            }
+            double d = mismatchPercent(full, ref.px, EXACT_MATCH_DIST);
+            if (d < bestDiff) {
+                bestDiff = d;
+                best = new RawHit(p.getFileName().toString(), d);
+                if (d == 0.0) {
+                    break;   // 与某张原图逐像素完全相同 = 全局最低，无需再比
+                }
+            }
+        }
+        return best;
+    }
+
+    /** 读一张 classify/ 原图的全幅像素（缓存：mtime/size 失效；尺寸与画面不符不缓存、直接跳过）。 */
+    private CachedPx loadRawPx(Path p, int fw, int fh) {
+        BasicFileAttributes att;
+        try {
+            att = Files.readAttributes(p, BasicFileAttributes.class);
+        } catch (IOException e) {
+            return null;
+        }
+        String key = p.toString();
+        CachedPx hit = rawPxCache.get(key);
+        if (hit != null && hit.size == att.size() && hit.lastModified == att.lastModifiedTime().toMillis()) {
+            return hit;
+        }
+        int[] wh = pngSize(p);
+        if (wh == null || wh[0] != fw || wh[1] != fh) {
+            return null;   // 仅同分辨率可直接逐点直比（不缩放）
+        }
+        BufferedImage bi;
+        try {
+            bi = ImageIO.read(p.toFile());
+        } catch (IOException e) {
+            return null;
+        }
+        if (bi == null || bi.getWidth() != fw || bi.getHeight() != fh) {
+            return null;
+        }
+        int[] px = bi.getRGB(0, 0, fw, fh, null, 0, fw);
+        CachedPx c = new CachedPx(att.lastModifiedTime().toMillis(), att.size(), fw, fh, true, px);
+        rawPxCache.put(key, c);
+        return c;
+    }
+
+    /** 只读 PNG 文件头（前 24 字节）取宽高，避免为尺寸不符的图做整图解码；非 PNG / 读取失败返回 null。 */
+    private static int[] pngSize(Path p) {
+        byte[] head = new byte[24];
+        int off = 0;
+        try (InputStream in = Files.newInputStream(p)) {
+            while (off < head.length) {
+                int r = in.read(head, off, head.length - off);
+                if (r < 0) {
+                    break;
+                }
+                off += r;
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        if (off < 24 || head[0] != (byte) 0x89 || head[1] != 'P' || head[2] != 'N' || head[3] != 'G') {
+            return null;
+        }
+        int w = ((head[16] & 0xff) << 24) | ((head[17] & 0xff) << 16) | ((head[18] & 0xff) << 8) | (head[19] & 0xff);
+        int h = ((head[20] & 0xff) << 24) | ((head[21] & 0xff) << 16) | ((head[22] & 0xff) << 8) | (head[23] & 0xff);
+        return new int[]{w, h};
     }
 
     /**
@@ -569,7 +713,7 @@ public class FrameClassifier {
         } else {
             return -1;
         }
-        // 独有区图（含块图）口径：无独有点与基础图公共区全空一样判不可比（-1）、不参与聚合；有独有点（即使很少）按实测占比计
+        // 独有区图（含块图）口径：无独有点与基础图公共区全空一样按 0（完全匹配）计、照常参与族均值；有独有点（即使很少）按实测占比计
         return mismatchPercent(a, ref.px, distThr);
     }
 
@@ -683,9 +827,9 @@ public class FrameClassifier {
      * （distThr = {@link #EXACT_MATCH_DIST} = 0，即「逐像素完全一致」：|Δ| ≤ 0 等价于三通道全部相等；
      * 均值类传 execute.rgb-dist-threshold）。
      * 结果为不匹配点数 / 有效点数 × 100。参考序列（b，即产物）的透明像素
-     * （交集图非公共区域 / 独有区图非独有区域）不参与统计；只要读到 ≥1 个有效像素就按实测
-     * 占比计分，判别区再小也照常计分显示。长度不一致或没有任何有效像素
-     * （基础图公共区全空 / 独有区图无独有点）时返回 -1——调用侧视该维不可比、跳过不参与聚合。
+     * （交集图非公共区域 / 独有区图非独有区域）不参与统计；判别区再小也按实测占比计分。
+     * 没有任何有效像素（基础图公共区全空 / 独有区图无独有点）按 0（完全匹配）计、照常参与聚合；
+     * -1 只在长度不一致等异常防御路径返回。
      * <p>判定采用逐通道口径：三个通道独立比较、必须全部达标才算一致——单一通道的明显色偏
      * 不会被另外两个通道的接近“平均稀释”掉，例如画面整体亮度偏移会让三通道同时越界而被检出。</p>
      */
@@ -728,8 +872,8 @@ public class FrameClassifier {
             }
         }
         if (n == 0) {
-            // 没有任何可判“不匹配”的有效像素（基础图公共区全空 / 独有区图无独有点）：判不可比，不参与聚合
-            return -1;
+            // 没有任何有效像素（基础图公共区全空 / 独有区图无独有点）：视为完全匹配、按 0 计，照常参与族均值
+            return 0.0;
         }
         return bad * 100.0 / n;
     }
@@ -768,11 +912,6 @@ public class FrameClassifier {
         CachedPx sp = new CachedPx(attrs.lastModifiedTime().toMillis(), attrs.size(),
                 w, h, isFull, px);
         cache.put(key, sp);
-        while (cache.size() > MAX_CACHE) {
-            Iterator<CachedPx> it = cache.values().iterator();
-            it.next();
-            it.remove();
-        }
         return sp;
     }
 

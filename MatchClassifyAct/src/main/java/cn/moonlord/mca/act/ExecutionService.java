@@ -21,6 +21,7 @@ import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -303,22 +304,70 @@ public class ExecutionService {
         List<FrameClassifier.Candidate> candidates = new ArrayList<>();
 
         if (oc != null) {
-            recognized = oc.recognized;
-            state = oc.bestState;
-            bestDiff = Double.isNaN(oc.bestDiffPercent) ? -1 : oc.bestDiffPercent;
-            matched = oc.bestFile;
             scanned = oc.scannedSamples;
             total = oc.totalSamples;
             if (oc.candidates != null) {
                 candidates = oc.candidates;
             }
-            // 动作定义由识别器随最近似分类带回（读自该分类汇总产物 summary/<dir>/info.json）：
-            // 动作类型 + 点击坐标（图片像素 = 窗口坐标）
-            if (oc.action != null) {
-                action = oc.action;
+
+            // 「按已分类原图匹配」候选：把画面与 classify/ 全部已标注原始截图逐像素完全一致直比，
+            // 取不匹配点占比最低的一张（命中样本的归属分类 / 动作 / 点击坐标按标注解析），
+            // 与对照图候选按同一差异分值口径统一排序，谁最低谁就是顶部识别结果。
+            String rawState = null;
+            double rawDiff = Double.POSITIVE_INFINITY;
+            String rawFile = null;
+            String rawAction = null;
+            Integer rawLeft = null;
+            Integer rawTop = null;
+            if (oc.rawHit != null) {
+                CaptureMark m = classifyStore.readSample(oc.rawHit.file());
+                if (m != null && m.getState() != null && !m.getState().trim().isEmpty()) {
+                    rawState = m.getState();
+                    rawDiff = Math.round(oc.rawHit.diffPercent() * 100.0) / 100.0;
+                    rawFile = oc.rawHit.file();
+                    rawAction = m.getAction();
+                    rawLeft = m.getLeft();
+                    rawTop = m.getTop();
+                }
             }
-            left = oc.clickLeft;
-            top = oc.clickTop;
+
+            if (rawState != null) {
+                // 直比行并入候选列表并统一升序（raw 来源行不带产物 kinds、由前端据此标识为原图匹配行）
+                List<FrameClassifier.Candidate> merged = new ArrayList<>(candidates.size() + 1);
+                merged.addAll(candidates);
+                merged.add(new FrameClassifier.Candidate(rawState, rawDiff, rawFile, List.of(), true));
+                merged.sort(Comparator.comparingDouble(FrameClassifier.Candidate::diffPercent));
+                candidates = merged;
+            }
+
+            boolean useRaw = rawState != null && (!oc.recognized || rawDiff <= oc.bestDiffPercent);
+            if (useRaw) {
+                // 原图直比最低（或尚无对照候选）→ 识别结果以它为准
+                recognized = true;
+                state = rawState;
+                bestDiff = rawDiff;
+                matched = rawFile;
+                action = rawAction == null ? CaptureMark.ACTION_NONE : rawAction;
+                if (CaptureMark.ACTION_CLICK.equals(action)) {
+                    left = rawLeft;
+                    top = rawTop;
+                } else {
+                    left = null;
+                    top = null;
+                }
+            } else if (oc.recognized) {
+                // 对照图候选最低 → 识别结果照旧（动作定义由识别器随最近似分类带回，
+                // 读自该分类汇总产物 summary/<dir>/info.json：动作类型 + 点击坐标（图片像素 = 窗口坐标））
+                recognized = true;
+                state = oc.bestState;
+                bestDiff = Double.isNaN(oc.bestDiffPercent) ? -1 : oc.bestDiffPercent;
+                matched = oc.bestFile;
+                if (oc.action != null) {
+                    action = oc.action;
+                }
+                left = oc.clickLeft;
+                top = oc.clickTop;
+            }
         }
 
         int w = image == null ? 0 : image.getWidth();

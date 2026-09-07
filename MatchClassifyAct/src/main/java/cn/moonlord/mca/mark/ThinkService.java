@@ -260,7 +260,8 @@ public class ThinkService {
      *    v11：点击区交集图 kind 改带档位后缀（click8-same90…），并新增 same80/70/60/50 低档框图；
      *    v12：新增去重均值族 dedup-avg / dedup-avg8 / dedup-avg32 及各自 -unique，
      *    每像素先对样本该点出现过的颜色去重再逐通道等权平均，消除重复采样对平均的加权；
-     *    v13：交集低档与点击区低档并入识别比对（产物文件不变，不触发重算）） */
+     *    v13：交集低档与点击区低档并入识别比对（产物文件不变，不触发重算）；
+     *    v14：无有效像素的图按 0（完全匹配）计、不再当不可比跳过（产物文件不变，不触发重算）） */
     private static final int ART_RULE_VERSION = 12;
 
     /** -unique 独有区图全量刷新时，同一尺寸类单一 kind 基础图文件总量上限：超过则本轮跳过，避免瞬时内存过高 */
@@ -307,9 +308,9 @@ public class ThinkService {
     /** 最新一次建议请求：供排队中的旧建议任务启动时自检作废 */
     private final AtomicReference<SuggestTask> latestSuggest = new AtomicReference<>();
     /** 建议结果缓存：key = 目标图|产物签名，避免同一张图反复重算；取访问序淘汰（再命中=用户还在来回比对该图，应续命留驻），上限 60 条 */
-    private final Map<String, List<Map<String, Object>>> suggestCache = new LinkedHashMap<>(64, 0.75f, true) {
+    private final Map<String, SuggestPack> suggestCache = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, List<Map<String, Object>>> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<String, SuggestPack> eldest) {
             return size() > 60;
         }
     };
@@ -443,12 +444,26 @@ public class ThinkService {
         public final String file;
         public volatile String status = "running";   // running / done / error
         public volatile String message = "";
-        /** 候选组，与执行模式同口径：按各适用图「不匹配占比」的等权平均差异度升序；每条含 diffPercent/recognized 等字段 */
+        /** 候选组，与执行模式同口径：按五族加权差异度升序；每条含 diffPercent/recognized 等字段 */
         public volatile List<Map<String, Object>> candidates = List.of();
+        /** 已分类原始图逐像素直比的最佳行（state/diffPercent/file/action…），无可比原图时 null。
+         *  与 candidates 按同一差异分值口径并列比较（0~100，越小越一致）——若它最低，建议分类应以它为准。 */
+        public volatile Map<String, Object> rawBest;
 
         SuggestTask(String taskId, String file) {
             this.taskId = taskId;
             this.file = file;
+        }
+    }
+
+    /** 一次建议的全部结果：对照图候选 + 原图直比最佳行（rawBest 可为 null）。 */
+    private static final class SuggestPack {
+        final List<Map<String, Object>> candidates;
+        final Map<String, Object> rawBest;
+
+        SuggestPack(List<Map<String, Object>> candidates, Map<String, Object> rawBest) {
+            this.candidates = candidates;
+            this.rawBest = rawBest;
         }
     }
 
@@ -490,19 +505,20 @@ public class ThinkService {
                 return;
             }
             String sig = suggestSig(png, target);
+            SuggestPack pack;
             synchronized (suggestCache) {
-                List<Map<String, Object>> hit = suggestCache.get(file + "|" + sig);
-                if (hit != null) {
-                    t.candidates = hit;
-                    t.status = "done";
-                    return;
+                pack = suggestCache.get(file + "|" + sig);
+            }
+            if (pack == null) {
+                List<Map<String, Object>> out = suggestWithClassifier(target);   // 复用执行模式的识别器，与执行模式同口径
+                Map<String, Object> raw = rawOriginalBest(target);                // 已分类原始图逐像素直比（比对照图口径更直接）
+                pack = new SuggestPack(out, raw);
+                synchronized (suggestCache) {
+                    suggestCache.put(file + "|" + sig, pack);
                 }
             }
-            List<Map<String, Object>> out = suggestWithClassifier(target);   // 复用执行模式的识别器，与执行模式同口径
-            synchronized (suggestCache) {
-                suggestCache.put(file + "|" + sig, out);
-            }
-            t.candidates = out;
+            t.candidates = pack.candidates;
+            t.rawBest = pack.rawBest;
             t.status = "done";
         } catch (Exception e) {
             log.warn("智能建议 分析失败 {}: {}", file, e.toString());
@@ -580,9 +596,11 @@ public class ThinkService {
      * 及各自的 -unique）逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值图、去重均值图、
      * 1-8/1-32 均值块图 / 去重均值块图及各自 -unique）
      * 走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才算匹配，默认 255/3=85），
-     * 分类得分 = 各能判出分值的对照图「不匹配点占比」的等权算术平均（含全部交集档与其独有区图；
-     * 有点击坐标分类是 38 张、无坐标分类是 28 张；独有区图无独有点与缺失 / 不可比的个别图
-     * 一样不参与平均）。识别不设阈值门槛：
+     * 分类得分 = 五族加权平均 (50A+15B+10C+10D+15E)/W：A 全图交集 10 张（权 50）、B 多数 6 张（权 15）、
+     * C 均值 6 张（权 10）、D 去重均值 6 张（权 10）、E 点击区交集 10 张（权 15）——每族先把族内各图
+     * 「不匹配点占比」等权平均；W = 适用族的权重之和（点击坐标分类五族齐全 =100、
+     * 无坐标分类无 E =85）；各图照常参与，无有效像素（独有区图无独有点等）按 0 完全匹配计。
+     * 识别不设阈值门槛：
      * 有可比的最近似分类即视为已识别（差异度仅供展示参考）。
      */
     private List<Map<String, Object>> suggestWithClassifier(BufferedImage target) {
@@ -597,7 +615,7 @@ public class ThinkService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("state", c.state());
             m.put("dir", c.matchedFile());
-            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 各图不匹配占比的等权平均差异度（%）
+            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 各图不匹配占比的五族加权差异度（%）
             if (i == 0) {
                 m.put("action", oc.action);    // 建议分类的动作只在最佳候选上读取（来自该分类 info.json）
             }
@@ -612,6 +630,64 @@ public class ThinkService {
             out.add(m);
         }
         return out;
+    }
+
+    /**
+     * 已分类原始图直比：把目标截图与 {@code classify/} 下每一张已标注原始截图逐像素完全一致比对
+     * （RGB 三通道全等才算匹配，与交集/多数类判据同口径；工程靠 resize 对齐，同一画面应能逐像素重现），
+     * 差异分值 = 不匹配像素数 / 全图总像素 × 100（0~100，0.00% = 与某张原图逐像素完全相同）。
+     * 样本分辨率与目标不一致（resize 对齐被破坏）不可逐点直比，跳过；无任何可比样本返回 null。
+     * <p>用途：对照图（交集/均值等合成图）是分类的“概括代表”，个别画面可能被它误配到别的分类；
+     * 本结果直接与最可信的原始截图比，取全局最低差异的一张样本（含其分类与动作定义），
+     * 与对照图候选按同一差异分值口径并列比较——若它最低，建议分类应改以它为准。
+     * 注意原图直比不设缓存，每次建议都按当前已标注样本集实时计算（样本增删立即生效）。
+     */
+    private Map<String, Object> rawOriginalBest(BufferedImage target) {
+        int tw = target.getWidth(), th = target.getHeight();
+        int[] tpx = target.getRGB(0, 0, tw, th, null, 0, tw);
+        double bestDiff = Double.POSITIVE_INFINITY;
+        Map<String, Object> best = null;
+        for (Path p : annotatedPngs()) {
+            CaptureMark m = classifyStore.sampleOf(p);
+            if (m == null || trim(m.getState()).isEmpty()) {
+                continue;
+            }
+            BufferedImage bi;
+            try {
+                bi = ImageIO.read(p.toFile());
+            } catch (IOException e) {
+                continue;
+            }
+            if (bi == null || bi.getWidth() != tw || bi.getHeight() != th) {
+                continue;   // 仅同分辨率可直接逐点直比（不缩放）
+            }
+            int[] spx = bi.getRGB(0, 0, tw, th, null, 0, tw);
+            long bad = 0;
+            for (int i = 0; i < tpx.length; i++) {
+                if (((tpx[i] ^ spx[i]) & 0xffffff) != 0) {
+                    bad++;
+                }
+            }
+            double diff = bad * 100.0 / tpx.length;
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("state", trim(m.getState()));
+                row.put("file", p.getFileName().toString());
+                row.put("diffPercent", Math.round(diff * 100.0) / 100.0);
+                if (m.getAction() != null) {
+                    row.put("action", m.getAction());
+                }
+                if (m.getLeft() != null) {
+                    row.put("clickLeft", m.getLeft());
+                }
+                if (m.getTop() != null) {
+                    row.put("clickTop", m.getTop());
+                }
+                best = row;
+            }
+        }
+        return best;
     }
 
 

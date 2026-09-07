@@ -111,22 +111,6 @@
           <div class="tcimg"><img id="imgMaxU" alt="多数图独有区图" title="在多数图基础上删除其它分类多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
-          <div class="tch"><span class="tn">均值图（每个像素取RGB的均值）</span><span class="tcs" id="tcsAvg">—</span></div>
-          <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">均值图独有区</span><span class="tcs" id="tcsAvgU">—</span></div>
-          <div class="tcimg"><img id="imgAvgU" alt="均值图独有区图" title="在均值图基础上删除其它分类均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">去重均值图（每个像素取去重后的RGB的均值）</span><span class="tcs" id="tcsDAvg">—</span></div>
-          <div class="tcimg"><img id="imgDAvg" alt="去重均值图" title="先对全部样本在该像素位置出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计，抽样不均不再把平均拉偏）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">去重均值图独有区</span><span class="tcs" id="tcsDAvgU">—</span></div>
-          <div class="tcimg"><img id="imgDAvgU" alt="去重均值图独有区图" title="在去重均值图基础上删除其它分类去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
           <div class="tch"><span class="tn">1/8 多数图（每个像素取8x8个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM8">—</span></div>
           <div class="tcimg"><img id="imgM8" alt="1/8 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
@@ -143,6 +127,14 @@
           <div class="tcimg"><img id="imgM32U" alt="1/32 多数图独有区图" title="在 1/32 多数图基础上删除其它分类 1/32 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
+          <div class="tch"><span class="tn">均值图（每个像素取RGB的均值）</span><span class="tcs" id="tcsAvg">—</span></div>
+          <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">均值图独有区</span><span class="tcs" id="tcsAvgU">—</span></div>
+          <div class="tcimg"><img id="imgAvgU" alt="均值图独有区图" title="在均值图基础上删除其它分类均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
           <div class="tch"><span class="tn">1/8 均值图（每个像素取8x8个原始像素的RGB的均值）</span><span class="tcs" id="tcsA8">—</span></div>
           <div class="tcimg"><img id="imgA8" alt="1/8 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
@@ -151,20 +143,28 @@
           <div class="tcimg"><img id="imgA8U" alt="1/8 均值图独有区图" title="在 1/8 均值图基础上删除其它分类 1/8 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
-          <div class="tch"><span class="tn">1/8 去重均值图（每个像素取8x8个原始像素去重后的RGB的均值）</span><span class="tcs" id="tcsDA8">—</span></div>
-          <div class="tcimg"><img id="imgDA8" alt="1/8 去重均值图" title="先对全部样本在该 8×8 块内出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 去重均值图独有区</span><span class="tcs" id="tcsDA8U">—</span></div>
-          <div class="tcimg"><img id="imgDA8U" alt="1/8 去重均值图独有区图" title="在 1/8 去重均值图基础上删除其它分类 1/8 去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
           <div class="tch"><span class="tn">1/32 均值图（每个像素取32x32个原始像素的RGB的均值）</span><span class="tcs" id="tcsA32">—</span></div>
           <div class="tcimg"><img id="imgA32" alt="1/32 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/32 均值图独有区</span><span class="tcs" id="tcsA32U">—</span></div>
           <div class="tcimg"><img id="imgA32U" alt="1/32 均值图独有区图" title="在 1/32 均值图基础上删除其它分类 1/32 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">去重均值图（每个像素取去重后的RGB的均值）</span><span class="tcs" id="tcsDAvg">—</span></div>
+          <div class="tcimg"><img id="imgDAvg" alt="去重均值图" title="先对全部样本在该像素位置出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计，抽样不均不再把平均拉偏）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">去重均值图独有区</span><span class="tcs" id="tcsDAvgU">—</span></div>
+          <div class="tcimg"><img id="imgDAvgU" alt="去重均值图独有区图" title="在去重均值图基础上删除其它分类去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">1/8 去重均值图（每个像素取8x8个原始像素去重后的RGB的均值）</span><span class="tcs" id="tcsDA8">—</span></div>
+          <div class="tcimg"><img id="imgDA8" alt="1/8 去重均值图" title="先对全部样本在该 8×8 块内出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
+        </div>
+        <div class="tcard">
+          <div class="tch"><span class="tn">1/8 去重均值图独有区</span><span class="tcs" id="tcsDA8U">—</span></div>
+          <div class="tcimg"><img id="imgDA8U" alt="1/8 去重均值图独有区图" title="在 1/8 去重均值图基础上删除其它分类 1/8 去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
         </div>
         <div class="tcard">
           <div class="tch"><span class="tn">1/32 去重均值图（每个像素取32x32个原始像素去重后的RGB的均值）</span><span class="tcs" id="tcsDA32">—</span></div>
@@ -337,7 +337,7 @@
       <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
       <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
       <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
-      <div class="kvrow" title="最近似分类各适用对照图「不匹配点占比」的等权平均（能判出分值的图全部参与，缺失/不可比维度不参与；0~100），越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
+      <div class="kvrow" title="最近似分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 10 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 10 张权 15（仅点击分类有 E）；每族先对族内各图「不匹配点占比」等权平均，再除以 W（有点击 E=100、无点击无 E=85）；0~100 越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
       <div class="kvrow"><span class="k">比对分组</span><span class="v" id="execSamples">—</span></div>
       <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
     </div>
