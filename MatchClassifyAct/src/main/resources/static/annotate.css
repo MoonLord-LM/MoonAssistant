@@ -276,19 +276,21 @@
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
   .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
   .sb-btn:hover{background:var(--accent);color:#fff}
-  /* 汇总分析 · 对照图卡片：按“原图一半”对齐的网格（列宽由 openGroup 按组分辨率动态设定）。
-     网格本身带 min-width:0 滚动（在主图区 imgarea 内纵向滚），容器不够高时不压缩图、加滚动条 */
-  #thinkPane{display:none;gap:12px;align-content:start;justify-content:center;width:100%;padding:12px;margin:0}
+  /* 汇总分析 · 对照图卡片：卡片宽固定 = 原图 1/2 + 边框，永不被容器压缩。
+     #thinkPane 自身就是滚动容器（高度撑满主图区、overflow:auto）：卡片行列超出时由它出纵横滚动条，
+     与卡片内 overflow 无关——卡片（.tcard）不设 overflow:hidden，内容永不裁剪 */
+  #thinkPane{display:none;gap:12px;align-content:start;justify-content:safe center;width:100%;height:100%;overflow:auto;padding:12px;margin:0}
   #thinkPane.g{display:grid}
-  .tcard{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#000;min-width:0}
+  .tcard{border:1px solid var(--border);border-radius:10px;background:#000;min-width:0}
   .tch{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:12px}
   .tch .tn{flex:1 1 auto;min-width:150px;line-height:1.45}
   .tch .tcs{color:var(--amber);font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap}
-  .tcimg{display:flex;align-items:center;justify-content:center;padding:8px;min-height:110px;min-width:0;max-width:100%;
+  .tcimg{position:relative;min-width:0;min-height:120px;
          background-color:#0e1320;background-image:repeating-conic-gradient(#131a29 0% 25%,#0a0e16 0% 50%);background-size:16px 16px}
-  /* 图强制按长宽比完整展示：无论加载到多大都不得超出卡片内容宽被 overflow:hidden 裁掉；
-     尺寸目标仍由 JS 定为“原图一半”，仅在空间不足时等比缩小以完整容纳 */
-  .tcimg img{display:block;max-width:100%;min-width:0;height:auto;cursor:zoom-in}
+  /* 图片按“固定长宽比画布 + contain”展示：画布比例 = 图片自身比例（JS 在 load 后写入 .tcimg 的
+     aspect-ratio），图片永远等比完整放入、绝不拉伸变形；卡片放不下就换行，图多出高度由 imgarea 出滚动条，
+     不再为挤进可视区而压缩图 */
+  .tcimg img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;cursor:zoom-in}
   .tbar{height:3px;border-radius:2px;background:#242c40;overflow:hidden;margin-top:5px}
   .tbar i{display:block;height:100%;background:var(--green)}
   .tbar i.full{background:var(--accent)}   /* 交集图覆盖率 100%：满格用蓝色区分，表示样本高度一致 / 无浪费像素 */
