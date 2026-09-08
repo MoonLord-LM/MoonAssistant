@@ -66,8 +66,8 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 ### 3.2 后台截图与去重
 
 - 页面「开启截图」后按 `capture.interval-ms`（默认 1s）周期后台截图，节拍是 **fixedDelay**：处理完一帧再等这么久取下一帧，绝不叠帧。
-- 每帧保存前与历史全部 PNG（capture/ + classify/）比对，平均差异小于 `capture.diff-threshold-percent`（默认 3%）即视为重复丢弃；结果以单条轻提示展示在右下角（保存成功 / 与哪张重复）。
-- **每次启动**还会在后台自动清理一遍历史重复（按自动 / 手动两个去重阈值中较低者，默认 0.3%），把早期堆积的重复截图删掉；画面持续变化产生的新重复仍靠运行期去重挡。
+- 每帧保存前与历史全部 PNG（capture/ + classify/）全尺寸逐像素比对、统计不一致像素点占比，须与每一张都 > `capture.diff-threshold-percent`（默认 5%）才保存，否则判为重复丢弃；结果以单条轻提示展示在右下角（保存成功 / 与哪张重复）。
+- **每次启动**还会在后台自动清理一遍历史重复（自动截图与手动去重任一开启即执行）：按两个启用阈值中较低者（默认 min(5, 0.5) = 0.5%）逐像素比对，只删与保留图不一致像素占比 ≤ 阈值、几乎重复的截图（近似但不相同的画面一律保留），避免误删；画面持续变化产生的新重复仍靠运行期去重挡。
 - 截图目标尺寸不符 `capture.resize-width × resize-height`（默认 1280×720）时，自动用 `SetWindowPos` 缩放窗口后重截验证，直到 PNG 恰好达标才保存。
 
 ### 3.3 汇总分析（生成对照图）
@@ -112,8 +112,8 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `capture.capture-timeout-ms` | `5000` | 采集器内部抓帧超时 |
 | `capture.capture-dir` `classify-dir` `summary-dir` | `capture` `classify` `summary` | 三分区目录名（相对运行目录） |
 | `capture.output-dir` | `captures` | 旧版单目录，仅启动迁移用 |
-| `capture.diff-threshold-percent` | `3` | 自动截图去重阈值（%）：与历史任一 PNG 平均差异低于它即判重复不保存；`0` = 关闭 |
-| `capture.diff-threshold-manual-percent` | `0.3` | 手动另存（执行页把当前画面存为待标注）去重阈值；`0` = 关闭 |
+| `capture.diff-threshold-percent` | `5` | 自动截图去重阈值（%）：与历史 PNG 全尺寸逐像素比对、统计不一致像素点占比，与任一图占比 ≤ 它即判重复不保存；`0` = 关闭 |
+| `capture.diff-threshold-manual-percent` | `0.5` | 手动「存入分类 / 存到待标注」去重阈值（%）：口径同自动截图但阈值更严，与任一图占比 ≤ 它即拒绝保存；`0` = 关闭。启动历史清理按两个启用阈值中较低者执行 |
 | `ui.auto-open` | `true` | 启动后自动打开控制台应用窗口（找不到 Edge/Chrome 则回退系统浏览器） |
 | `ui.path` | `/annotate` | 自动打开的页面路径 |
 | `ui.window-size` `ui.center` | `1760x990` `true` | 控制台窗口尺寸 / 是否居中 |

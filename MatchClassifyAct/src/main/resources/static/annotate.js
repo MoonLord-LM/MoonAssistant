@@ -1172,7 +1172,7 @@ function renderCapBtn(){
   b.title = capPaused
     ? "截图未开启：点击后开始后台周期截图（原始截图保存到 capture/）"
     : "截图运行中（每 " + (per || "按配置间隔") + " 截取一帧" +
-      (capDiffThreshold > 0 ? "，与每张已保存画面差异均 ≥ " + capDiffThreshold + "% 才保存" : "") +
+      (capDiffThreshold > 0 ? "，与每张已保存图不一致像素占比均 > " + capDiffThreshold + "% 才保存" : "") +
       "）：点击暂停（不再截图保存，控制台其余功能不受影响）";
 }
 
@@ -1206,7 +1206,7 @@ async function toggleCap(){
       const per = fmtCapInterval(capIntervalMs);
       if(capDiffThreshold > 0){
         msg = "已开启截图：每 " + (per || "按配置间隔") + " 截取一帧，" +
-              "画面与每张已保存图差异均 ≥ " + capDiffThreshold + "% 才会保存为新图";
+              "与每张已保存图不一致像素占比均 > " + capDiffThreshold + "% 才会保存为新图";
       }else{
         msg = "已开启截图：每 " + (per || "按配置间隔") + " 截取一帧并保存";
       }
@@ -2337,7 +2337,7 @@ async function checkAppVersion(){
     if(shotLog.length){
       const pctTxt = v => {
         let p = (v != null ? v : (capDiffThreshold || 0));
-        if(Number.isInteger(p)) return String(p);           // 整数直显（阈值常为 1/3，如 3 → "3"）
+        if(Number.isInteger(p)) return String(p);           // 整数直显（如阈值 5 → "5"）
         return String(Math.round(p * 100) / 100);           // 非整数保留两位去尾零：0.96 → "0.96"（一位会把 0.96~1% 舍成 1%，与阈值并排观感矛盾）
       };
       for(let i = 0; i < shotLog.length; i++){
@@ -2348,7 +2348,7 @@ async function checkAppVersion(){
         const refWho = s.refState ? "「" + s.refState + "」分类的截图「" + fname + "」" : "截图「" + fname + "」";
         const txt = saved
           ? "已保存截图 " + fname
-          : "当前画面与" + refWho + "差异为 " + pctTxt(s.pct) + "%，小于阈值 " + pctTxt(s.threshold) + "%，不保存";
+          : "当前画面与" + refWho + "仅 " + pctTxt(s.pct) + "% 像素点不同（≤ " + pctTxt(s.threshold) + "% 阈值，视为同一画面），未保存";
         if(i === shotLog.length - 1) showShotTip(txt, saved ? "ok" : "skip");   // 最新一条：右下角轻提示（内部已入日志）
         else pushLog(txt, saved ? "ok" : "skip", Number(s.at) || undefined);    // 轮询间隙的中间条：仅入历史日志
       }
@@ -2357,22 +2357,26 @@ async function checkAppVersion(){
     // 后端重启后 seq 会从 1 重新计数（历史已清空）：本页基线若已越过它则说明计数跳变，下一轮改为全量回填，避免提示静默中断
     const maxSeq = Number(j && j.shotMaxSeq) || 0;
     if(maxSeq > 0 && lastShotLogSeq > maxSeq) lastShotLogSeq = -1;
-    // 启动历史重复清理结果：后端每次启动按差异阈值（默认 0.3%）重扫 capture/ + classify/ 全部截图、
-    // 删除差异低于阈值的重复图（只保留最早一张）。不论是否删除了图片都右下角提示一次清理完成
+    // 启动历史重复清理结果：后端每次启动按两个启用阈值中较低者（默认 min(5, 0.5) = 0.5%）逐像素比对重扫
+    // capture/ + classify/ 全部截图，不一致像素占比 ≤ 阈值即删（近似但不重复的画面一律保留）。
+    // 不论是否删除了图片都右下角提示一次清理完成
     const dedup = j && j.startupDedupNotice;
     if(dedup && dedup.at && Number(dedup.at) !== lastDedupNoticeAt){
       lastDedupNoticeAt = Number(dedup.at);
-      let pct = (dedup.threshold != null ? dedup.threshold : (capDiffThreshold || 0));
-      if(Number.isInteger(pct)){ pct = String(pct); }
-      else{ pct = String(Math.round(pct * 10) / 10); }   // 阈值如 3.0% → 显示“3%”
+      // 本次清理阈值（%）：整数直显、非整数去尾零；旧后端无该字段时省略判据不写
+      const thr = Number(dedup.threshold);
+      const thresholdTxt = isFinite(thr) && thr > 0
+        ? "按不一致像素占比 ≤ " + (Number.isInteger(thr) ? String(thr) : String(Math.round(thr * 100) / 100)) + "% "
+        : "";
       // 耗时（后端实际重扫毫秒数）：≥1s 显示 “Xs”，不足 1s 显示 “Xms”；旧后端无该字段时静默不加
       const costMs = Number(dedup.costMs) || 0;
       const costTxt = costMs > 0
         ? "，耗时 " + (costMs >= 1000 ? (costMs / 1000).toFixed(1).replace(/\.0$/, "") + "s" : costMs + "ms")
         : "";
+      const scanned = Number(dedup.scanned) || 0;
       const msg = (dedup.removed > 0)
-        ? "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，删除重复 " + dedup.removed + " 张" + costTxt
-        : "启动重复清理：按差异 < " + pct + "% 阈值重扫 " + dedup.scanned + " 张截图，检查完成，未发现重复图片" + costTxt;
+        ? "启动重复清理：" + thresholdTxt + "重扫 " + scanned + " 张，删除重复 " + dedup.removed + " 张" + costTxt
+        : "启动重复清理：" + thresholdTxt + "重扫 " + scanned + " 张，未发现重复图片" + costTxt;
       showShotTip(msg, "ok");
     }
     const ts = Number(j && j.codeTs) || 0;
@@ -2689,8 +2693,8 @@ async function execSaveToCapture(){
     if(execShownAt === at0) execShownStored = true;   // 同帧保存成功：候选「存入分类」联动置灰
     toast("已把当前画面存入 capture/（" + j.name + "）。切到「标注模式 → 未标注」即可定位并精确标注（含鼠标点击坐标）。", "ok");
   } else if(j && j.kind === "dup"){
-    // 与已保存截图差异不达标被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与差异比例由后端给出
-    toast(j.message || "当前画面与某张已保存截图几乎相同，本次未保存", "skip");
+    // 与某张历史画面差异 ≤ 手动阈值被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与重复参考由后端给出
+    toast(j.message || "当前画面与某张已保存截图几乎重复（不一致像素占比 ≤ 手动阈值），本次未另存", "skip");
   } else {
     toast("保存失败：" + ((j && j.message) || "接口不可用"), "err");
   }
@@ -2711,36 +2715,36 @@ function renderExecCandidates(list){
   list.forEach((it, i) => {
     const row = document.createElement("div");
     row.className = "cand" + (i === 0 ? " top" : "");
-    const isRaw = !!(it && it.fromRaw === true);   // 「按已分类原图匹配」直比行：只展示命中分类与差异分值，不带任何操作按钮
+    const isRaw = !!(it && it.raw === true);   // 「按已分类原图匹配」直比行：来源是某张已分类原图而非对照图，无各图分值明细；仍可把当前画面存入其命中分类（后端 Candidate 字段名 raw）
     const stateTxt = execEsc(it.state || "—");
     const diffTxt = (typeof it.diffPercent === "number" && it.diffPercent >= 0) ? it.diffPercent.toFixed(2) + "%" : "—";
-    if(!isRaw && it.matchedFile && it.matchedFile !== it.state){
-      row.title = it.matchedFile;   // 来源分组文件名只挂悬停提示，不占行宽
+    if(it.matchedFile && it.matchedFile !== it.state){
+      row.title = isRaw ? "已分类原图 " + it.matchedFile + "（与当前画面直比命中）" : it.matchedFile;   // 来源文件名只挂悬停提示，不占行宽
     }
     row.innerHTML = (isRaw ? '<span style="color:var(--green)">【按已分类原图匹配】</span> ' : "") +
                     '<span class="cst">' + stateTxt + "</span>" +
                     '<span class="cd">' + diffTxt + "</span>";
-    if(!isRaw){
-      if(Array.isArray(it.kinds) && it.kinds.length){
-        const vbtn = document.createElement("button");
-        vbtn.type = "button";
-        vbtn.className = "mbtn";
-        vbtn.textContent = "详细分值";
-        vbtn.title = "查看该分类各对照图（基础图及其独有区图，点击动作分类另有点击区交集图）各自的不匹配点占比分值";
-        vbtn.addEventListener("click", () => openKindScores(it));
-        row.appendChild(vbtn);
-      }
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "mbtn";
-      btn.disabled = done;
-      btn.textContent = done ? "已存入" : "存入分类";
-      btn.title = done
-        ? "当前画面已存入（待标注截图或某分类样本）；重新「立即识别」出新画面后可再次存入"
-        : "把当前画面登记为「" + stateTxt + "」的样本，下次识别会优先参考它";
-      btn.addEventListener("click", () => execQuickMark(it.state, btn));
-      row.appendChild(btn);
+    if(!isRaw && Array.isArray(it.kinds) && it.kinds.length){
+      const vbtn = document.createElement("button");
+      vbtn.type = "button";
+      vbtn.className = "mbtn";
+      vbtn.textContent = "详细分值";
+      vbtn.title = "查看该分类各对照图（基础图及其独有区图，点击动作分类另有点击区交集图）各自的不匹配点占比分值";
+      vbtn.addEventListener("click", () => openKindScores(it));
+      row.appendChild(vbtn);
     }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mbtn";
+    btn.disabled = done;
+    btn.textContent = done ? "已存入" : "存入分类";
+    btn.title = done
+      ? "当前画面已存入（待标注截图或某分类样本）；重新「立即识别」出新画面后可再次存入"
+      : (isRaw
+          ? "把当前画面登记为「" + stateTxt + "」的样本（其与已分类原图直比命中的分类），下次识别会优先参考它"
+          : "把当前画面登记为「" + stateTxt + "」的样本，下次识别会优先参考它");
+    btn.addEventListener("click", () => execQuickMark(it.state, btn));
+    row.appendChild(btn);
     box.appendChild(row);
   });
 }
@@ -2842,8 +2846,8 @@ async function execQuickMark(state, btn){
     if(execShownAt === at0) execShownStored = true;   // 同帧存入成功：其它候选行与「存入待标注」联动置灰
     toast("已把当前画面存入分类「" + state + "」的样本。需在标注模式对该分类重新执行「汇总分析」，后续识别才会按新样本匹配。", "ok");
   } else if(j && j.kind === "dup"){
-    // 与既有样本差异不达标被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与差异比例由后端给出
-    toast(j.message || "当前画面与既有样本几乎重复，未存入分类（可在标注模式修改既有样本的分类）", "skip");
+    // 与某张已保存图差异 ≤ 手动阈值被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与重复参考由后端给出
+    toast(j.message || "当前画面与某张已保存图几乎重复（不一致像素占比 ≤ 手动阈值），未存入分类（如需改标请在标注模式修改该样本的分类）", "skip");
   } else {
     toast("标记失败：" + ((j && j.message) || "接口不可用"), "err");
   }

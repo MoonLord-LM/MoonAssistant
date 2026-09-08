@@ -29,8 +29,8 @@ import java.util.Map;
  * <ul>
  *   <li>{@code captureStopReason}：截图 resize 持续无法达标自动停止时，前端据此弹出错误提示；</li>
  *   <li>{@code shotNotice}（{at, kind, name, pct?}）：最近一次截图结果——成功保存（kind=saved，
- *       name 为新图文件名）或画面与已保存参考图差异低于阈值被丢弃（kind=dup，name 为参考图文件名，
- *       pct 为画面与该参考图的实际平均像素差异百分比、必然低于阈值）。每轮完成都记录、不节流，
+ *       name 为新图文件名）或画面与已保存参考图的不一致像素点占比 ≤ 阈值被丢弃（kind=dup，name 为参考图文件名，
+ *       pct 为画面与该参考图的不一致像素点占比、必然 ≤ 阈值）。每轮完成都记录、不节流，
  *       前端每 2s 轮询取走（截图节拍默认约 1s、可能快于轮询，轮询间隙内连续多条只展示最新一条，属单条替换预期行为）并以右下角轻提示即时展示；</li>
  *   <li>{@code shotLog}（seq > 请求参数 shotAfter 的全部截图结果数组）：仅当请求带 {@code shotAfter}
  *       （上次已取的最大 seq；-1 = 从头全量取）时返回。shotNotice 只是最近一条，轮询间隙被节流的
@@ -39,8 +39,8 @@ import java.util.Map;
  *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
  *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）；</li>
  *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed, costMs}）：本次启动的历史重复清理结果
- *       （自动截图与手动另存两个去重阈值均 ≤ 0 时不执行）——按两者启用阈值中的最低要求
- *       （默认 min(3, 0.3) = 0.3%）重扫 capture/ + classify/ 全部截图删除重复。不论是否删除了图片，
+ *       （自动截图与手动去重任一开启时执行）——按两个启用阈值中较低者（默认 min(5, 0.5)=0.5）与保留图
+ *       全尺寸逐像素比对，不一致像素点占比 ≤ 阈值即删（近似但不相同的画面一律保留）。不论是否删除了图片，
  *       前端都会据此在右下角提示一次清理完成
  *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片）。</li>
  * </ul></p>
@@ -74,7 +74,7 @@ public class AppMetaController {
             r.put("kind", shot.kind);
             r.put("name", shot.name);
             if ("dup".equals(shot.kind)) {
-                r.put("pct", shot.diffPercent);   // dup：画面与该参考图的实际平均像素差异（%），必然低于阈值；saved 不带
+                r.put("pct", shot.diffPercent);   // dup：画面与该参考图的不一致像素点占比（%），必然 ≤ 阈值；saved 不带
                 r.put("refState", shot.refState); // dup：参考图所属分类（classify/ 已标注样本），capture/ 未标注图为 null
                 r.put("threshold", shot.threshold); // dup：本次判重阈值（%）
             }
@@ -93,7 +93,7 @@ public class AppMetaController {
                     r.put("kind", s.kind);
                     r.put("name", s.name);
                     if ("dup".equals(s.kind)) {
-                        r.put("pct", s.diffPercent);   // dup 才带：画面与该参考图的实际平均像素差异（%）
+                        r.put("pct", s.diffPercent);   // dup 才带：画面与该参考图的不一致像素点占比（%）
                         r.put("refState", s.refState); // dup 才带：参考图所属分类（capture/ 未标注图为 null）
                         r.put("threshold", s.threshold); // dup 才带：本次判重阈值（%）
                     }
