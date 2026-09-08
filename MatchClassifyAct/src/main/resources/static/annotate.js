@@ -515,16 +515,18 @@ function setSegState(){
   for(const i of ALL){
     if(i.marked && i.state) keys.add(i.state + "\u0000" + (i.action || "none"));   // 与服务端 groups() 同口径：(state, action) 去重
   }
-  const cnt = { all:nAll, unmarked:nUn, marked:nAll - nUn, think:keys.size };
-  const names = { all:"全部", unmarked:"未标注", marked:"已标注", think:"汇总分析" };
+  const cnt = { all:nAll, unmarked:nUn, marked:nAll - nUn, think:keys.size, verify:vkCnt };
+  const names = { all:"全部", unmarked:"未标注", marked:"已标注", think:"汇总分析", verify:"特征验证" };
   for(const b of $("filterSeg").querySelectorAll("button")){
     b.classList.toggle("on", b.dataset.f === FILTER);
-    b.textContent = names[b.dataset.f] + "（" + cnt[b.dataset.f] + "）";
+    const n = cnt[b.dataset.f];
+    b.textContent = names[b.dataset.f] + (n == null ? "" : "（" + n + "）");
   }
 }
 
 function renderList(){
   if(FILTER === "think"){ renderThinkList(); return; }
+  if(FILTER === "verify"){ renderVerifyList(); return; }
   const L = listNow();
   const ul = $("imgList"); ul.innerHTML = "";
   $("listCount").textContent = L.length + " 张";
@@ -615,8 +617,10 @@ async function goFilter(state){
 async function applyFilter(f){
   if(FILTER === f) return;
   if(dirty && !confirm("当前标注尚未保存，确定切换？")) return;
-  if(f === "think"){ enterThink(); return; }   // 汇总分析入口自带 refreshThink 全量刷新
+  if(f === "think"){ if(FILTER === "verify") exitVerify(); enterThink(); return; }   // 汇总分析入口自带 refreshThink 全量刷新
+  if(f === "verify"){ if(FILTER === "think") exitThink(); enterVerify(); return; }    // 特征验证：左栏算法列表 + 主区 A/B 分值明细
   if(FILTER === "think"){ exitThink(); curName = null; }
+  else if(FILTER === "verify"){ exitVerify(); curName = null; }
   FILTER = f;
   if(f !== "all") stateFilter = null;        // 分类过滤只属于「全部」视图，离开即重置
   if(f === "unmarked" || f === "marked") rebuildStates();   // 标注视图：chips 的 sel/fil 随新视图刷新
@@ -634,6 +638,7 @@ async function applyFilter(f){
 function syncRightPanel(){
   if(appMode !== "mark") return;
   $("edThink").style.display = FILTER === "think" ? "" : "none";
+  $("edVerify").style.display = FILTER === "verify" ? "" : "none";
   $("edNorm").style.display = (FILTER === "unmarked" || FILTER === "marked") ? "" : "none";
   $("edFilter").style.display = FILTER === "all" ? "" : "none";
   $("edJump").style.display = FILTER === "all" ? "" : "none";
@@ -2250,6 +2255,295 @@ window.addEventListener("resize", ()=>{
   }
 });
 
+/* ---------------- 特征验证：汇总图算法自回归评分 ---------------- */
+let VER = null;              // /api/verify/status 最近一次快照
+let vkCnt = null;            // 算法 kind 数（进验证视图轮询后缓存，供顶栏按钮数字用）
+let VK_SEL = null;           // 当前选中的汇总图算法 kind
+let VK_DTL = null;           // 当前选中算法的分类级明细
+let VK_SEQ = "";             // 列表渲染签名（避免无变化时每 1 秒强制重建 DOM）
+let VK_TMR = null;           // 特征验证视图下的专用轮询定时器
+let vkBusy = false;          // 请求去重（防止上一轮未返回时下一轮叠发）
+
+const VER_SAME = { same90:"90%", same80:"80%", same70:"70%", same60:"60%", same50:"50%" };
+
+function vkInfo(kind){
+  const uniq = kind.endsWith("-unique");
+  const b = uniq ? kind.slice(0, -7) : kind;
+  let name = kind, dim = "";
+  const same = VER_SAME[b];
+  if(same){ name = "交集图 " + same + (uniq ? " · 独有区" : ""); dim = "全图交集" + (uniq ? " · 独有区" : " · 覆盖率档"); }
+  else if(b === "max"){ name = "多数图 全幅"; dim = "多数图"; }
+  else if(b === "avg"){ name = "均值图 全幅"; dim = "均值图"; }
+  else if(b === "dedup-avg"){ name = "去重均值 全幅"; dim = "去重均值图"; }
+  else if(b.startsWith("major")){ name = "多数图 " + b.slice(5) + "×" + b.slice(5); dim = "多数图"; }
+  else if(b.startsWith("avg")){ name = "均值图 " + b.slice(3) + "×" + b.slice(3); dim = "均值图"; }
+  else if(b.startsWith("dedup-avg")){ name = "去重均值 " + b.slice(9) + "×" + b.slice(9); dim = "去重均值图"; }
+  else if(/^click(8|32)-same(90|80|70|60|50)$/.test(kind)){
+    const m = kind.match(/^click(8|32)-same(90|80|70|60|50)$/);
+    name = "点击区交集 " + (m[1] === "8" ? "1/8" : "1/32") + " · " + VER_SAME["same" + m[2]];
+    dim = "点击动作分类 · 点击坐标方框";
+  }
+  if(uniq && dim && dim.indexOf("独有区") < 0){ dim += " · 独有区"; }
+  if(uniq && name && name.indexOf("独有区") < 0){ name += " · 独有区"; }
+  return { name:name, dim:dim };
+}
+function fmtV(x){
+  if(x == null || isNaN(x)) return "—";
+  return (Math.round(x * 100) / 100).toFixed(2) + "%";
+}
+// B 命中比例告警配色：<50 红、<90 黄、其余默认色
+function vkBC(b){
+  if(b == null || isNaN(b)) return "";
+  return b < 50 ? "vkbad" : b < 90 ? "vkwarn" : "";
+}
+function vkTime(ms){
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0");
+}
+function vkCost(ms){
+  if(ms == null) return "—";
+  return ms < 60000 ? Math.max(1, Math.round(ms / 1000)) + " 秒" : (ms / 60000).toFixed(1) + " 分";
+}
+function vkSig(j){
+  return j.samples + "|" + j.groups + "\n" +
+    (j.kinds || []).map(k => k.kind + "|" + k.state + "|" + k.a + "|" + k.b + "|" + k.samples).join("\n");
+}
+
+/* 进入特征验证工作台（左栏 = 汇总图算法列表；主图区 = 选中算法的 A/B 分值明细；右栏 = 说明与开始验证） */
+function enterVerify(){
+  FILTER = "verify";
+  dirty = false;
+  stateFilter = null;
+  updateCountsOnly();
+  syncRightPanel();
+  $("imgwrap").style.display = "none";
+  $("placeholder").style.display = "none";
+  showZoomCtl(false);
+  resetZoom();
+  hideSmartTip();
+  syncSugDock();
+  $("lstTitle").textContent = "汇总图算法列表（特征验证）";
+  $("listCount").textContent = "";
+  $("thinkFil").hidden = true;
+  $("thinkEmpty").style.display = "none";
+  $("thinkEmpty").className = "";
+  $("thinkPane").style.display = "none";
+  selKey = null;
+  VK_SEL = null;
+  VK_DTL = null;
+  VK_SEQ = "";
+  const em = $("verifyEmpty"), dt = $("verifyDetail");
+  em.style.display = "block"; dt.style.display = "none";
+  $("verifyPane").style.display = "flex";
+  renderVerifyList();
+  if(!VK_TMR) VK_TMR = setInterval(vkPoll, 1000);
+  vkPoll();
+}
+
+function exitVerify(){
+  closeLightbox();
+  if(VK_TMR){ clearInterval(VK_TMR); VK_TMR = null; }
+  $("verifyPane").style.display = "none";
+  $("edVerify").style.display = "none";
+  $("thinkEmpty").style.display = "none";
+  $("thinkEmpty").className = "";
+  $("thinkPane").style.display = "none";
+  $("thinkFil").hidden = true;
+  $("thinkBar").hidden = true;
+  syncDockNow();
+  VK_SEL = null;
+  VK_DTL = null;
+  VER = null;
+  VK_SEQ = "";
+}
+
+function renderVerifyList(){
+  setSegState();
+  const j = VER;
+  const ul = $("imgList"); ul.innerHTML = "";
+  $("listCount").textContent = j && j.kinds ? j.kinds.length + " 种" : "";
+  if(!j){
+    const d = document.createElement("li"); d.className = "empty";
+    d.textContent = "正在读取验证状态…";
+    ul.appendChild(d);
+    return;
+  }
+  const ks = j.kinds || [];
+  const t = j.task;
+  for(const k of ks){
+    const li = document.createElement("li");
+    li.className = "row vrow" + (VK_SEL === k.kind ? " on" : "");
+    const info = vkInfo(k.kind);
+    let chip = "未验证", chipCls = "vn";
+    if(j.running && t && !t.finished && t.cur === k.kind){ chip = "计算中…"; chipCls = "vr"; }
+    else if(k.state === "done"){ chip = "有效"; chipCls = "vd"; }
+    else if(k.state === "stale"){ chip = "需重算"; chipCls = "vs"; }
+    const meta = (k.a != null && k.b != null)
+      ? 'A ' + fmtV(k.a) + ' ｜ B <span class="' + vkBC(k.b) + '">' + fmtV(k.b) + '</span> ｜ ' + k.samples + ' 样本'
+      : escHtml(info.dim || info.name);
+    li.innerHTML =
+      '<div class="r1"><span class="t">' + escHtml(info.name) + '</span>' +
+      '<span class="chip vkc ' + chipCls + '">' + chip + '</span></div>' +
+      '<div class="r2">' + meta + '</div>';
+    li.title = "算法 " + k.kind + (k.samples ? " · " + k.samples + " 张样本" : "");
+    li.addEventListener("click", ()=> vkSelect(k.kind));
+    ul.appendChild(li);
+  }
+}
+
+async function vkPoll(){
+  if(appMode !== "mark") return;
+  if(FILTER !== "verify") return;
+  if(vkBusy) return;
+  vkBusy = true;
+  let j = null;
+  try{
+    const r = await fetch("/api/verify/status", { cache:"no-store" });
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    j = await r.json();
+  }catch(e){ vkBusy = false; return; }
+  vkBusy = false;
+  const prev = VER;
+  VER = j;
+  if(j && j.kinds) vkCnt = j.kinds.length;
+  const sig = vkSig(j);
+  if(sig !== VK_SEQ){ VK_SEQ = sig; renderVerifyList(); }
+  vkTaskUi(j);
+  const wasRunning = prev ? !!prev.running : false;
+  const err = j.task ? j.task.error : null;
+  if(wasRunning && !j.running){
+    if(err){ toast("特征验证中断：" + err, "err"); }
+    else{
+      toast("特征验证已完成，结果已缓存。", "ok");
+      if(VK_SEL) vkLoadDetail(VK_SEL);
+    }
+  }else if(!VK_SEL && !j.running){
+    const first = (j.kinds || []).find(k => k.state === "done");
+    if(first){ vkSelect(first.kind); return; }
+  }
+  if(VK_SEL && !VK_DTL) vkLoadDetail(VK_SEL);   // 尚未取过明细（如运行中进入）→ 补取
+}
+
+async function vkSelect(kind){
+  if(VK_SEL === kind) return;
+  VK_SEL = kind;
+  renderVerifyList();
+  await vkLoadDetail(kind);
+}
+
+async function vkLoadDetail(kind){
+  const em = $("verifyEmpty"), dt = $("verifyDetail");
+  if(!kind){ em.style.display = "block"; dt.style.display = "none"; VK_DTL = null; return; }
+  let j = null;
+  try{
+    const r = await fetch("/api/verify/detail?kind=" + encodeURIComponent(kind), { cache:"no-store" });
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    j = await r.json();
+  }catch(e){ return; }
+  if(VK_SEL !== kind) return;
+  VK_DTL = j || null;
+  renderVerifyDetail();
+}
+
+function renderVerifyDetail(){
+  const em = $("verifyEmpty"), dt = $("verifyDetail");
+  const d = VK_DTL;
+  if(!d){ em.style.display = "block"; dt.style.display = "none"; return; }
+  em.style.display = "none"; dt.style.display = "flex";
+  const info = vkInfo(d.kind);
+  $("vdTitle").textContent = info.name;
+  const chip = $("vdChip");
+  chip.textContent = d.fresh ? "结果有效" : "已过期 · 需重算";
+  chip.className = "vdChip vkc " + (d.fresh ? "vd" : "vs");
+  $("vdStamp").textContent = "完成 " + vkTime(d.doneMs) + " · 耗时 " + vkCost(d.costMs) + " · kind " + d.kind;
+  $("vdSum").innerHTML =
+    '<div class="vcard"><div class="vcap">A · 自分类平均匹配值</div>' +
+    '<div class="vval">' + fmtV(d.a) + '</div>' +
+    '<div class="vsub">全体样本与「自分类该算法汇总图」比对的不匹配占比均值，越低越像自己</div></div>' +
+    '<div class="vcard"><div class="vcap">匹配正确分类的比例</div>' +
+    '<div class="vval ' + vkBC(d.b) + '">' + fmtV(d.b) + '</div>' +
+    '<div class="vsub">在全部同类汇总图里匹配最好且分类正确的样本占比，越高区分度越好</div></div>' +
+    '<div class="vmeta">样本 ' + d.samples + ' 张 · 参与分类 ' + d.groups + ' 个</div>';
+  const tb = $("vdRows"); tb.innerHTML = "";
+  if(!d.rows || !d.rows.length || d.samples === 0){
+    const tr = document.createElement("tr");
+    tr.innerHTML = '<td colspan="6" class="vdnone">该算法当前没有可验证的分类或样本（对应汇总图产物不存在，或没有任何原图能与之比对）。</td>';
+    tb.appendChild(tr);
+    return;
+  }
+  for(const r of d.rows){
+    const tr = document.createElement("tr");
+    const act = (ACT_LABEL[r.action] || r.action || "无动作")
+      + (r.clickLeft != null && r.clickTop != null ? "（" + r.clickLeft + "," + r.clickTop + "）" : "");
+    tr.innerHTML =
+      '<td class="st">' + escHtml(r.state) + '</td>' +
+      '<td class="ac">' + escHtml(act) + '</td>' +
+      '<td class="nu">' + r.samples + '</td>' +
+      '<td class="nu">' + fmtV(r.a) + '</td>' +
+      '<td class="nu ' + vkBC(r.b) + '">' + fmtV(r.b) + '</td>' +
+      '<td class="nu">' + (r.hit == null ? "—" : r.hit + " / " + r.samples) + '</td>';
+    tr.title = "样本 " + r.samples + " 张：A " + fmtV(r.a) + "，B " + fmtV(r.b);
+    tb.appendChild(tr);
+  }
+}
+
+function vkTaskUi(j){
+  const t = j.task;
+  const ks = j.kinds || [];
+  const doneCount = ks.filter(k => k.state === "done").length;
+  const staleCount = ks.filter(k => k.state === "stale").length;
+  const total = ks.length;
+  const bar = $("verifyTask"), fill = $("vtFill"), txt = $("vtText");
+  const btn = $("btnVerifyStart"), stat = $("vkStat"), ver = $("vkVerdict");
+  let base = "样本库：" + j.samples + " 张原图 · " + j.groups + " 个分类\n已算 " + (doneCount + staleCount) + "/" + total + " 种";
+  if(doneCount || staleCount) base += "（有效 " + doneCount + " · 需重算 " + staleCount + "）";
+  if(j.running && t && !t.finished){
+    bar.style.display = "block";
+    const curName = t.cur ? vkInfo(t.cur).name : "准备中";
+    const pct = t.total ? Math.min(100, Math.round(t.done / t.total * 100)) : 0;
+    fill.style.width = pct + "%";
+    txt.style.color = "";
+    txt.textContent = "正在验证「" + curName + "」（" + Math.min(t.done + 1, t.total) + "/" + t.total + "）"
+      + (t.totalSamples ? " · 样本 " + Math.min(t.processed + 1, t.totalSamples) + "/" + t.totalSamples : "");
+    btn.disabled = true;
+    ver.style.display = "none";
+  }else{
+    btn.disabled = false;
+    ver.style.display = "none";
+    if(t && t.finished){
+      fill.style.width = "100%";
+      bar.style.display = "block";
+      if(t.error){
+        txt.style.color = "var(--danger)";
+        txt.textContent = t.error;
+        ver.style.display = "none";
+      }else{
+        txt.style.color = "var(--green)";
+        txt.textContent = "最近一次验证已完成：" + t.done + "/" + t.total + " 种算法。";
+      }
+    }else{
+      bar.style.display = "none";
+    }
+  }
+  stat.textContent = base;
+}
+
+async function vkStart(){
+  let ok = false, started = false;
+  try{
+    const r = await fetch("/api/verify/start", { method:"POST", cache:"no-store" });
+    const j = await r.json();
+    started = !!(j && j.started);
+    ok = true;
+  }catch(e){ ok = false; }
+  if(!ok){ toast("无法启动验证：" + "请求失败", "err"); return; }
+  if(started){ toast("开始验证全部汇总图算法…", "ok"); }
+  else{ toast("已有验证任务在跑，请稍候。", ""); }
+  vkPoll();
+}
+
+$("btnVerifyStart").addEventListener("click", vkStart);
+
 /* ---------------- 自动刷新 ---------------- */
 const POLL_MS = 10000;   // 后台每 10 秒悄悄同步一次列表
 function listSig(arr){ return arr.map(i => [i.name,i.marked,i.state,i.action,i.left,i.top].join("|")).join("\n"); }
@@ -2281,6 +2575,7 @@ async function updateCountsOnly(){
 }
 async function pollTick(){
   if(appMode !== "mark") return;                // 执行模式：暂停后台列表静默同步
+  if(FILTER === "verify"){ vkPoll(); return; }  // 特征验证：轮询 A/B 状态与验证任务进度
   if(FILTER === "think"){                       // 汇总分析模式：先同步计数，再静默刷新组合状态
     if(!thinkBusy && !dirty){
       await updateCountsOnly();                 // 新截图 / 新标注 → 「全部 / 未标注 / 已标注」计数自动更新
@@ -2299,6 +2594,8 @@ document.addEventListener("visibilitychange", ()=>{
   if(appMode !== "mark" || dirty) return;
   if(FILTER === "think"){
     if(!thinkBusy){ updateCountsOnly(); refreshThink(false, true); }
+  }else if(FILTER === "verify"){
+    vkPoll();
   }else{
     refreshSilent();
   }

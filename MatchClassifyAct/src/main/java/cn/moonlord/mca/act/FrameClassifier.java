@@ -16,11 +16,11 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
@@ -269,15 +269,15 @@ public class FrameClassifier {
     private final StoragePaths storage;
     private final ExecuteProperties executeProperties;
 
-    /** 产物像素缓存：key = 产物文件绝对路径，无界常驻不淘汰。 */
-    private final Map<String, CachedPx> cache = new HashMap<>();
+    /** 产物像素缓存：key = 产物文件绝对路径，无界常驻不淘汰（并发读写安全，供识别与特征验证共用）。 */
+    private final Map<String, CachedPx> cache = new ConcurrentHashMap<>();
 
     /** classify/ 已标注原始图的全幅像素缓存（供「原图直比」候选行每帧与画面逐像素比对，免每帧重解码）：
      *  key = 原图绝对路径，带 mtime/size 失效、无界常驻。每张约 3.7MB（1280×720），样本继续增多时
      *  与产物缓存一起按 -Xmx 预算评估（当前 classify 数百张量级可接受）。 */
-    private final Map<String, CachedPx> rawPxCache = new HashMap<>();
+    private final Map<String, CachedPx> rawPxCache = new ConcurrentHashMap<>();
 
-    private static final class CachedPx {
+    static final class CachedPx {
         final long lastModified;
         final long size;
         final int w;          // 原图宽（全幅 = 产物宽；块图 = 块降采样宽）
@@ -298,7 +298,7 @@ public class FrameClassifier {
     /** 当前画面的一次性预计算产物：本帧各分类共用。同一帧原先被每个分类目录各自重复做整帧块压缩
      *  （多数块图每块还带 HashMap 装箱统计）——是识别耗时的最大来源；现在每轮只算一次、全部目录复用，
      *  全幅类比对直接用下方 full 整幅像素（交集五档及 max/avg/dedup-avg 及各自 -unique、点击区方框共用同一份）。 */
-    private static final class FrameWork {
+    static final class FrameWork {
         final int fw, fh;
         final int[] full;       // 画面全幅像素（全幅类逐点比对 + 点击区交集图按坐标裁方框共用同一份）
         final int[] b8M, b8A, b8DA;   // 8×8 块多数/均值/去重均值（major8·avg8·dedup-avg8 及各自 -unique 共用）
@@ -953,6 +953,43 @@ public class FrameClassifier {
 
     private static Integer intOf(Object v) {
         return v instanceof Number n ? n.intValue() : null;
+    }
+
+    // ---------- 特征验证桥接（供同包 VerifyService 在独立任务中复用识别同口径比对与缓存；缓存为并发安全 Map） ----------
+
+    /** 验证维度清单 = 识别参与比对的全部 kind（顺序与识别一致）。 */
+    static List<String> verifyOrder() {
+        return KIND_ORDER;
+    }
+
+    /** kind → 产物文件名（与识别比对同源）。 */
+    static String verifyFile(String kind) {
+        return KIND_FILE.get(kind);
+    }
+
+    /** 读一张产物全幅像素并复用产物缓存（解码失败返回 null）。 */
+    CachedPx verifyArtifact(Path png, String kind) {
+        return loadCached(png, kind);
+    }
+
+    /** 读 classify/ 原图全幅像素并复用原图缓存（仅与 fw×fh 同分辨率，不符返回 null）。 */
+    CachedPx verifySample(Path png, int fw, int fh) {
+        return loadRawPx(png, fw, fh);
+    }
+
+    /** 单张样本（work，已按样本全幅预计算）与单张产物单 kind 逐点比对（识别同口径，0~100）；
+     *  产物与画面分辨率不符等不适用情形返回 -1，不抛异常。 */
+    double verifyKindScore(FrameWork work, CachedPx ref, String kind, int ccx, int ccy) {
+        try {
+            return compareKind(work, ref, kind, ccx, ccy);
+        } catch (IllegalArgumentException e) {
+            return -1;
+        }
+    }
+
+    /** 读产物目录 info.json（非私有版，供验证枚举分组）。 */
+    static Map<String, Object> verifyInfo(Path gdir) {
+        return readInfo(gdir);
     }
 
 }

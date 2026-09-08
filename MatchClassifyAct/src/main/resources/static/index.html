@@ -21,6 +21,7 @@
     <button data-f="unmarked" class="on">未标注</button>
     <button data-f="marked">已标注</button>
     <button data-f="think">汇总分析</button>
+    <button data-f="verify">特征验证</button>
   </div>
   <div class="spacer"></div>
   <!-- 右上角三按钮（自动截图 / 历史日志 / 完全退出）：标注模式与执行模式共用，功能一致——btnCap 不加 mark-only，
@@ -216,6 +217,28 @@
         </div>
       </div>
       <div id="thinkEmpty"><b id="teTitle"></b></div>
+      <div id="verifyPane" style="display:none">
+        <div id="verifyEmpty" class="vempty">
+          <div class="vt">汇总图算法 · 自回归验证</div>
+          <div class="vs">左侧列表 = 每一种「汇总图算法」（全图交集五档、多数 / 均值 / 去重均值三族及 8×8·32×32 块图、各档独有区图、点击动作分类的点击区交集图，与识别参与比对的是同一套产物）。
+            验证方式：把每个分类的原图，按该算法生成的汇总图逐张与【全部分类】的同一算法汇总图逐点比对（口径与识别一致），统计两个评价指标——<b>A</b> = 样本与「自分类汇总图」比对的不匹配占比均值（越小说明该算法生成的概括图越贴近本分类样本）；<b>B</b> = 样本在全部汇总图里匹配最好且正确匹配到所属分类的比例（越高说明区分度越好）。</div>
+          <div class="vhint">先从左侧选中一个算法查看它的评分与分类明细；或点右栏「开始验证」对全部算法顺序计算（样本较多时耗时较长，完成后结果自动缓存）。</div>
+        </div>
+        <div id="verifyDetail" style="display:none">
+          <div class="vdbar">
+            <span class="vdTitle" id="vdTitle"></span>
+            <span class="vdChip" id="vdChip"></span>
+            <span class="vdStamp" id="vdStamp"></span>
+          </div>
+          <div class="vdSum" id="vdSum"></div>
+          <div class="vtableWrap">
+            <table class="vtable">
+              <thead><tr><th>分类标注</th><th>匹配动作</th><th>样本数</th><th>A · 自分类平均匹配值（越低越像）</th><th>匹配正确分类的比例</th><th>匹配正确分类的个数</th></tr></thead>
+              <tbody id="vdRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="sugdock" id="smartDock">
       <button type="button" class="dismiss" id="dockX" title="收起本图的智能分析提示（图片保持当前显示大小）" hidden>✕</button>
@@ -285,6 +308,25 @@
     </div>
     <div class="tkstat" id="tkInfo" style="margin-top:10px">左侧选择分类标注查看对照图。</div>
     <div id="tkExplain" style="margin-top:4px;font-size:12px;color:var(--muted);line-height:1.8"></div>
+  </div>
+
+  <div id="edVerify" style="display:none">
+    <div class="edHead">
+      <h3 style="margin:0;font-size:14px">特征验证</h3>
+      <button type="button" class="btn green" id="btnVerifyStart" style="margin-left:auto;font-size:12px"
+        title="对左侧全部汇总图算法顺序做一次自回归验证：把 classify/ 每张原图逐张与全部分类同 kind 汇总图按识别口径逐点比对，统计 A/B 并缓存结果（样本或产物有变动时需重新验证）">开始验证</button>
+    </div>
+    <div class="tkstat" id="vkStat" style="margin-top:10px;font-size:12px;line-height:1.8">尚未验证。</div>
+    <div id="verifyTask" style="display:none;margin-top:10px">
+      <div class="vtBar"><div class="vtFill" id="vtFill" style="width:0%"></div></div>
+      <div class="vtText" id="vtText" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
+    </div>
+    <div id="vkVerdict" style="margin-top:12px"></div>
+    <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
+      <div><b style="color:var(--text)">A</b> 自分类平均匹配值：每个原图与「自己分类的该算法汇总图」比对的不匹配像素占比，取全体样本平均（0~100，越低越好）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">B</b> 匹配正确分类的比例：每个原图在全部同类汇总图里匹配最好且恰好是自己分类的比例（0~100，越高越能区分开）。</div>
+      <div style="margin-top:6px">点左侧某个算法，右侧显示该算法的 A/B 汇总与每个分类的 A/B 明细。</div>
+    </div>
   </div>
 
   <div id="edFilter" style="display:none">

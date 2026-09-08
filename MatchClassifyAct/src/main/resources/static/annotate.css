@@ -308,6 +308,50 @@
   /* 智能提示浮层展开期间，「汇总分析」的对照图网格底部多留一块空间，
      最后一行内容不会被浮条盖住（网格不缩小、仅在其下留白） */
   body.sugdock-on #thinkPane{padding-bottom:72px}
+  /* 特征验证工作台（整图区）：与 #thinkPane 平行的视图——顶部「特征验证」按钮进入后整图区显示 A/B 评分；
+     列表仍在左栏（复用 #imgList 渲染 kind 列表）。#verifyPane 自身是滚动容器、内容不裁剪；
+     明细里的分类表格由 .vtableWrap 内部滚动，表头 sticky 跟随 */
+  #verifyPane{display:flex;flex-direction:column;gap:12px;width:100%;height:100%;overflow:auto;padding:12px;margin:0}
+  #verifyEmpty{margin:auto;max-width:840px;color:var(--muted);font-size:13px;line-height:1.9}
+  #verifyEmpty .vt{font-size:17px;font-weight:700;color:var(--text);margin-bottom:8px;letter-spacing:.3px}
+  #verifyEmpty .vs{margin-bottom:12px}
+  #verifyEmpty .vs b{color:var(--text)}
+  #verifyEmpty .vhint{color:var(--amber)}
+  #verifyDetail{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px}
+  .vdbar{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .vdTitle{font-size:16px;font-weight:700;color:var(--text)}
+  .vdChip{margin-left:4px}
+  .vdStamp{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}
+  /* 验证状态 chip：vn 未验证（灰）/ vd 有效（绿）/ vs 需重算（琥珀）/ vr 计算中（红）。
+     列表行的 chip 复用 .chip（自带 margin-left:auto 推到行尾），此处只补底色与文字色 */
+  .vkc{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;white-space:nowrap;font-weight:600;letter-spacing:.2px;vertical-align:1px}
+  .vkc.vn{color:var(--muted);background:rgba(139,148,167,.14)}
+  .vkc.vd{color:var(--green);background:var(--green-soft)}
+  .vkc.vs{color:var(--amber);background:rgba(240,168,60,.12)}
+  .vkc.vr{color:#ffd2c9;background:rgba(255,92,108,.15)}
+  .vdSum{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+  .vcard{flex:1 1 260px;min-width:240px;border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:10px 14px}
+  .vcard .vcap{font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:.3px}
+  .vcard .vval{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text);margin:4px 0 2px}
+  .vcard .vsub{font-size:11px;color:var(--muted);line-height:1.6}
+  .vdSum .vmeta{flex-basis:100%;color:var(--muted);font-size:12px}
+  .vtableWrap{flex:1;min-height:140px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--panel2)}
+  .vtable{width:100%;border-collapse:collapse;font-size:12.5px}
+  .vtable th{position:sticky;top:0;z-index:1;background:var(--panel);color:var(--muted);font-weight:600;text-align:left;padding:7px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  .vtable td{padding:6px 12px;border-bottom:1px solid rgba(38,46,64,.5);vertical-align:top}
+  .vtable tbody tr:hover td{background:rgba(255,255,255,.03)}
+  .vtable td.st{font-weight:600;color:var(--text);word-break:break-all}
+  .vtable td.ac{color:var(--muted)}
+  .vtable td.nu{text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .vtable .vdnone{text-align:center;color:var(--muted);padding:22px 12px}
+  /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */
+  .vkwarn{color:var(--amber)}
+  .vkbad{color:var(--danger)}
+  .vcard .vval.vkwarn{color:var(--amber)}
+  .vcard .vval.vkbad{color:var(--danger)}
+  /* 右栏「开始验证」按钮下方的进度条 */
+  .vtBar{height:8px;border-radius:5px;background:#242c40;overflow:hidden}
+  .vtFill{height:100%;border-radius:5px;background:var(--green);transition:width .25s}
   /* 「全部」视图右栏 = 按分类过滤（标注编辑仅用于「未标注 / 已标注」视图）。
      不加 justify-content 覆盖，让右栏内容整体垂直居中、与标注视图一致；「修改这张图」紧随分类过滤之下 */
   .fHint{color:var(--muted);font-size:12px;line-height:1.8;margin-bottom:12px}
