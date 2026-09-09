@@ -111,7 +111,7 @@
   .btn:hover{background:#222a3d}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .btn.primary:hover{filter:brightness(1.08)}
-  .btn.green{background:var(--green);border-color:var(--green);color:#04120a}
+  .btn.green{background:var(--green);border-color:var(--green);color:#fff}
   .btn.ghost{background:transparent}
   .btn:disabled{opacity:.45;cursor:not-allowed}
   /* 无当前图（列表空 / 全部标记完成）时右侧编辑输入与单选一并置灰 */
@@ -129,7 +129,7 @@
   #btnLast{border-color:rgba(255,255,255,.85);color:#fff;background:rgba(255,255,255,.07)}
   #btnLast:hover{background:rgba(255,255,255,.18)}
   /* 「重新生成全部」用绿色主按钮样式（与「特征验证 → 开始验证」同一视觉，不再白底描边） */
-  #btnRebuild{background:var(--green);border-color:var(--green);color:#04120a}
+  #btnRebuild{background:var(--green);border-color:var(--green);color:#fff}
   #btnRebuild:hover{filter:brightness(1.08)}
   #btnRebuild:disabled{opacity:.45;cursor:not-allowed}
   .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
@@ -183,6 +183,10 @@
   #vline{top:0;bottom:0;width:1px}
   #hline{left:0;right:0;height:1px}
   .imgplaceholder{color:var(--muted);font-size:13px;margin:auto}
+  /* 「未标注」列表为空（全部已标注 / 尚无图）时的中区提示：文字与「手动采集」按钮纵向居中成一组 */
+  .imgarea.emptycol{flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .imgarea.emptycol .imgplaceholder{margin:0}
+  #capManualBtn{margin-top:18px;padding:8px 20px;font-size:13px;font-weight:600}
   .editor{width:400px;flex:none;display:flex;flex-direction:column;justify-content:center;justify-content:safe center;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;overflow:auto}
   /* 标注编辑区分隔条：拖中间竖条可调编辑区宽度（双击复位为默认宽），宽度持久化 localStorage。
      负 margin 抵消 flex gap，使图片区→编辑区总间隙仍约 12px，条夹在两面板之间不额外占宽 */
@@ -198,10 +202,10 @@
   .status-tag.u{color:var(--amber);background:rgba(240,168,60,.12)}
   .tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
   .tags:empty{display:none}
-  /* 分类标注：已产生的标签在上，「分类标注」文字与文本框分两行展示（文字一行、文本框一行） */
-  .labRow{display:block}
-  .labRow label{margin:0 0 6px;white-space:nowrap}
-  .labRow input{display:block;width:100%;box-sizing:border-box}
+  /* 分类标注：已产生的标签在上，「分类标注」文字与输入框同一行（字体加大加粗） */
+  .labRow{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .labRow label{margin:0;font-size:13px;font-weight:600;color:var(--text)}
+  .labRow input{flex:1;min-width:0}
   .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 5px 3px 11px;border:1.5px solid rgba(79,140,255,.55);border-radius:16px;color:var(--text);background:rgba(79,140,255,.1);cursor:pointer;transition:border-color .12s,background .12s}
   .tag:hover{border-color:var(--accent);background:rgba(79,140,255,.2)}
   .tag .txt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -222,12 +226,15 @@
   .tag.fil .cnt{background:var(--accent)}
   input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:8px;outline:none}
   input[type=text]:focus{border-color:var(--accent)}
-  .actions{display:flex;flex-direction:column;gap:6px}
-  .act{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .12s,background .12s}
+  /* 匹配动作：「匹配动作」标签与「无动作 / 鼠标点击」选项同一行（字体加大加粗、紧凑横向） */
+  .actLine{display:flex;align-items:center;gap:10px}
+  .actLine>label{margin:0;font-size:13px;font-weight:600;color:var(--text);white-space:nowrap}
+  .actions{display:flex;flex:1;min-width:0;flex-wrap:wrap;gap:6px}
+  .act{display:flex;align-items:center;gap:6px;flex:none;padding:4px 10px;border:1px solid var(--border);border-radius:14px;cursor:pointer;transition:border-color .12s,background .12s}
   .act:hover{border-color:#3a4560}
   .act.on{border-color:var(--accent);background:var(--accent-soft)}
   .act input{accent-color:var(--accent);margin:0}
-  .act .at{font-size:13px}
+  .act .at{font-size:13.5px;white-space:nowrap}
   .act .ad{color:var(--muted);font-size:11px;margin-left:auto;text-align:right}
   .coord{display:none;margin-top:10px;padding:8px 10px;border:1px dashed rgba(79,140,255,.5);border-radius:8px;background:rgba(79,140,255,.06);font-size:12px}
   .coord b{color:#ff8fa0}
@@ -285,8 +292,9 @@
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
   .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
   .sb-btn:hover{background:var(--accent);color:#fff}
-  /* 汇总分析 · 对照图卡片：卡片宽固定 = 原图 1/2 + 边框，永不被容器压缩。
-     #thinkPane 自身就是滚动容器（高度撑满主图区、overflow:auto）：卡片行列超出时由它出纵横滚动条，
+  /* 汇总分析 · 对照图卡片：卡片宽固定 = 原图 1/2 + 边框（仅当主图区窄到连一张整卡都放不下时，
+     单卡由 JS 收窄到可用宽、图等比缩小完整可见，绝不横向裁掉右半）。
+     #thinkPane 自身就是滚动容器（高度撑满主图区、overflow:auto）：卡片行列超出时由它出纵向滚动条，
      与卡片内 overflow 无关——卡片（.tcard）不设 overflow:hidden，内容永不裁剪 */
   #thinkPane{display:none;gap:12px;align-content:start;justify-content:safe center;width:100%;height:100%;overflow:auto;padding:12px;margin:0}
   #thinkPane.g{display:grid}

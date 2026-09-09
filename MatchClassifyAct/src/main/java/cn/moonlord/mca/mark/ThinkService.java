@@ -285,8 +285,10 @@ public class ThinkService {
      *    像素一致，主档口径不变仍为 same90），产物文件变化触发全量重算；
      *    v16：产物空图（无任何有效像素：独有区图无独有点 / 基础图公共区全空等）没有可判别的点＝无法
      *    做区分，不再按 0（完全匹配）计而是判完全不匹配、按不匹配占比满值计入，照常参与聚合/验证
-     *    （产物文件不变，不触发重算）） */
-    private static final int ART_RULE_VERSION = 13;
+     *    （产物文件不变，不触发重算）；
+     *    v17：info.json 新增各点击区交集图「非透明像素占比」clickCov（汇总分析卡片右上角改展示该数值，
+     *    与 -unique 独有区覆盖率同口径；产物内容不变但分析记录文件变化 → 旧分组判 stale 全量重算补齐）） */
+    private static final int ART_RULE_VERSION = 17;
 
     /** -unique 独有区图全量刷新时，同一尺寸类单一 kind 基础图文件总量上限：超过则本轮跳过，避免瞬时内存过高 */
     private static final long UNIQUE_CLASS_BYTES_LIMIT = 250L * 1024 * 1024;
@@ -297,6 +299,55 @@ public class ThinkService {
         t.setDaemon(true);
         return t;
     });
+
+    /** 计算池排队摘要（单线程池执行序 = 提交序）：第 0 项正在执行、其余排队；供任务快照汇报「第几位 / 前面正忙什么」 */
+    private final List<ThinkQ> thinkQueue = new ArrayList<>();
+
+    /** 计算池执行/排队项：key = 本次提交身份（Task 或 auto 占位对象），label = 给前端看的进行中任务标签 */
+    private static final class ThinkQ {
+        final Object key;
+        final String label;
+
+        ThinkQ(Object key, String label) {
+            this.key = key;
+            this.label = label;
+        }
+    }
+
+    /** 提交到串行计算池并登记队列标签；任务结束（含异常）自动出队 */
+    private void submitPool(String label, Runnable body) {
+        Object key = new Object();
+        synchronized (thinkQueue) {
+            thinkQueue.add(new ThinkQ(key, label));
+        }
+        pool.submit(() -> {
+            try {
+                body.run();
+            } finally {
+                synchronized (thinkQueue) {
+                    for (int i = 0; i < thinkQueue.size(); i++) {
+                        if (thinkQueue.get(i).key == key) {
+                            thinkQueue.remove(i);
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /** 轮询前刷新任务在计算池中的位置：0=正在执行；>0=前面排队任务数；不在队（已结束/异常）保持 -1 */
+    private void refreshQueueState(Task t) {
+        synchronized (thinkQueue) {
+            for (int i = 0; i < thinkQueue.size(); i++) {
+                if (thinkQueue.get(i).key == t) {
+                    t.queuePos = i;
+                    t.queueActiveLabel = i == 0 ? "" : thinkQueue.get(0).label;
+                    return;
+                }
+            }
+        }
+    }
 
     /** 智能建议独立单线程池：与批量分析/自动重算隔开，长汇总分析不会阻塞「停留 1 秒」的单图建议即时出结果 */
     private final ExecutorService suggestPool = Executors.newSingleThreadExecutor(r -> {
@@ -372,7 +423,7 @@ public class ThinkService {
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, force);
         tasks.put(id, t);
-        pool.submit(() -> runAnalyze(t));
+        submitPool("批量汇总分析", () -> runAnalyze(t));
         return id;
     }
 
@@ -390,13 +441,17 @@ public class ThinkService {
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, true, true);
         tasks.put(id, t);
-        pool.submit(() -> runAnalyze(t));
+        submitPool("重新生成全部", () -> runAnalyze(t));
         return id;
     }
 
-    /** 任务快照；不存在返回 null */
+    /** 任务快照（含最新队列位置）；不存在返回 null */
     public Task task(String taskId) {
-        return taskId == null ? null : tasks.get(taskId);
+        Task t = taskId == null ? null : tasks.get(taskId);
+        if (t != null) {
+            refreshQueueState(t);
+        }
+        return t;
     }
 
     /**
@@ -435,7 +490,7 @@ public class ThinkService {
             }
             recomputeRunning = true;
         }
-        pool.submit(this::runAutoRecomputeLoop);
+        submitPool("自动重算", this::runAutoRecomputeLoop);
     }
 
     /** 自动重算主体：一轮扫描补齐后，若执行期间样本又变化则继续下一轮，直到追上最新状态 */
@@ -911,6 +966,8 @@ public class ThinkService {
                 g.put("coverage", info.get("coverage"));
                 // 各交集档覆盖率（kind → 百分数值，90% 档与 coverage 同值；各档用于卡片角标）
                 g.put("sameCov", info.get("sameCov"));
+                // 各点击区交集图非透明像素占比（kind → 百分数值，点击区卡片右上角展示；旧目录未重算时为 null）
+                g.put("clickCov", info.get("clickCov"));
                 g.put("width", info.get("width"));
                 g.put("height", info.get("height"));
                 g.put("mtime", infoMtime(gdir));   // 产物 info.json 修改时刻：前端作缓存失效版本号（后台重算后界面能拉到新图）
@@ -929,16 +986,18 @@ public class ThinkService {
                 g.put("hasClickLow", false);
                 g.put("uniqueCov", null);
                 g.put("coverage", null);
+                g.put("clickCov", null);
                 g.put("width", null);
                 g.put("height", null);
                 g.put("stale", false);
             }
             out.add(g);
         }
-        // 按“匹配度”排序（对应前端列表标题「分类标注列表（按匹配度）」）。
-        // 覆盖率 = 交集图 90% 档（覆盖>90% 一致）的不透明像素占比。覆盖率越高说明该组截图彼此差异越小——多为同一画面反复
-        // 截取（采样不足，可信度反而低）；覆盖率越低说明采到了该状态不同时刻的真实差异（采样更充分）。
-        // 故已分析（产物齐全且样本未变）组合：覆盖率低的靠前、高的靠后；同覆盖率按「分类标注 → 动作」文字升序。
+        // 按“像素相同比例”排序（对应前端列表标题「分类标注列表（按像素相同比例）」）。
+        // 相同比例 = 交集图 100% 档覆盖率（sameCov.same100，全部样本在该像素完全一致的占比，即列表首卡
+        // 「交集图 100% 覆盖率（完全一致）」角标数值）。相同比例越高说明该组截图彼此差异越小——多为同一画面反复
+        // 截取（采样不足，可信度反而低）；相同比例越低说明采到了该状态不同时刻的真实差异（采样更充分）。
+        // 故已分析（产物齐全且样本未变）组合：相同比例低的靠前、高的靠后；同值按「分类标注 → 动作」文字升序。
         // 其余（未分析 / 样本有变待重算）排后：段内先按样本数从多到少，再按「分类标注 → 动作」文字升序。
         out.sort((a, b) -> {
             boolean ad = Boolean.TRUE.equals(a.get("analyzed")) && !Boolean.TRUE.equals(a.get("stale"));
@@ -947,10 +1006,10 @@ public class ThinkService {
                 return ad ? -1 : 1;
             }
             if (ad) {
-                Object ca = a.get("coverage"), cb = b.get("coverage");
+                Object ca = pixelSameRatio(a), cb = pixelSameRatio(b);
                 double x = ca instanceof Number na ? na.doubleValue() : -1d;
                 double y = cb instanceof Number nb ? nb.doubleValue() : -1d;
-                int c = Double.compare(x, y);   // 覆盖率（截图差异小 = 采样不足）降序 → 升序：低者靠前
+                int c = Double.compare(x, y);   // 相同比例（截图差异小 = 采样不足）降序 → 升序：低者靠前
                 if (c != 0) {
                     return c;
                 }
@@ -969,6 +1028,19 @@ public class ThinkService {
             return String.valueOf(a.get("action")).compareTo(String.valueOf(b.get("action")));
         });
         return out;
+    }
+
+    /** 列表排序用「像素相同比例」：交集图 100% 档覆盖率（info.sameCov.same100，全部样本一致像素占比）；
+     *  旧目录缺 same100 键时退回 90% 档主覆盖率（info.coverage）。 */
+    private static Object pixelSameRatio(Map<String, Object> g) {
+        Object sameCov = g.get("sameCov");
+        if (sameCov instanceof Map<?, ?> m) {
+            Object v = m.get("same100");
+            if (v instanceof Number n) {
+                return n.doubleValue();
+            }
+        }
+        return g.get("coverage");
     }
 
     /** 读取分析产物 PNG（kind 图之一：15 基础含交集六档 same100|same90|same80|same70|same60|same50 与
@@ -1080,6 +1152,20 @@ public class ThinkService {
             }
         }
         return out;
+    }
+
+    /** 非透明像素占比（0~1）：统计 alpha 位非 0 像素 ÷ 总像素。点击区交集图右上角数值 = 框内该档保留像素占
+     *  框图总像素的比例（出界透明 / 框内未达该档一致率而透明的像素都不计），口径同交集档覆盖率但只限框内区域 */
+    private static double opaqueRatio(BufferedImage img) {
+        int w = img.getWidth(), h = img.getHeight();
+        int[] px = img.getRGB(0, 0, w, h, null, 0, w);
+        int cnt = 0;
+        for (int v : px) {
+            if ((v >>> 24) != 0) {
+                cnt++;
+            }
+        }
+        return cnt / (double) px.length;
     }
 
     /** 计算单个分类（state+action）的 15 张基础对照图并刷新产物目录（交集六档 + 多数/均值/去重均值/8·32 块族；固定文件名原子替换；-unique 独有区图由跨分类刷新统一生成） */
@@ -1305,6 +1391,7 @@ public class ThinkService {
         // 各档直接裁剪同尺寸全幅交集图 sameImgs[ti] 的对应区域——交集口径与该档一致（不足该档一致率的框内像素透明）。
         // 各档框图都参与识别比对。框可越出画幅，出界 cropImage 填透明。
         // 无有效坐标的分类不生成并清理全部点击区残留；识别端该维度按“可判成员”自然跳过
+        Map<String, Object> clickCov = new LinkedHashMap<>();   // 各点击区交集图非透明像素占比（kind → 4 位小数百分比）
         if (cx != null && cy != null) {
             for (int di = 0; di < CLICK_DIVS.length; di++) {
                 int div = CLICK_DIVS[di];
@@ -1313,6 +1400,7 @@ public class ThinkService {
                     String kind = "click" + div + "-" + SAME_TIERS.get(ti);
                     BufferedImage crop = cropImage(sameImgs[ti], box[0], box[1], box[2], box[3]);
                     atomicWritePng(crop, gdir.resolve(KIND_FILE.get(kind)));
+                    clickCov.put(kind, Math.round(opaqueRatio(crop) * 1000000) / 10000.0d);
                 }
             }
         } else {
@@ -1343,6 +1431,7 @@ public class ThinkService {
             sameCov.put(SAME_TIERS.get(ti), Math.round(tierCov[ti] * 1000000) / 10000.0d);
         }
         d.put("sameCov", sameCov);
+        d.put("clickCov", clickCov);
         d.put("clickLeft", cx);
         d.put("clickTop", cy);
         d.put("updatedAt", LocalDateTime.now().format(TS_FORMAT));
@@ -2093,6 +2182,12 @@ public class ThinkService {
         public volatile String current = "";
         /** 当前阶段：1 = 逐分类生成 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族）；2 = 生成各分类 15 张 -unique 独有区图 */
         public volatile int stage = 1;
+        /** 任务提交时刻（毫秒）：前端据此显示已耗时，排队/长计算期间能判断仍在推进而非卡死 */
+        public final long submittedAtMs = System.currentTimeMillis();
+        /** 计算池内位置：-1 = 不在队（已结束/未知）；0 = 正在执行；>0 = 前面还有多少个任务在排队 */
+        public volatile int queuePos = -1;
+        /** queuePos > 0 时队列头正在执行的任务标签（自动重算 / 重新生成全部 / 批量汇总分析） */
+        public volatile String queueActiveLabel = "";
 
         Task(String taskId, boolean force) {
             this(taskId, force, false);

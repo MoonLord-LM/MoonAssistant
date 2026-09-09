@@ -23,7 +23,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 ```
 
 - 启动就绪后自动以 Edge/Chrome 应用窗口打开控制台（`http://localhost:8080/annotate`，`--ui.auto-open=false` 可关）；页面会持续探测后端，检测到代码更新后**自动刷新**加载新版。
-- 截图**默认不开启**，需在页面右上角点「开启截图」；右上角「完全退出」结束服务并自动关页。
+- 自动采集（截图）**默认不开启**，需在页面右上角点「自动采集」；右上角「完全退出」结束服务并自动关页。
 - 日常重启用 `restart.cmd`（停旧进程 → 清 `target\` → 重新打包 → 启动，日志在 `log\`）；`stop&clean.cmd` 只停并清构建输出。
 - 数据都在运行目录下，启动自动创建；**可随时整目录拷贝/备份**。
 
@@ -65,7 +65,7 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 
 ### 3.2 后台截图与去重
 
-- 页面「开启截图」后按 `capture.interval-ms`（默认 1s）周期后台截图，节拍是 **fixedDelay**：处理完一帧再等这么久取下一帧，绝不叠帧。
+- 页面点「自动采集」后按 `capture.interval-ms`（默认 1s）周期后台截图，节拍是 **fixedDelay**：处理完一帧再等这么久取下一帧，绝不叠帧。
 - 每帧保存前与历史全部 PNG（capture/ + classify/）全尺寸逐像素比对、统计不一致像素点占比，须与每一张都 > `capture.diff-threshold-percent`（默认 5%）才保存，否则判为重复丢弃；结果以单条轻提示展示在右下角（保存成功 / 与哪张重复）。
 - **每次启动**还会在后台自动清理一遍历史重复（自动截图与手动去重任一开启即执行）：按两个启用阈值中较低者（默认 min(5, 0.5) = 0.5%）逐像素比对，只删与保留图不一致像素占比 ≤ 阈值、几乎重复的截图（近似但不相同的画面一律保留），避免误删；画面持续变化产生的新重复仍靠运行期去重挡。
 - 截图目标尺寸不符 `capture.resize-width × resize-height`（默认 1280×720）时，自动用 `SetWindowPos` 缩放窗口后重截验证，直到 PNG 恰好达标才保存。

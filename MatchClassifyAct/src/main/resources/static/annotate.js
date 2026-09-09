@@ -743,12 +743,16 @@ function showEmpty(msg){
   curName = null;
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "";
+  // 「未标注」列表为空（全部已标注 / 尚无图）→ 中区提示文字下加「手动采集」入口；其余视图不显示
+  const unmarkedEmpty = FILTER === "unmarked";
+  $("imgarea").classList.toggle("emptycol", unmarkedEmpty);
+  $("capManualBtn").style.display = unmarkedEmpty ? "" : "none";
   showZoomCtl(false);
   resetZoom();
   // 默认文案按当前视图给，调用方传 msg 时以其为准
   $("placeholder").textContent = msg || (ALL.length
     ? (FILTER === "unmarked"
-      ? "没有待标注的截图：列表里的图片都已打上分类标注。可切到「已标注」复核，或开启截图任务采集新图。"
+      ? "没有待标注的截图：列表里的图片都已打上分类标注。可切到「已标注」复核，或开启自动采集抓取新图。"
       : FILTER === "marked"
         ? "还没有已标注的截图：到「未标注」给截图打上分类标注后即会出现在这里。"
         : "当前视图下暂无可显示的截图。")
@@ -787,6 +791,8 @@ async function showImage(item, opts){
   $("fsub").textContent = "";
   $("imgwrap").style.display = "";
   $("placeholder").style.display = "none";
+  $("imgarea").classList.remove("emptycol");
+  $("capManualBtn").style.display = "none";   // 有图展示 → 收起手动采集入口
   $("imgDims").textContent = "";   // 待图片加载完成后按实际分辨率填充
   naturalW = naturalH = 0;
   px = null;
@@ -1260,10 +1266,10 @@ function navThinkStep(d){
   const li = $("imgList").children[np]; if(li) li.scrollIntoView({block:"nearest"});
 }
 
-/* 顶部上一张/下一张/刷新等按钮已移除（顶栏右上角保留「开启/暂停截图」与「完全退出」），保留空实现兼容既有调用点 */
+/* 顶部上一张/下一张/刷新等按钮已移除（顶栏右上角保留「自动采集/暂停采集」与「完全退出」），保留空实现兼容既有调用点 */
 function updateNavButtons(){}
 
-/* ---------------- 开启/暂停截图（截图默认不开启，需在页面手动开启） ---------------- */
+/* ---------------- 自动采集/暂停采集（自动采集默认不开启，需在页面手动开启） ---------------- */
 let capPaused = true;    // 截图任务是否未开启/已暂停（程序启动后默认关闭）
 let capBusy = false;
 let capIntervalMs = null;            // 后端真实截图间隔（毫秒），由 /api/capture/status 下发
@@ -1281,7 +1287,7 @@ function fmtCapInterval(ms){
 function renderCapBtn(){
   const b = $("btnCap"); if(!b) return;
   b.classList.toggle("on", !capPaused);        // 截图运行时按钮高亮为绿色
-  b.textContent = capPaused ? "开启截图" : "暂停截图";
+  b.textContent = capPaused ? "自动采集" : "暂停采集";
   b.disabled = capBusy;
   const per = fmtCapInterval(capIntervalMs);
   b.title = capPaused
@@ -1316,14 +1322,14 @@ async function toggleCap(){
     if(!goPause) lastStopReasonShown = null;   // 重新开启成功：允许下次 resize 持续失败再次弹窗
     let msg;
     if(goPause){
-      msg = "已暂停截图：后台不再截取保存新图，控制台仍可正常使用";
+      msg = "已暂停自动采集：后台不再截取保存新图，控制台仍可正常使用";
     }else{
       const per = fmtCapInterval(capIntervalMs);
       if(capDiffThreshold > 0){
-        msg = "已开启截图：每 " + (per || "按配置间隔") + " 截取一帧，" +
+        msg = "已开启自动采集：每 " + (per || "按配置间隔") + " 截取一帧，" +
               "与每张已保存图不一致像素占比均 > " + capDiffThreshold + "% 才会保存为新图";
       }else{
-        msg = "已开启截图：每 " + (per || "按配置间隔") + " 截取一帧并保存";
+        msg = "已开启自动采集：每 " + (per || "按配置间隔") + " 截取一帧并保存";
       }
     }
     toast(msg, "ok");
@@ -1333,7 +1339,44 @@ async function toggleCap(){
   capBusy = false; renderCapBtn();
 }
 
-/* 后端自动暂停事件（截图 resize 持续无法达标）：弹窗错误提示，同步按钮态为「开启截图」 */
+/* 手动采集（「未标注」空列表中间按钮）：请求后端立即截一帧并做与执行模式同一套全尺寸逐像素去重
+   （与 capture/、classify/ 全部同尺寸图比对，差异须 > 0.5% 手动阈值），通过即插入待标注列表并打开标注 */
+async function capManualShot(){
+  const b = $("capManualBtn");
+  if(!b || b.disabled) return;
+  // 百分比展示文本：整数直显、非整数保留两位去尾零（与截图事件流提示同一口径）
+  const fmtPct = v => (Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100));
+  b.disabled = true; b.textContent = "采集中…";
+  try{
+    const r = await fetch("/api/capture/manual", { method:"POST", cache:"no-store" });
+    let j = null; try{ j = await r.json(); }catch(_){}
+    if(!r.ok || !j) throw new Error("HTTP " + r.status);
+    if(j.ok && j.name){
+      // 通过去重：除告知保存的图外，附上与库内最接近一张的「最小差异百分比」（后端 minDiffPercent；无同尺寸参考不附）
+      const md = (typeof j.minDiffPercent === "number" && j.minDiffPercent >= 0)
+        ? "（与已有截图的最小差异 " + fmtPct(j.minDiffPercent) + "%）" : "";
+      toast("已手动采集并通过去重检查，插入待标注 → " + SHORT(j.name) + md, "ok");
+      if(FILTER === "unmarked"){
+        await loadList(j.name);   // 仍在未标注视图：刷新列表并定位到新截图，直接进入标注编辑
+      }else{
+        await refreshSilent();    // 采集期间已切走：只把新图同步进列表，不打扰当前视图
+      }
+    }else{
+      const msg = j.message || (j.kind === "dup"
+        ? "画面与已保存截图重复（差异 "
+          + (typeof j.diffPercent === "number" ? fmtPct(j.diffPercent) : "?") + "% ≤ "
+          + (typeof j.threshold === "number" ? fmtPct(j.threshold) : "?") + "% 阈值），本次未保存。"
+        : "手动采集失败（" + (j.kind || "unknown") + "），请稍后重试。");
+      toast(msg, (j.kind === "dup" || j.kind === "busy") ? "skip" : "err");
+    }
+  }catch(e){
+    toast("手动采集失败：" + e.message, "err");
+  }finally{
+    if(b){ b.disabled = false; b.textContent = "手动采集"; }
+  }
+}
+
+/* 后端自动暂停事件（截图 resize 持续无法达标）：弹窗错误提示，同步按钮态为「自动采集」 */
 function showCapStopModal(msg){
   if(document.getElementById("capStopModal")) return;
   pushLog("截图已自动暂停：\n" + msg, "err");   // 自动暂停等关键事件一并写入历史日志（便于回溯原因）
@@ -1346,7 +1389,7 @@ function showCapStopModal(msg){
       '<div class="msg"></div>' +
       '<div class="xrow">' +
         '<button class="btn green" id="capStopOK" type="button">知道了</button>' +
-        '<button class="btn" id="capStopRetry" type="button">重新开启截图</button>' +
+        '<button class="btn" id="capStopRetry" type="button">重新开启自动采集</button>' +
       '</div>' +
     '</div>';
   document.body.appendChild(ov);
@@ -1598,9 +1641,15 @@ const b64u = s => btoa(unescape(encodeURIComponent(s)));   // UTF-8 → Base64�
 const artUrl = (kind, dir, v) => "/api/annotate/think/img/" + encodeURIComponent(kind) + "?dir=" + encodeURIComponent(b64u(dir || ""))
     + (v ? "&v=" + v : "");   // v = 产物 info.json 的 mtime：后台自动重算后 URL 变化 → 浏览器绕过 1h 缓存拉到新对照图
 const fmtCov = c => (c == null ? "—" : Number(c) + "%");
+// 组列表排序 / 展示用的「像素相同比例」= 交集图 100% 档覆盖率（全部样本一致像素占比，即列表首卡
+// 「交集图 100% 覆盖率（完全一致）」角标数值，取 g.sameCov.same100）；旧目录无 same100 键时退回 90% 档（g.coverage）
+const covSame = g => {
+  const c = g.sameCov && g.sameCov.same100 != null ? g.sameCov.same100 : g.coverage;
+  return c == null ? null : Number(c);
+};
 
 function thinkSig(){
-  return GROUPS.map(g => [g.state,g.action,g.sampleCount,!!g.analyzed,!!g.stale,g.coverage,g.dir,g.mtime||0].join("|")).join("\n");
+  return GROUPS.map(g => [g.state,g.action,g.sampleCount,!!g.analyzed,!!g.stale,covSame(g),g.dir,g.mtime||0].join("|")).join("\n");
 }
 /* 汇总分析 · 处理过程状态条：渲染到主图底部浮层 dock（thinkBar，与「未标注」的智能分析
    提示条同处同构、悬浮在主图上不占文档流）。切换分组 / 分析进度变化时实时更新。
@@ -1632,8 +1681,9 @@ function renderThinkDock(g){
     const tail = g.hasUnique
       ? '对照图已生成：15 张基础合成图（含交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图）+ 15 张独有区图' + (g.hasClick ? ' + 12 张点击区交集图' : '') + '。'
       : '对照图已生成；各独有区图（本分类独有区域）将在随后的后台重算中补齐。';
-    text = g.coverage != null
-      ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，' + tail
+    const cs = covSame(g);
+    text = cs != null
+      ? '交集图像素相同比例<b class="kv">' + fmtCov(cs) + '</b>，' + tail
       : tail;
   }
   b.hidden = false;
@@ -1771,11 +1821,13 @@ function enterThink(){
   syncRightPanel();            // 右栏切到「汇总分析」（隐藏标注编辑与分类过滤）
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "none";
+  $("imgarea").classList.remove("emptycol");   // 汇总分析不沿用空列表的纵向布局与手动采集入口
+  $("capManualBtn").style.display = "none";
   showZoomCtl(false);      // 汇总分析各对照图用各自的 lightbox 放大，隐藏主图缩放控件
   resetZoom();
   hideSmartTip();          // 汇总分析模式下不显示「未标注」智能分析建议条
   syncSugDock();           // 汇总分析：处理状态浮层按 thinkBar 内容自动显示
-  $("lstTitle").textContent = "分类标注列表（按匹配度）";
+  $("lstTitle").textContent = "分类标注列表（按像素相同比例）";
   thinkActFil = null;            // 动作过滤复位为「全部」
   $("thinkFil").hidden = false;  // 显示列表动作过滤行
   selKey = null;
@@ -1817,16 +1869,17 @@ function renderThinkList(){
     li.className = "row" + (selKey === gkey(g) ? " on" : "");
     li.dataset.key = gkey(g);              // 供批量分析推进时按 key 轻量刷新 chip
     const ck = thinkChipFor(g);
+    const cs = covSame(g);
     let extra = g.sampleCount + " 张";
-    if(g.analyzed && !g.stale) extra += " · 覆盖率 " + fmtCov(g.coverage);
+    if(cs != null) extra += " · 相同 " + fmtCov(cs);
     li.innerHTML =
       '<div class="r1"><span class="t">' + escHtml(g.state) + '</span>' +
       '<span class="actx">' + (ACT_LABEL[g.action] || g.action) + '</span>' +
       '<span class="chip vkc ' + ck.cls + '" data-t="' + ck.txt + '" data-c="' + ck.cls + '">' + ck.txt + '</span></div>' +
       '<div class="r2">' + extra.replace(/</g,"&lt;") + '</div>' +
-      (g.analyzed && !g.stale && g.coverage != null
-        ? '<div class="tbar"><i class="' + (Number(g.coverage) >= 100 ? "full" : "") + '" style="width:'
-            + Math.max(0, Math.min(100, Number(g.coverage))) + '%"></i></div>'
+      (cs != null
+        ? '<div class="tbar"><i class="' + (cs >= 100 ? "full" : "") + '" style="width:'
+            + Math.max(0, Math.min(100, cs)) + '%"></i></div>'
         : '');
     li.addEventListener("click", ()=> openGroup(g));
     ul.appendChild(li);
@@ -1950,15 +2003,17 @@ $("thinkFil").addEventListener("click", e => {
 let thinkMeta = null;       // { halfW, halfH } 当前组的列表基准尺寸
 let thinkColT = null;       // 窗口 resize 时对照图列宽重排的防抖计时器
 
-/* 对照图网格列宽：卡片宽固定 = 原图 1/2 + 边框，永不被容器压缩（保持长宽比画布）；
-   能放下几列就排几列，整列放不下的剩余空间留白，图多/窗口窄时由主图区滚动条承载 */
+/* 对照图网格列宽：卡片宽固定 = 原图 1/2 + 边框（保持长宽比画布），能放下几列就排几列；
+   整列放不下的剩余空间留白、图多出高度由滚动条承载；仅当主图区窄到连一张整卡都放不下时，
+   把唯一一列收窄到可用宽、图随卡片等比缩小，保证整卡完整可见（绝不横向裁掉右半） */
 function setThinkCols(tp, colW){
   const target = Math.max(120, (Number(colW) || 700) - 20);   // 目标图宽 = 原图一半（colW 原为 目标宽+留白）
   const cardW = target + 2;                                   // 卡片宽 = 图宽 + 左右 1px 边框
   const cw = Math.max(1, tp.clientWidth - 24);                // 网格内容可用宽（减去左右 padding 各 12）
   const gap = 12;
-  const cols = Math.max(1, Math.floor((cw + gap) / (cardW + gap)));   // 按完整卡片数排，绝不缩列
-  tp.style.gridTemplateColumns = "repeat(" + cols + ", " + cardW + "px)";
+  const cols = Math.max(1, Math.floor((cw + gap) / (cardW + gap)));   // 按完整卡片数排，放得下就绝不缩列
+  const colWpx = cols > 1 || cw >= cardW ? cardW : cw;        // 一列都放不下时单列收窄到可用宽
+  tp.style.gridTemplateColumns = "repeat(" + cols + ", " + colWpx + "px)";
 }
 
 function cardTargetScale(nw, nh){
@@ -2035,6 +2090,8 @@ function openGroup(g){
     }
     // 独有区图覆盖率（kind → 独有像素占该图全图百分比；未生成时为 —）
     const uc = kind => fmtCov(g.uniqueCov ? g.uniqueCov[kind] : null);
+    // 点击区交集图非透明像素占比（kind → 框内该档保留像素占框图总像素百分比，口径同独有区覆盖率；旧目录未重算时为 —）
+    const cc = kind => fmtCov(g.clickCov ? g.clickCov[kind] : null);
     // 各交集档基础图覆盖率（kind → 该档保留像素占全图百分比；90% 档兼容旧字段 coverage）
     const tierCov = k => {
       let c = g.sameCov ? g.sameCov[k] : null;
@@ -2077,18 +2134,18 @@ function openGroup(g){
     // 点击区交集图卡片（以统一关注点或点击点坐标为中心的 1/8、1/32 方框 × 交集六档）：
     // 全部参与识别比对。90% 档两图齐全（g.hasClick）才展示；100% 与低档十图额外要求 g.hasClickLow
     // （重算前的旧目录可能没有这些产物 → 整卡隐藏，避免留出空框/裂图）
-    const clickCards = [["click8-same100","imgC8S100","tcsC8S100", sz8(W) + "×" + sz8(H) + " · 点击区 100%"],
-                        ["click8-same90","imgC8","tcsC8", sz8(W) + "×" + sz8(H) + " · 点击区 90%"],
-                        ["click8-same80","imgC8S80","tcsC8S80", sz8(W) + "×" + sz8(H) + " · 点击区 80%"],
-                        ["click8-same70","imgC8S70","tcsC8S70", sz8(W) + "×" + sz8(H) + " · 点击区 70%"],
-                        ["click8-same60","imgC8S60","tcsC8S60", sz8(W) + "×" + sz8(H) + " · 点击区 60%"],
-                        ["click8-same50","imgC8S50","tcsC8S50", sz8(W) + "×" + sz8(H) + " · 点击区 50%"],
-                        ["click32-same100","imgC32S100","tcsC32S100", sz32(W) + "×" + sz32(H) + " · 点击区 100%"],
-                        ["click32-same90","imgC32","tcsC32", sz32(W) + "×" + sz32(H) + " · 点击区 90%"],
-                        ["click32-same80","imgC32S80","tcsC32S80", sz32(W) + "×" + sz32(H) + " · 点击区 80%"],
-                        ["click32-same70","imgC32S70","tcsC32S70", sz32(W) + "×" + sz32(H) + " · 点击区 70%"],
-                        ["click32-same60","imgC32S60","tcsC32S60", sz32(W) + "×" + sz32(H) + " · 点击区 60%"],
-                        ["click32-same50","imgC32S50","tcsC32S50", sz32(W) + "×" + sz32(H) + " · 点击区 50%"]];
+    const clickCards = [["click8-same100","imgC8S100","tcsC8S100", cc("click8-same100")],
+                        ["click8-same90","imgC8","tcsC8", cc("click8-same90")],
+                        ["click8-same80","imgC8S80","tcsC8S80", cc("click8-same80")],
+                        ["click8-same70","imgC8S70","tcsC8S70", cc("click8-same70")],
+                        ["click8-same60","imgC8S60","tcsC8S60", cc("click8-same60")],
+                        ["click8-same50","imgC8S50","tcsC8S50", cc("click8-same50")],
+                        ["click32-same100","imgC32S100","tcsC32S100", cc("click32-same100")],
+                        ["click32-same90","imgC32","tcsC32", cc("click32-same90")],
+                        ["click32-same80","imgC32S80","tcsC32S80", cc("click32-same80")],
+                        ["click32-same70","imgC32S70","tcsC32S70", cc("click32-same70")],
+                        ["click32-same60","imgC32S60","tcsC32S60", cc("click32-same60")],
+                        ["click32-same50","imgC32S50","tcsC32S50", cc("click32-same50")]];
     const hideClickCard = card => { $(card[2]).textContent = ""; $(card[1]).closest(".tcard").style.display = "none"; };
     for(const card of clickCards){
       const low = !String(card[0]).endsWith("-same90");
@@ -2160,6 +2217,14 @@ async function startAnalyzeIfNeeded(){
   }
 }
 
+/* 已耗时文案（秒 → 「N 秒 / N 分 M 秒」）：轮询展示中逐秒走动，让排队与长计算可分辨是否仍在推进 */
+function durTxt(sec){
+  sec = Math.max(0, Math.floor(sec));
+  if(sec < 60) return sec + " 秒";
+  const m = Math.floor(sec / 60), r = sec % 60;
+  return m + " 分" + (r > 0 ? " " + r + " 秒" : "");
+}
+
 async function pollAnalyze(id, label){
   label = label || "分析";
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -2172,34 +2237,51 @@ async function pollAnalyze(id, label){
       t = await r.json();
     }catch(_){ continue; }     // 服务短暂中断则等下一轮
     if(t.status === "running"){
-      // 后台为单线程串行计算池：任务刚提交 / 排在自动重算等其它分析后面时，total 尚未统计出来（0/0），
-      // 此时只报“正在…”，避免把无意义的 0/0 当作卡死；total 确定后显示真实进度 processed/N。
+      // 后台为单线程串行计算池（手动批量分析 / 自动重算共用，执行序 = 提交序）：
+      // 任务刚提交可能还在排队（queuePos>0，total 未统计、得等前面跑完），也可能已进场正做清场/统计
+      // （queuePos=0 但 total 仍为 0）。统计行常驻“已耗时”时钟逐秒走动：任何看着没动都能分辨是
+      // 排队 / 长计算仍在推进，而非卡死。total 确定后即显示真实进度 processed/N。
       // 任务分 2 轮：第 1 轮逐分类生成 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族；processed/total 计数），
       // 第 2 轮生成各分类 15 张 -unique 独有区图（跨分类按 kind 推进，current 指示当前图种）。
       // 进行中：进度画在汇总分析右栏 vtBar 同款进度条上（第 1 轮按分类数占比、第 2 轮按 current 内 i/15 占比），
       // 中间过程不逐步写历史日志（任务开始 / 结束由 toast 各入库一条）；
       // 退出汇总分析视图后无右栏可挂载，回退为 taskTip 单条闪现兜底（noLog，只显示不写日志）
+      const sub = Number(t.submittedAtMs) || 0;
+      const age = sub ? "（已耗时 " + durTxt((Date.now() - sub) / 1000) + "）" : "";
+      const qp = Number(t.queuePos);
+      const queued = qp > 0;                       // 还在排队：计算池正被更早提交的任务占用
       const hasN = t.total > 0;
       const stage = t.stage === 2 ? 2 : 1;
       const round = stage === 2 ? "第 2 轮 · 独有区图" : "第 1 轮 · 基础对照图";
       const prog = stage === 2
         ? (t.current ? " · " + t.current : "")
         : (hasN ? " " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "") : "");
-      const msg = "正在" + label + " · " + round + prog;
+      const msg = "正在" + label + (queued
+        ? " · 排队第 " + qp + " 位（计算池正忙：" + (t.queueActiveLabel || "分析任务") + "）"
+        : " · " + round + prog) + (age ? " " + age : "");
       const mk = /（\s*(\d+)\s*\/\s*(\d+)\s*）/.exec(t.current || "");
       const pct = stage === 1 ? (hasN ? t.processed / t.total * 100 : 0)
         : (mk ? (+mk[1]) / (+mk[2]) * 100 : 0);
       thinkBusyDock(msg);
       if(FILTER === "think"){
-        // 右栏分段式进度（同特征验证）：统计行 = 轮次与计数总览，进度行 = 当前正在处理的项
-        thinkTaskStat(stage === 2
+        // 右栏分段式进度（同特征验证）：统计行 = 轮次与计数总览（附已耗时时钟），进度行 = 当前正在处理的项
+        thinkTaskStat((stage === 2
           ? "第 2 轮 · 正在按图种刷新全部分类的 -unique 独有区图"
-          : (hasN ? "第 1 轮 · 分类标注 " + t.processed + "/" + t.total
-                  : "第 1 轮 · 任务已提交，等待计算池调度…"));
+          : (hasN
+              ? "第 1 轮 · 分类标注 " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "")
+              : (queued
+                  ? "第 1 轮 · 排队中：计算池正忙，前面还有 " + qp + " 个任务（正在" + (t.queueActiveLabel || "分析") + "）"
+                  : "第 1 轮 · 任务已提交，正在准备（清场 / 统计待分析组合）…"))) + age);
         thinkTaskUi(stage === 2
           ? (t.current ? "正在刷新「" + t.current + "」…" : "正在准备…")
-          : (t.current ? "正在合成「" + t.current + "」的对照图…" : "正在准备…"), pct);
-      }else taskTip("正在" + round + prog, null, true);   // 无右栏场景兜底：仅展示，不入历史日志
+          : (queued
+              ? "等待前面的任务完成…"
+              : (hasN
+                  ? (t.current ? "正在合成「" + t.current + "」的对照图…" : "正在准备…")
+                  : "正在统计待分析组合…")), pct);
+      }else taskTip(queued
+        ? "排队中：前面还有 " + qp + " 个任务（正在" + (t.queueActiveLabel || "分析") + "）" + (age ? " " + age : "")
+        : "正在" + round + prog + (age ? " " + age : ""), null, true);   // 无右栏场景兜底：仅展示，不入历史日志
       // 与右侧任务进度条同节奏刷新组合列表 chip：正在合成的组合标「计算中…」、已算完的标「已计算」
       if(thinkRun){
         thinkRun.stage = t.stage === 2 ? 2 : 1;
@@ -2485,6 +2567,7 @@ document.addEventListener("keydown", (e)=>{
 });
 
 $("btnCap").addEventListener("click", toggleCap);
+$("capManualBtn").addEventListener("click", capManualShot);   // 「未标注」空列表的手动采集入口（display 由 showEmpty/showImage 控制）
 $("btnLog").addEventListener("click", openLogPanel);
 $("btnExit").addEventListener("click", requestExit);
 $("btnRebuild").addEventListener("click", rebuildThink);
@@ -2512,7 +2595,7 @@ document.addEventListener("keydown", (e)=>{
   else if(e.key==="Enter" && !typing){
     if(tag==="button" || tag==="a") return;        // 让按钮/链接自己响应 Enter
     e.preventDefault();
-    // 未标注 / 已标注视图：Enter = 保存并下一张；「全部」只浏览过滤，Enter = 跳去编辑当前图
+    // 未标注 / 已标注视图：Enter = 保存并跳下一张；「全部」只浏览过滤，Enter = 跳去编辑当前图
     if(FILTER === "unmarked" || FILTER === "marked") saveCurrent(true);
     else if(FILTER === "all") jumpToEdit();
   }
@@ -2598,6 +2681,8 @@ function enterVerify(){
   syncRightPanel();
   $("imgwrap").style.display = "none";
   $("placeholder").style.display = "none";
+  $("imgarea").classList.remove("emptycol");   // 特征验证不沿用空列表的纵向布局与手动采集入口
+  $("capManualBtn").style.display = "none";
   showZoomCtl(false);
   resetZoom();
   hideSmartTip();
@@ -2933,7 +3018,7 @@ async function checkAppVersion(){
     const stopReason = j && j.captureStopReason;
     if(stopReason && stopReason !== lastStopReasonShown){
       lastStopReasonShown = stopReason;
-      if(!capPaused){ capPaused = true; renderCapBtn(); }   // 后端已暂停：按钮恢复为「开启截图」
+      if(!capPaused){ capPaused = true; renderCapBtn(); }   // 后端已暂停：按钮恢复为「自动采集」
       showCapStopModal(stopReason);
     }
     // 截图结果历史（shotLog）：后端按发生顺序保留每一轮「保存 / 差异过小丢弃」结果，本请求按 seq 增量拉取。
@@ -3002,7 +3087,7 @@ async function checkAppVersion(){
     baseCodeTs = ts;                                       // 已变化：去重，避免反复提示
     if(dirty){
       pendingReload = true;
-      toast("检测到服务端代码已更新。当前标注尚未保存：保存并下一张、清除标记或删除后，会自动刷新加载新版页面。", "ok");
+      toast("检测到服务端代码已更新。当前标注尚未保存：保存、清除标记或删除后，会自动刷新加载新版页面。", "ok");
     } else {
       toast("检测到服务端代码已更新，正在刷新页面…", "");
       allowReloadClose = true;               // 放行 beforeunload，避免代码刷新被关闭确认拦截
@@ -3067,7 +3152,7 @@ $("modeSel").addEventListener("change", ()=>{
   const want = sel.value === "exec" ? "exec" : "mark";
   if(want === appMode) return;
   if(want === "exec" && dirty && curName){   // 有未保存标注：提示先处理，避免编辑内容丢失
-    toast("当前标注尚未保存：请先「保存并下一张」或「清除标记」，再切换到执行模式。", "err");
+    toast("当前标注尚未保存：请先「保存」或「清除标记」，再切换到执行模式。", "err");
     sel.value = appMode;                     // 回滚下拉选择
     return;
   }

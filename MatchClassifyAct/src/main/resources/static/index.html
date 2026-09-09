@@ -24,9 +24,9 @@
     <button data-f="verify">特征验证</button>
   </div>
   <div class="spacer"></div>
-  <!-- 右上角三按钮（自动截图 / 历史日志 / 完全退出）：标注模式与执行模式共用，功能一致——btnCap 不加 mark-only，
+  <!-- 右上角三按钮（自动采集 / 历史日志 / 完全退出）：标注模式与执行模式共用，功能一致——btnCap 不加 mark-only，
        执行模式同样可在右上角开启/暂停后台周期截图（存 capture/，供回标注模式标注） -->
-  <button class="btn cap" id="btnCap" title="截图默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">开启截图</button>
+  <button class="btn cap" id="btnCap" title="自动采集默认不开启：点击后开始后台周期截图（原始截图保存到 capture/，标注后自动移入 classify/）">自动采集</button>
   <button class="btn log" id="btnLog" title="历史日志：回溯查看右下角出现过的全部消息（截图保存/差异跳过、重复清理、标注与操作反馈等）">历史日志</button>
   <button class="btn exit" id="btnExit" title="完全退出：停止控制台服务与后台截图（录屏）任务">完全退出</button>
 </header>
@@ -56,6 +56,7 @@
     </div>
     <div class="imgarea" id="imgarea">
       <span class="imgplaceholder" id="placeholder">没有图片。启动截图任务后，原始截图会保存到 capture/ 目录并自动出现在本列表。</span>
+      <button type="button" class="btn green" id="capManualBtn" style="display:none" title="立即截取一帧目标窗口画面：与 capture/、classify/ 全部同尺寸截图逐像素比对（不一致像素占比须 &gt; 0.5% 手动阈值才算新画面），通过后自动插入本列表直接标注">手动采集</button>
       <div class="imgwrap" id="imgwrap" style="display:none">
         <img id="mainImg" alt="截图">
         <div id="vline"></div>
@@ -279,14 +280,16 @@
       </div>
 
       <div class="field">
-        <label>匹配动作</label>
-        <div class="actions">
-          <label class="act" data-a="none">
-            <input type="radio" name="action" value="none" checked><span class="at">无动作</span>
-          </label>
-          <label class="act" data-a="click">
-            <input type="radio" name="action" value="click"><span class="at">鼠标点击</span>
-          </label>
+        <div class="actLine">
+          <label>匹配动作</label>
+          <div class="actions">
+            <label class="act" data-a="none">
+              <input type="radio" name="action" value="none" checked><span class="at">无动作</span>
+            </label>
+            <label class="act" data-a="click">
+              <input type="radio" name="action" value="click"><span class="at">鼠标点击</span>
+            </label>
+          </div>
         </div>
         <div class="hint" id="actHint" role="status"></div>
       </div>
@@ -298,7 +301,7 @@
 
     <div class="edsec">
       <div class="btnrow">
-        <button class="btn green" id="btnSaveNext" title="保存当前标注，并按时间顺序跳到本列表的下一张图（快捷键 Enter）">保存并下一张（Enter）</button>
+        <button class="btn green" id="btnSaveNext" title="保存当前标注，并按时间顺序跳到本列表的下一张图（快捷键 Enter）">保存（Enter）</button>
         <button class="btn" id="btnLast" title="放弃对当前图的未保存修改，把分类标注 / 匹配动作 / 关注点还原为打开本图时的值">取消修改</button>
       </div>
     </div>
