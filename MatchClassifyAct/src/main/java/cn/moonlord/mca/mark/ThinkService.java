@@ -153,7 +153,7 @@ public class ThinkService {
     private static final String FILE_A32 = "avg32.png";      // 1/32 均值图（32×32 块）
     private static final String FILE_DA32 = "dedup-avg32.png"; // 1/32 去重均值图（32×32 块）
     /** 点击区交集图（各分类都带统一关注点坐标即生成：点击=点击位置 / 无动作=画面关注区域；参与识别比对）：
-     *  以关注点坐标为中心的方框小图，框 = 整幅长宽 ÷8 / ÷32（1280×720 → 160×90 / 40×22），交集判定口径
+     *  以该分类统一关注点或点击点坐标为中心的方框小图，框 = 整幅长宽 ÷8 / ÷32（1280×720 → 160×90 / 40×22），交集判定口径
      *  同对应档的 FILE_SAME_80/70/60/50（覆盖>90/80/70/60/50%），聚焦关注位置；框中心不收敛，
      *  越出画幅的部分透明；无 -unique、不参与独有区互比 */
     private static final String FILE_C8 = "click8-same90.png";    // 点击区 1/8 交集图 90% 档
@@ -580,7 +580,7 @@ public class ThinkService {
                         continue;   // 与执行模式识别器同口径：该分类适用的对照图齐全才参与
                     }
                     sb.append(d.getFileName()).append('{');
-                    // 产物全集：15 基础 + 15 -unique + 12 张点击区交集图（按统一关注点坐标）+ info，任一重算都使签名失效
+                    // 产物全集：15 基础 + 15 -unique + 12 张点击区交集图（按统一关注点或点击点坐标）+ info，任一重算都使签名失效
                     List<String> files = new ArrayList<>();
                     for (String b : UNIQUE_BASE_KINDS) {
                         files.add(KIND_FILE.get(b));
