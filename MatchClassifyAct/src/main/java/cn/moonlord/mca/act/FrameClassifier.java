@@ -290,6 +290,10 @@ public class FrameClassifier {
      *  每张约 3.7MB（1280×720）。 */
     private final Map<String, SoftReference<CachedPx>> rawPxCache = new ConcurrentHashMap<>();
 
+    /** 跳过告警日志节流：同一份「跳过名单 + 原因」在 60 秒内只打一次（识别循环周期轮询，直接每次打会刷屏）。 */
+    private static volatile String lastSkippedSig = "";
+    private static volatile long lastSkippedLogMs;
+
     static final class CachedPx {
         final long lastModified;
         final long size;
@@ -355,6 +359,8 @@ public class FrameClassifier {
         public int scannedSamples;
         /** summary/ 下存在有效分类标注的产物目录数（含核心对照图不全被跳过的）。 */
         public int totalSamples;
+        /** 未参与比对（被跳过）的产物目录名 → 跳过原因（totalSamples > scannedSamples 时才非空，供界面提示与日志排查）。 */
+        public final Map<String, String> skipped = new LinkedHashMap<>();
         /** 各分类的最近似结果，按差异度（五族加权）升序排列（前几个即“候选分类”）。 */
         public List<Candidate> candidates = new ArrayList<>();
         /** 「按已分类原图匹配」直比命中：classify/ 全部已标注原始截图里与画面逐像素完全一致比对后
@@ -432,12 +438,15 @@ public class FrameClassifier {
                 continue;   // 还没有有效分类标注的目录不参与识别
             }
             total++;
-            if (!artifactsComplete(dir, info)) {
+            String miss = missingArtifactNames(dir, info);
+            if (miss != null) {
+                out.skipped.put(dir.getFileName().toString(), "对照图不齐，缺：" + miss);
                 continue;   // 该分类适用的对照图不齐（未做汇总分析 / -unique 独有区图或点击区交集图尚未补齐）无法比较
             }
             Number wObj = info.get("width") instanceof Number n ? n : null;
             Number hObj = info.get("height") instanceof Number n ? n : null;
             if (wObj == null || hObj == null || wObj.intValue() <= 0 || hObj.intValue() <= 0) {
+                out.skipped.put(dir.getFileName().toString(), "info.json 缺少有效宽高，无法比对");
                 continue;
             }
             int w = wObj.intValue();
@@ -467,6 +476,7 @@ public class FrameClassifier {
                 }
             }
             if (kindCount == 0) {
+                out.skipped.put(dir.getFileName().toString(), "对照图文件存在但全部无法解码读出");
                 continue;   // 该分类适用的对照图全部无法有效读出 → 该目录不参与（正常产物不会出现）
             }
             scanned++;
@@ -513,6 +523,7 @@ public class FrameClassifier {
                     out.recognized, out.bestState, out.bestFile, String.format("%.2f", out.bestDiffPercent),
                     out.scannedSamples, out.totalSamples);
         }
+        logSkippedGroups(out);   // 有分类未参与比对时打一条含目录与原因的告警（节流，防识别循环刷屏）
         return out;
     }
 
@@ -976,9 +987,16 @@ public class FrameClassifier {
      *  匹配动作是鼠标点击且坐标有效的分类另需 12 张点击区交集图（与 ThinkService 的生成条件配套）。
      *  任一缺失该目录整体跳过（低档图/点击区图文件缺失 = 旧产物未按新规则重算，后台重算后恢复）。 */
     private static boolean artifactsComplete(Path gdir, Map<String, Object> info) {
+        return missingArtifactNames(gdir, info) == null;
+    }
+
+    /** 列出参与比对必需的缺失对照图文件名（逗号分隔的清单；齐全返回 null）。与 artifactsComplete 同口径，
+     *  供「该分类被跳过」的原因提示使用（能直接看到缺哪几张，方便定位是未分析还是产物不齐）。 */
+    private static String missingArtifactNames(Path gdir, Map<String, Object> info) {
+        List<String> miss = new ArrayList<>();
         for (String f : MATCH_CORE_FILES) {
             if (!Files.isRegularFile(gdir.resolve(f))) {
-                return false;
+                miss.add(f);
             }
         }
         boolean clickAct = "click".equals(String.valueOf(info.get("action")));
@@ -987,11 +1005,29 @@ public class FrameClassifier {
         if (clickAct && cl != null && ct != null) {
             for (String f : MATCH_CLICK_FILES) {
                 if (!Files.isRegularFile(gdir.resolve(f))) {
-                    return false;
+                    miss.add(f);
                 }
             }
         }
-        return true;
+        return miss.isEmpty() ? null : String.join(", ", miss);
+    }
+
+    /** 汇总输出本轮未参与比对的分类与原因（名单变化或距上次超过 60 秒才打一次，避免识别循环每轮刷屏）。 */
+    private static void logSkippedGroups(Outcome out) {
+        if (out.skipped.isEmpty()) {
+            return;
+        }
+        String sig = out.skipped.toString();
+        long now = System.currentTimeMillis();
+        if (sig.equals(lastSkippedSig) && now - lastSkippedLogMs < 60_000L) {
+            return;
+        }
+        lastSkippedSig = sig;
+        lastSkippedLogMs = now;
+        StringBuilder sb = new StringBuilder();
+        out.skipped.forEach((d, r) -> sb.append("\n    - ").append(d).append("：").append(r));
+        log.warn("画面识别有 {} 个分类未参与比对（已比对 {}/{}）：{}", out.skipped.size(),
+                out.scannedSamples, out.totalSamples, sb);
     }
 
     /** 读取产物目录下的 info.json；不存在/损坏返回空 map。 */

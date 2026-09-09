@@ -1763,6 +1763,34 @@ public class ThinkService {
         }
     }
 
+    /** 某分类样本已清零时清理其 summary/ 下全部残留产物目录（按 info.json 的 state 匹配）；仍有样本则不动作 */
+    public void removeGroupArtifacts(String state) {
+        String st = trim(state);
+        Path sum = storage.summary();
+        if (st.isEmpty() || !Files.isDirectory(sum) || classifyStore.sampleCount(st) > 0) {
+            return;
+        }
+        try (Stream<Path> s = Files.list(sum)) {
+            for (Path d : (Iterable<Path>) s::iterator) {
+                if (!Files.isDirectory(d)) {
+                    continue;
+                }
+                Object dm = readInfo(d).get("state");
+                if (!st.equals(dm == null ? "" : String.valueOf(dm).trim())) {
+                    continue;
+                }
+                try {
+                    deleteTree(d);
+                    log.info("分类「{}」样本已清零，清理残留产物目录 {}", st, d);
+                } catch (IOException e) {
+                    log.warn("清理分类「{}」残留产物目录 {} 失败: {}", st, d, e.toString());
+                }
+            }
+        } catch (IOException e) {
+            log.warn("枚举 summary/ 失败，跳过分类 {} 的残留清理: {}", st, e.toString());
+        }
+    }
+
     /** 分类标注改名后产物迁移结果：moved = 成功迁名的目录数；needRebuild = 删除待后台重建的目录数 */
     public record RenameArtifactsResult(int moved, int needRebuild) {
     }

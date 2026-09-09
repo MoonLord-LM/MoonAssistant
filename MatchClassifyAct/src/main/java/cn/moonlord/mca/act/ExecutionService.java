@@ -283,6 +283,7 @@ public class ExecutionService {
             String matchedSample,
             int scannedSamples,
             int totalSamples,
+            Map<String, String> skippedGroups,
             List<FrameClassifier.Candidate> candidates,
             long captureMs,
             long classifyMs,
@@ -296,7 +297,7 @@ public class ExecutionService {
         return new Snapshot(System.currentTimeMillis(), "尚未产生识别结果：请先点「立即识别」。",
                 false, null, 0, 0, 0, 0,
                 false, null, null, null, null, -1, executeProperties.getMatchThresholdPercent(),
-                null, 0, 0, new ArrayList<>(), 0, 0, 0, 0, null);
+                null, 0, 0, Map.of(), new ArrayList<>(), 0, 0, 0, 0, null);
     }
 
     /** 无画面的错误快照（窗口缺失 / 截图失败 / 最小化等），保留窗口信息便于界面提示。 */
@@ -319,9 +320,11 @@ public class ExecutionService {
         int total = 0;
         List<FrameClassifier.Candidate> candidates = new ArrayList<>();
 
+        Map<String, String> skippedGroups = Map.of();
         if (oc != null) {
             scanned = oc.scannedSamples;
             total = oc.totalSamples;
+            skippedGroups = oc.skipped;
             if (oc.candidates != null) {
                 candidates = oc.candidates;
             }
@@ -406,7 +409,7 @@ public class ExecutionService {
         }
         return new Snapshot(now, error, winFound, winTitle, winX, winY, winW, winH,
                 recognized, state, action, left, top, bestDiff, executeProperties.getMatchThresholdPercent(),
-                matched, scanned, total, candidates, captureMs, classifyMs, w, h, image);
+                matched, scanned, total, skippedGroups, candidates, captureMs, classifyMs, w, h, image);
     }
 
     /* ================================================================ 画面 PNG 供图 ==== */

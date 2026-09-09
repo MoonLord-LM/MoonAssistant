@@ -2950,6 +2950,7 @@ function execSetVal(id, txt, cls){
   e.textContent = txt;
   e.className = "v" + (cls ? " " + cls : "");
 }
+let execSkipSig = "";   // 最近一轮「未参与比对」的跳过名单签名：名单变化才 toast 提醒一次，避免识别轮询刷屏
 
 function renderExecAll(){
   const j = execLatest;
@@ -2999,10 +3000,31 @@ function renderExecAll(){
   if((j.totalSamples || 0) > 0){
     // 存在可比的分类总数时才显示分组进度；一个分类都没有（首次进入尚无产物）时保持 —，
     // 否则“已比对 0 / 全部 0 个分类”是无意义的无效信息
-    execSetVal("execSamples", "已比对 " + (j.scannedSamples || 0) + " / 全部 " + j.totalSamples + " 个分类",
+    const skip = j.skippedGroups || {};
+    const skipNames = Object.keys(skip);
+    execSetVal("execSamples",
+        "已比对 " + (j.scannedSamples || 0) + " / 全部 " + j.totalSamples + " 个分类"
+          + (skipNames.length ? "（跳过 " + skipNames.length + " 个）" : ""),
         j.scannedSamples > 0 && j.totalSamples > j.scannedSamples ? "err" : "");
+    const se = $("execSamples");
+    if(skipNames.length){
+      // 悬停可看「哪个分类、为什么」被跳过；名单与上轮不同（新出现/已变化/恢复）时 toast 提醒一次
+      se.title = "未参与比对的分组（目录 → 原因）：\n"
+        + skipNames.map(n => "· " + n + "：" + (skip[n] || "未知")).join("\n");
+      const sig = skipNames.join("|");
+      if(execSkipSig !== sig){
+        execSkipSig = sig;
+        toast("有 " + skipNames.length + " 个分类未参与比对：" + skipNames.join("、")
+            + "。悬停「比对分组」行查看原因（产物补齐后自动恢复）", "warn");
+      }
+    } else {
+      se.title = "";
+      execSkipSig = "";
+    }
   } else {
     execSetVal("execSamples", "—", "");
+    const se = $("execSamples"); if(se) se.title = "";
+    execSkipSig = "";
   }
   execSetVal("execWin", j.windowFound
       ? (j.windowTitle || "已找到窗口")

@@ -262,6 +262,10 @@ public class AnnotateController {
                 log.debug("标注完成，截图 {}/ → {}/", storage.capture(), storage.classify());
             }
             thinkService.requestRecompute();   // 样本集合已变化：后台自动补齐/刷新该分类对照图（无需进入汇总分析页）
+            // 样本从旧分类改归其它分类：若旧分类已无任何样本则清理其空定义与 summary/ 残留产物
+            if (alreadyClassified && oldState != null && !oldState.isEmpty() && !oldState.equals(state)) {
+                cleanupVacantState(oldState);
+            }
             return ResponseEntity.ok(adopted);
         } catch (IOException e) { // JsonProcessingException 是 IOException 子类
             log.error("写样本标注失败 {}: {}", png, e.toString());
@@ -283,6 +287,7 @@ public class AnnotateController {
         }
         Path mark = classifyStore.sampleJson(name);
         Path movedBack = null;
+        String oldState = currentState(name, png);   // 清除前记录原分类，供清除后空分类清理
         try {
             if (png.startsWith(storage.classify())) {
                 Path capture = storage.capture();
@@ -308,11 +313,41 @@ public class AnnotateController {
                 log.debug("清除标注，截图 {}/ → {}/", storage.classify(), storage.capture());
             }
             thinkService.requestRecompute();   // 样本集合已变化：后台自动重算受影响分组
+            cleanupVacantState(oldState);      // 该分类若因本次清除而样本清零则一并清理空定义与残留产物
             return ResponseEntity.ok().build();
         } catch (IOException e) {
             log.error("清除标注失败 {}: {}", png, e.toString());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body("清除标注失败: " + e.getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------ 空分类清理
+
+    /** 已标注样本当前归属分类：png 在 classify/ 且样本 json 可读才返回其 state（读不到返回 null） */
+    private String currentState(String name, Path png) {
+        if (png == null || !png.startsWith(storage.classify())) {
+            return null;
+        }
+        CaptureMark cur = classifyStore.readSample(name);
+        if (cur == null) {
+            return null;
+        }
+        String st = cur.getState();
+        return st == null ? "" : st.trim();
+    }
+
+    /** 样本全部移出某分类后的残留清理：若该分类样本已清零，删 data.json 空定义 + summary/ 残留产物目录 */
+    private void cleanupVacantState(String state) {
+        String st = state == null ? "" : state.trim();
+        if (st.isEmpty() || classifyStore.sampleCount(st) > 0) {
+            return;   // 分类仍有样本：不清理
+        }
+        try {
+            classifyStore.removeDefinitionIfVacant(st);
+            thinkService.removeGroupArtifacts(st);
+        } catch (IOException e) {
+            log.warn("清理空分类「{}」失败: {}", st, e.toString());
         }
     }
 
@@ -379,12 +414,14 @@ public class AnnotateController {
             targets.add(mark);
         }
         try {
+            String oldState = currentState(name, png);
             List<Path> recycled = RecycleBin.recycle(targets);
             boolean pngOk = recycled.contains(png);
             boolean markOk = mark != null && recycled.contains(mark);
             log.info("截图移入回收站：{}（标注 {}）", png.getFileName(), markOk ? "一并移除" : "无/跳过");
             if (markOk) {
                 thinkService.requestRecompute();   // 删除的是已标注样本：后台自动重算受影响分组
+                cleanupVacantState(oldState);      // 该分类若因本次删除而样本清零则一并清理空定义与残留产物
             }
             return ResponseEntity.ok(Map.of("name", name, "png", pngOk, "mark", markOk));
         } catch (IOException e) {

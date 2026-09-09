@@ -405,6 +405,20 @@ public class ClassifyStore {
         return updated;
     }
 
+    /** 某分类已无任何已标注样本时移除其在 data.json 的残留定义（空定义清理）；仍有样本则不动 */
+    public synchronized boolean removeDefinitionIfVacant(String state) throws IOException {
+        ensureMigrated();
+        String st = trim(state);
+        DataFile d = table();
+        if (st.isEmpty() || !d.getStates().containsKey(st) || sampleCount(st) > 0) {
+            return false;
+        }
+        d.getStates().remove(st);
+        saveData(d);
+        log.info("分类标注「{}」样本已清零，清理 data.json 空定义", st);
+        return true;
+    }
+
     /** 启动/首次访问前的幂等初始化（懒迁移，内部自动执行一次，通常无需外部调用） */
     public synchronized void ensureMigrated() {
         if (migrated) {
