@@ -30,12 +30,13 @@ import java.util.Map;
  * same70-unique / same60-unique / same50-unique / max-unique / avg-unique / dedup-avg-unique /
  * major8-unique·avg8-unique·dedup-avg8-unique·major32-unique·avg32-unique·dedup-avg32-unique），共 15 张，
  * 全部参与识别比对。
- * 点击动作且有坐标的分类另生成 12 张点击区交集图（以点击坐标为中心的 1/8、1/32 方框交集小图 ×
- * 交集六档 click8/32-same100/90/80/70/60/50，全部参与识别比对；无 -unique 版、不参与独有区互比）。
+ * 全部分类都以统一关注点坐标（click=点击点 / 无动作=画面关注区域，默认屏幕中心）为中心，
+ * 另生成 12 张点击区交集图（1/8、1/32 方框交集小图 × 交集六档
+ * click8/32-same100/90/80/70/60/50，全部参与识别比对；无 -unique 版、不参与独有区互比）。
  * 独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，
  * 是跨分类产物、等全部分组的基础图生成完后才统一计算，与该分类适用的全部对照图一起构成
- * 固定比对维度参与执行模式 / 智能分析的匹配：无点击坐标分类 15 基础 + 15 -unique = 30 张，
- * 点击动作分类另需 12 张点击区交集图 = 42 张（见 {@link FrameClassifier}；缺图目录待后台重算补齐后自动恢复）。
+ * 固定比对维度参与执行模式 / 智能分析的匹配：每个分类 15 基础 + 15 -unique + 12 张点击区交集图 = 42 张
+ * （见 {@link FrameClassifier}；历史无坐标旧目录缺图 → 待后台重算补齐后自动恢复）。
  *
  * <pre>
  *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir / 点击区交集图齐全标记 hasClick / 低档齐全 hasClickLow）

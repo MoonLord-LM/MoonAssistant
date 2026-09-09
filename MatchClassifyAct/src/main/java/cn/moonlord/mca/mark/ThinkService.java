@@ -46,8 +46,9 @@ import java.util.stream.Stream;
  * 本服务对每组截图逐像素分析，产出基础合成图与独有区图：交集图按覆盖率阈值分
  * 100/90/80/70/60/50 六档（100% = 样本完全一致，最严格；其余为覆盖 >90/80/70/60/50%），
  * 连同多数 / 均值 / 去重均值 / 8·32 块图族共 15 张基础合成图；
- * 每张基础图各合成一张 -unique 独有区图（15 张）；匹配动作是鼠标点击且坐标有效的组合
- * 另生成 12 张<b>点击区交集图</b>（click8/32-same100/90/80/70/60/50：1/8、1/32 方框 × 交集六档）。
+ * 每张基础图各合成一张 -unique 独有区图（15 张）；每个组合都带统一关注点坐标
+ * （鼠标点击=点击位置 / 无动作=画面关注区域，默认屏幕中心），据此另生成 12 张
+ * <b>点击区交集图</b>（click8/32-same100/90/80/70/60/50：1/8、1/32 方框 × 交集六档）。
  * 基础图、独有区图与点击区交集图全部作为执行模式 / 智能比对的比对维度参与识别。</p>
  * <ol>
  *   <li><b>交集图 100% 档</b>（same100.png）：要求样本在该像素完全同色（一致张数 == 样本数，
@@ -73,9 +74,9 @@ import java.util.stream.Stream;
  *   <li><b>1/32 均值图</b>（avg32.png）：同上，块为 32×32。</li>
  *   <li><b>1/8 去重均值图</b>（dedup-avg8.png）：按 8×8 网格切块后，先把块内跨样本出现过的颜色
  *       去重，再对去重后的颜色逐通道等权平均；1/32 去重均值图（dedup-avg32.png）块为 32×32。</li>
- *   <li><b>点击区 1/8 交集图</b>（click8-same100/90/80/70/60/50.png）：以该组统一点击坐标为中心的方框小图——
- *       框取整幅长宽的 1/8（1280×720 → 160×90），框内像素做与对应交集档相同的判定（100% = 全一致，
- *       其余为“覆盖>90/80/70/60/50%”），聚焦要点击的位置；样本间不一致的框内像素透明；
+ *   <li><b>点击区 1/8 交集图</b>（click8-same100/90/80/70/60/50.png）：以该组统一关注点坐标（点击=点击位置 /
+ *       无动作=画面关注区域）为中心的方框小图——框取整幅长宽的 1/8（1280×720 → 160×90），框内像素做与
+ *       对应交集档相同的判定（100% = 全一致，其余为“覆盖>90/80/70/60/50%”），聚焦关注位置；样本间不一致的框内像素透明；
  *       框中心固定，越出画幅的部分透明。各档框图一并参与识别比对。</li>
  *   <li><b>点击区 1/32 交集图</b>（click32-same100/90/80/70/60/50.png）：同上，框取整幅长宽的 1/32
  *       （1280×720 → 40×22），按各交集档位判定。</li>
@@ -89,7 +90,7 @@ import java.util.stream.Stream;
  * 作为与基础图互补的正式比对维度、专为拉开相近分类的差异度。
  * 独有区图是跨分类产物：
  * <b>要等全部分组的基础图都生成完才开始算</b>（全集门禁），且该分类适用的全部对照图必须齐全
- * （无点击坐标分类 15 基础 + 15 -unique = 30 张，点击动作分类另需 12 张点击区交集图 = 42 张）
+ * （每个分类 15 基础 + 15 -unique + 12 张点击区交集图 = 42 张；历史无坐标旧目录只有 30 张，重算后补齐）
  * 才参与执行识别
  * （见 {@link cn.moonlord.mca.act.FrameClassifier}）。点击区交集图不参与独有区互比，
  * 也没有 -unique 版本。</p>
@@ -102,8 +103,9 @@ import java.util.stream.Stream;
  * dedup-avg-unique.png / major8.png / major8-unique.png / avg8.png / avg8-unique.png / dedup-avg8.png /
  * dedup-avg8-unique.png / major32.png / major32-unique.png / avg32.png / avg32-unique.png /
  * dedup-avg32.png / dedup-avg32-unique.png}，
- * 点击动作分类另有 {@code click8-same100/90/80/70/60/50.png / click32-same100/90/80/70/60/50.png}
- * 共 12 张点击区交集图，分析信息（样本数、覆盖率、公共点击坐标等）
+ * 各分类另以统一关注点坐标（click=点击点 / 无动作=画面关注区域）为中心生成
+ * {@code click8-same100/90/80/70/60/50.png / click32-same100/90/80/70/60/50.png}
+ * 共 12 张点击区交集图，分析信息（样本数、覆盖率、公共关注点坐标等）
  * 写入同目录 {@code info.json}。产物只被执行模式识别读取、不参与标注样本的修改，
  * 画面标签一律以控制台的人工标注为准。</p>
  *
@@ -150,9 +152,9 @@ public class ThinkService {
     private static final String FILE_M32 = "major32.png";    // 1/32 多数图（32×32 块）
     private static final String FILE_A32 = "avg32.png";      // 1/32 均值图（32×32 块）
     private static final String FILE_DA32 = "dedup-avg32.png"; // 1/32 去重均值图（32×32 块）
-    /** 点击区交集图（仅匹配动作为鼠标点击且坐标有效的组合生成；参与识别比对）：以统一点击坐标为
-     *  中心的方框小图，框 = 整幅长宽 ÷8 / ÷32（1280×720 → 160×90 / 40×22），交集判定口径同对应档的
-     *  FILE_SAME_80/70/60/50（覆盖>90/80/70/60/50%），聚焦“要点击的位置”；框中心不收敛，
+    /** 点击区交集图（各分类都带统一关注点坐标即生成：点击=点击位置 / 无动作=画面关注区域；参与识别比对）：
+     *  以关注点坐标为中心的方框小图，框 = 整幅长宽 ÷8 / ÷32（1280×720 → 160×90 / 40×22），交集判定口径
+     *  同对应档的 FILE_SAME_80/70/60/50（覆盖>90/80/70/60/50%），聚焦关注位置；框中心不收敛，
      *  越出画幅的部分透明；无 -unique、不参与独有区互比 */
     private static final String FILE_C8 = "click8-same90.png";    // 点击区 1/8 交集图 90% 档
     private static final String FILE_C32 = "click32-same90.png";  // 点击区 1/32 交集图 90% 档
@@ -213,8 +215,8 @@ public class ThinkService {
     /** 方框除数：8 = 整幅长宽的 1/8、32 = 1/32 */
     private static final int[] CLICK_DIVS = {8, 32};
 
-    /** kind → 产物文件名：非点击组合 30 张（15 基础 + 15 张 -unique）；点击动作组合最多 42 张
-     *  （另加 12 张点击区交集图）；全部维度参与识别比对，可经 /img/{kind} 读取 */
+    /** kind → 产物文件名：每个分类 42 张（15 基础 + 15 张 -unique + 12 张点击区交集图）；
+     *  全部维度参与识别比对，可经 /img/{kind} 读取 */
     private static final Map<String, String> KIND_FILE = Map.ofEntries(
         Map.entry("same100", FILE_SAME_100),
         Map.entry("same100-unique", FILE_SAME_100_UNIQUE),
@@ -343,6 +345,16 @@ public class ThinkService {
         this.classifyStore = classifyStore;
         this.frameClassifier = frameClassifier;
         this.executeProperties = executeProperties;
+        // 一次性迁移：历史「无动作」分类缺关注点坐标（left/top 为 null）→ 补为该分类样本的屏幕中心，
+        // 使全部分类都能统一生成点击区图（幂等：没有缺失时零写入）
+        try {
+            int n = classifyStore.backfillNonePointsToCenter();
+            if (n > 0) {
+                log.info("已为 {} 个无动作分类补齐关注点坐标（屏幕中心），后台重算将补生成点击区图", n);
+            }
+        } catch (Exception e) {
+            log.warn("补齐无动作分类关注点失败（不影响启动，待后续标注保存时修正）：{}", e.toString());
+        }
         requestRecompute();   // 启动后自动补一轮：上次退出没跑完 / 重启期间样本有变的产物尽快对齐（约 3 秒后执行）
     }
 
@@ -392,8 +404,8 @@ public class ThinkService {
      * 把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
-     * 只要样本变化，summary/ 下的对照图（15 张基础合成图 + 15 张 -unique 独有区图，
-     * 点击动作且坐标有效的分类另有 12 张点击区交集图）就会自动保持与最新样本一致，
+     * 只要样本或分类定义（动作/关注点坐标）变化，summary/ 下的对照图（15 张基础合成图
+     * + 15 张 -unique 独有区图 + 12 张点击区交集图）就会自动保持与最新样本一致，
      * 供执行模式随时取用。与前端手动分析共用同一计算池，串行执行互不并发。
      */
     public void requestRecompute() {
@@ -568,7 +580,7 @@ public class ThinkService {
                         continue;   // 与执行模式识别器同口径：该分类适用的对照图齐全才参与
                     }
                     sb.append(d.getFileName()).append('{');
-                    // 产物全集：15 基础 + 15 -unique +（点击动作分类的）12 张点击区交集图 + info，任一重算都使签名失效
+                    // 产物全集：15 基础 + 15 -unique + 12 张点击区交集图（按统一关注点坐标）+ info，任一重算都使签名失效
                     List<String> files = new ArrayList<>();
                     for (String b : UNIQUE_BASE_KINDS) {
                         files.add(KIND_FILE.get(b));
@@ -611,17 +623,17 @@ public class ThinkService {
     /**
      * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
      * 每个分类适用其产物对照图分别同尺度逐像素比对：交集六档 same100/90/80/70/60/50 / 多数 / 均值 /
-     * 去重均值 / 1-8、1-32 块图及各自的 -unique 独有区图（30 张），点击动作且坐标有效的分类另有
-     * 12 张点击区交集图 click8/32-same100/90/80/70/60/50——以该分类统一点击坐标为中心的 1/8、1/32
-     * 方框小图（各交集档），在画面上同坐标裁剪比对。
+     * 去重均值 / 1-8、1-32 块图及各自的 -unique 独有区图（30 张），另加 12 张点击区交集图
+     * click8/32-same100/90/80/70/60/50——均以该分类统一关注点坐标（click=点击点 / 无动作=画面关注区域）
+     * 为中心的 1/8、1/32 方框小图（各交集档），在画面上同坐标裁剪比对。
      * 判据按维度类别分三套：交集/多数类（全部交集档、多数图、1-8/1-32 多数块图、点击区交集图
      * 及各自的 -unique）逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值图、去重均值图、
      * 1-8/1-32 均值块图 / 去重均值块图及各自 -unique）
      * 走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才算匹配，默认 255/3=85），
      * 分类得分 = 五族加权平均 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张（权 50）、B 多数 6 张（权 15）、
      * C 均值 6 张（权 10）、D 去重均值 6 张（权 10）、E 点击区交集 12 张（权 15）——每族先把族内各图
-     * 「不匹配点占比」等权平均；W = 适用族的权重之和（点击坐标分类五族齐全 =100、
-     * 无坐标分类无 E =85）；各图照常参与：产物无任何有效像素的空图（独有区图无独有点等）没有可判别点、
+     * 「不匹配点占比」等权平均；W = 适用族的权重之和（产物齐全的参与分类五族俱备、恒为 100）；
+     * 各图照常参与：产物无任何有效像素的空图（独有区图无独有点等）没有可判别点、
      * 无法做区分，判完全不匹配、按不匹配占比满值计。
      * 识别不设阈值门槛：
      * 有可比的最近似分类即视为已识别（差异度仅供展示参考）。
@@ -881,9 +893,9 @@ public class ThinkService {
             Map<String, Object> info = readInfo(gdir);
             boolean complete = artifactsComplete(gdir);
             g.put("analyzed", complete);   // 主产物基础图（交集 90% 档 + 多数/均值/去重均值/8·32 块族）齐全即视为已分析；-unique 由随后的跨分类刷新补齐
-            // 点击区交集图 90% 档是否可展示：点击动作、点击坐标有效且两张 same90 产物都已生成（重算前旧产物没有 → false）
-            boolean clickReq = CaptureMark.ACTION_CLICK.equals(action)
-                    && cc[0] >= 0 && cc[1] >= 0;
+            // 点击区交集图 90% 档是否可展示：关注点坐标有效（click=点击点 / 无动作=画面关注点，
+            // 默认屏幕中心）且两张 same90 产物都已生成；无动作分类旧产物没有点击区图 → false，后台重算后恢复
+            boolean clickReq = cc[0] >= 0 && cc[1] >= 0;
             boolean hasClick = complete && clickReq
                     && Files.isRegularFile(gdir.resolve(FILE_C8))
                     && Files.isRegularFile(gdir.resolve(FILE_C32));
@@ -1085,9 +1097,11 @@ public class ThinkService {
             throw new IllegalStateException("该组合没有可用样本");
         }
 
-        // click：最常见点击坐标（写入 info.json）
+        // 关注点坐标（click=点击点 / 无动作=画面关注区域，默认屏幕中心）：样本中最常见的坐标
+        // （写入 info.json，点击区交集图以它为中心裁剪）。历史无动作分类旧定义没有坐标、
+        // 样本坐标全空 → cx/cy 为 null，不会生成点击区图；已由一次性迁移补齐 center 后自动生成
         Integer cx = null, cy = null;
-        if (CaptureMark.ACTION_CLICK.equals(action)) {
+        {
             Map<Long, Integer> freq = new HashMap<>();
             long bestKey = 0;
             int best = 0;
@@ -1639,19 +1653,19 @@ public class ThinkService {
             && Files.isRegularFile(gdir.resolve(FILE_SAME_50_UNIQUE));
     }
 
-    /** 对照图是否齐全：15 基础 + 15 -unique 必须有；点击动作且有坐标的分类另需全部 12 张点击区交集图。
+    /** 对照图是否齐全：15 基础 + 15 -unique 必须有；关注点坐标有效（click=点击点 / 无动作=画面关注点，
+     *  默认屏幕中心）的分类再需全部 12 张点击区交集图（每分类 = 42 张）。
      *  与执行模式识别器同口径（低档/点击区图齐全才参与匹配，旧目录缺图 → 不参与直到后台重算补齐）。 */
     private boolean artifactsAllComplete(Path gdir) {
         return baseArtifactsComplete(gdir) && allUniqueArtifactsComplete(gdir) && clickAllArtifactsComplete(gdir);
     }
 
-    /** 点击区交集图 90% 档（FILE_C8 / FILE_C32）是否齐全：仅点击动作且点击坐标有效的分类需要（无此维度的分类视为通过）。 */
+    /** 点击区交集图 90% 档（FILE_C8 / FILE_C32）是否齐全：关注点坐标有效（有 info clickLeft/clickTop）即需要 */
     private boolean clickArtifactsComplete(Path gdir) {
         Map<String, Object> info = readInfo(gdir);
-        boolean clickAct = CaptureMark.ACTION_CLICK.equals(String.valueOf(info.get("action")));
         int cx = infoClick(info.get("clickLeft"));
         int cy = infoClick(info.get("clickTop"));
-        if (!clickAct || cx < 0 || cy < 0) {
+        if (cx < 0 || cy < 0) {
             return true;
         }
         return Files.isRegularFile(gdir.resolve(FILE_C8)) && Files.isRegularFile(gdir.resolve(FILE_C32));
@@ -1673,8 +1687,8 @@ public class ThinkService {
             && Files.isRegularFile(gdir.resolve(FILE_C32_50));
     }
 
-    /** 点击区交集图全部 12 张（1/8、1/32 × 交集六档，含 100% 档）是否齐全：仅点击动作且点击坐标有效的
-     *  分类需要（无此维度的分类视为通过）。与执行模式识别器同口径；旧目录缺图 → 不参与直到重算补齐 */
+    /** 点击区交集图全部 12 张（1/8、1/32 × 交集六档，含 100% 档）是否齐全：关注点坐标有效的分类需要
+     *  （无坐标的旧定义视为通过，已由一次性迁移补齐）。与执行模式识别器同口径；旧目录缺图 → 不参与直到重算补齐 */
     private boolean clickAllArtifactsComplete(Path gdir) {
         return clickArtifactsComplete(gdir) && clickDisplayArtifactsComplete(gdir);
     }
@@ -1940,7 +1954,7 @@ public class ThinkService {
         return out.isEmpty() ? null : out;
     }
 
-    /** 一组标注中最常见的点击坐标；无有效坐标返回 {-1,-1} */
+    /** 一组标注中最常见的关注点坐标（click=点击位置 / 无动作=画面关注区域）；无有效坐标返回 {-1,-1} */
     private int[] commonClick(List<CaptureMark> marks) {
         Map<Long, Integer> freq = new HashMap<>();
         long bestKey = 0;

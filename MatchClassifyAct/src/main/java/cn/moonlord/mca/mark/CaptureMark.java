@@ -11,12 +11,13 @@ import lombok.Data;
  * 以“样本 state + 中心表定义”合成本对象，因此对接口与页面保持原字段形状，数据不再逐图冗余。</p>
  *
  * <p>截图输出的是窗口自身的物理像素内容，因此“图片像素坐标”就是“窗口相对坐标”，
- * 后续 Match/Classify/Act 阶段可直接按此坐标执行鼠标动作。</p>
+ * 后续 Match/Classify/Act 阶段可按此坐标执行鼠标动作（click 分类），或据此生成点击区图参与匹配
+ * （无动作分类的关注点，默认屏幕中心）。</p>
  */
 @Data
 public class CaptureMark {
 
-    public static final String ACTION_NONE = "none";   // 无动作
+    public static final String ACTION_NONE = "none";   // 无动作（关注点 = 画面关注区域，默认屏幕中心）
     public static final String ACTION_CLICK = "click"; // 鼠标点击[窗口相对坐标]
 
     /** 当前画面状态（状态标签），任意 GUI 程序皆适用，如 登录页 / 主界面 / 弹窗 / 无响应 */
@@ -25,10 +26,10 @@ public class CaptureMark {
     /** 动作标记：none | click */
     private String action = ACTION_NONE;
 
-    /** 动作 click 时的窗口相对坐标 X（图片像素） */
+    /** 关注点坐标（图片像素）：click = 点击位置，无动作 = 画面关注区域，默认屏幕中心；点击区图以它为中心裁剪 */
     private Integer left;
 
-    /** 动作 click 时的窗口相对坐标 Y（图片像素） */
+    /** 关注点坐标（图片像素）：click = 点击位置，无动作 = 画面关注区域，默认屏幕中心；点击区图以它为中心裁剪 */
     private Integer top;
 
 }

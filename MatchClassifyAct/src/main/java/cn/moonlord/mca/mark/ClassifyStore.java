@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -24,11 +25,15 @@ import java.util.stream.Stream;
 /**
  * 分类标注中心表 + 样本标注读写（分类 → 动作/坐标的单一事实来源）。
  *
- * <p><b>数据模型（schema=1）</b>：同一分类标注的动作与坐标是“分类级定义”，与具体样本无关，
- * 只在 <code>classify/data.json</code> 保存一份；每张样本图旁的 json 只记它的分类归属，不再逐张复制坐标：</p>
+ * <p><b>数据模型（schema=1）</b>：同一分类标注的动作与“关注点”坐标是“分类级定义”，与具体样本无关，
+ * 只在 <code>classify/data.json</code> 保存一份；每张样本图旁的 json 只记它的分类归属，不再逐张复制坐标。
+ * 任一动作都必须带关注点坐标（click=鼠标点击位置 / 无动作=画面关注区域，默认屏幕中心），
+ * 汇总分析会以它为中心为全部分类生成点击区交集图：</p>
  * <pre>
  * classify/data.json
- *   { "schema": 1, "states": { "登录页": { "action": "click", "left": 640, "top": 360 } } }
+ *   { "schema": 1, "states": {
+ *       "登录页": { "action": "click", "left": 640, "top": 360 },
+ *       "加载中": { "action": "none", "left": 640, "top": 360 } } }
  * classify/IMG_x.png        样本截图
  * classify/IMG_x.json       { "state": "登录页" }        // 仅归属，动作坐标查 data.json
  * </pre>
@@ -62,7 +67,7 @@ public class ClassifyStore {
         this.storage = storage;
     }
 
-    /** 单条分类定义：动作 + （click 时的）坐标；属于分类而非样本 */
+    /** 单条分类定义：动作 + 关注点坐标（click=点击位置 / 无动作=关注区域，默认屏幕中心）；属于分类而非样本 */
     @Data
     public static class ClassDef {
         private String action = CaptureMark.ACTION_NONE;
@@ -178,12 +183,9 @@ public class ClassifyStore {
                 if (!CaptureMark.ACTION_CLICK.equals(act) && !CaptureMark.ACTION_NONE.equals(act)) {
                     continue;
                 }
-                Integer left = null;
-                Integer top = null;
-                if (CaptureMark.ACTION_CLICK.equals(act)) {
-                    left = node.path("left").isIntegralNumber() ? node.path("left").asInt() : null;
-                    top = node.path("top").isIntegralNumber() ? node.path("top").asInt() : null;
-                }
+                // 关注点坐标（click=点击点 / 无动作=画面关注区域）：任一动作都解析
+                Integer left = node.path("left").isIntegralNumber() ? node.path("left").asInt() : null;
+                Integer top = node.path("top").isIntegralNumber() ? node.path("top").asInt() : null;
                 votes.computeIfAbsent(state, k -> new LinkedHashMap<>())
                     .merge(new DefKey(act, left, top), 1, Integer::sum);
             }
@@ -327,6 +329,76 @@ public class ClassifyStore {
         table().getStates().forEach((st, cd) -> out.add(toMark(st, cd)));
         out.sort(Comparator.comparing(CaptureMark::getState, Comparator.nullsLast(String::compareTo)));
         return out;
+    }
+
+    /** 一次性补齐历史「无动作」分类缺失的关注点坐标（幂等：仅处理 left/top 为空的非 click 定义），
+     *  按该分类首张样本图分辨率的屏幕中心补全，使点击区图可对全部分类统一生成
+     *  （click=点击坐标 / 无动作=画面关注点，默认屏幕中心）。样本无可读尺寸时跳过并告警。
+     *
+     *  @return 本次补齐的分类数（未动任何数据时返回 0）
+     */
+    public synchronized int backfillNonePointsToCenter() throws IOException {
+        ensureMigrated();
+        DataFile d = table();
+        int n = 0;
+        for (Map.Entry<String, ClassDef> e : d.getStates().entrySet()) {
+            ClassDef cd = e.getValue();
+            if (cd == null || CaptureMark.ACTION_CLICK.equals(cd.getAction())
+                || (cd.getLeft() != null && cd.getTop() != null)) {
+                continue;
+            }
+            int[] wh = sampleDimOf(e.getKey());
+            if (wh == null || wh[0] <= 0 || wh[1] <= 0) {
+                log.warn("一次性补齐关注点：无动作分类「{}」没有可读尺寸的样本，无法推断屏幕中心，跳过", e.getKey());
+                continue;
+            }
+            int cx = wh[0] / 2;
+            int cy = wh[1] / 2;
+            cd.setLeft(cx);
+            cd.setTop(cy);
+            n++;
+            log.info("一次性补齐无动作分类「{}」关注点 → 屏幕中心 ({},{}，画幅 {}×{})", e.getKey(), cx, cy, wh[0], wh[1]);
+        }
+        if (n > 0) {
+            saveData(d);
+            log.info("一次性补齐关注点完成：为 {} 个无动作分类写入屏幕中心默认点", n);
+        }
+        return n;
+    }
+
+    /** 某分类任意一张已标注样本图的像素尺寸（PNG 宽高，只读文件头不整幅解码）；无样本或读失败返回 null */
+    private int[] sampleDimOf(String state) {
+        for (Path png : listClassifiedPngs()) {
+            CaptureMark m = readSample(png.getFileName().toString());
+            if (m == null || !state.equals(trim(m.getState()))) {
+                continue;
+            }
+            int[] wh = pngSize(png);
+            if (wh != null) {
+                return wh;
+            }
+        }
+        return null;
+    }
+
+    /** 读 PNG 文件头 IHDR 的宽高；非 PNG 或读失败返回 null */
+    private static int[] pngSize(Path p) {
+        try (DataInputStream in = new DataInputStream(Files.newInputStream(p))) {
+            byte[] sig = new byte[8];
+            in.readFully(sig);
+            if ((sig[0] & 0xff) != 0x89 || sig[1] != 'P' || sig[2] != 'N' || sig[3] != 'G') {
+                return null;
+            }
+            in.readInt();   // IHDR 数据长度
+            if (in.readInt() != 0x49484452) {
+                return null;   // 块类型不是 "IHDR"
+            }
+            int w = in.readInt();
+            int h = in.readInt();
+            return w > 0 && h > 0 ? new int[] { w, h } : null;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     private CaptureMark toMark(String state, ClassDef cd) {

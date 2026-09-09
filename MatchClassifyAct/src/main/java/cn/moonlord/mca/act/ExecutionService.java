@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 执行模式的运行主轴：每轮 = 找到目标窗口 → 截取最新画面（必要时先 resize 把窗口强制对齐到
- * 与标注样本相同的尺寸）→ 把画面与各分类 summary/ 产物（对照图，15 张基础合成图 + 15 张 -unique 独有区图，
- * 点击动作分类另有 12 张点击区交集图）逐点比对识别出当前状态 →
+ * 与标注样本相同的尺寸）→ 把画面与各分类 summary/ 产物（对照图，15 张基础合成图 + 15 张 -unique 独有区图
+ * + 12 张点击区交集图，均以各分类统一关注点坐标为中心）逐点比对识别出当前状态 →
  * 解析该状态定义的动作与点击坐标 → 对外发布 Snapshot（含当前画面缓存，供控制台页实时展示与执行）。
  *
  * <p>与「标注模式的截图循环」是同一层截图/调窗机制，但各自独立调度：
@@ -384,8 +384,9 @@ public class ExecutionService {
                 if (oc.action != null) {
                     action = oc.action;
                 }
-                left = oc.clickLeft;
-                top = oc.clickTop;
+                // 关注点坐标只对「鼠标点击」分类对外暴露：无动作分类的关注点只用于产物生成/匹配，不执行动作
+                left = CaptureMark.ACTION_CLICK.equals(action) ? oc.clickLeft : null;
+                top = CaptureMark.ACTION_CLICK.equals(action) ? oc.clickTop : null;
             }
         }
 

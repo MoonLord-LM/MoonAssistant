@@ -32,16 +32,17 @@ import java.util.stream.Stream;
  * 其余覆盖 >90%/80%/70%/60%/50%，代表色是样本中达到该档一致门槛的真实像素）与多数 max / 均值 avg /
  * 去重均值 dedup-avg / major8·avg8·dedup-avg8·major32·avg32·dedup-avg32 块降采样，
  * 每张基础图各带一张 -unique 独有区图（共 15 张，全部参与比对）；
- * 匹配动作为鼠标点击且坐标有效的分类还会额外生成 12 张<b>点击区交集图</b>
- * click8/32-same100/90/80/70/60/50——以该分类统一点击坐标为中心、宽高分别取整幅 1/8 与 1/32 的
- * 方框小图（1280×720 → 160×90 与 40×22），交集判定口径与同档交集图一致，聚焦“要点击的位置”。
+ * 每个分类定义带关注点坐标（click=鼠标点击位置 / 无动作=画面关注区域，默认屏幕中心），关注点有效的
+ * 全部分类都会额外生成 12 张<b>点击区交集图</b>
+ * click8/32-same100/90/80/70/60/50——以该分类统一关注点坐标为框心、宽高分别取整幅 1/8 与 1/32 的
+ * 方框小图（1280×720 → 160×90 与 40×22），交集判定口径与同档交集图一致，聚焦“关注 / 要点击的位置”。
  * 方框中心固定、不向画幅内收敛：越出画幅边缘的部分按透明像素处理（产物与画面裁口同公式）。
  * 这些图把同一分类的多张样本合成成一张张“该状态的代表画面”。每张 -unique 独有区图在该基础图基础上
  * 剔除了「其它分类同 kind 基础图同位同色」的像素——那些区域对区分本分类没有贡献，只在独有区上统计
  * 差异相当于专门考察“该状态独有的画面区域”，能进一步拉开相近分类的差距；基础图覆盖整幅画面、
- * 独有区图只盯着本分类独占的区域，两者互补。产物必须按该分类适用的维度全部齐全才参与识别
- * （交集低档与 -unique 均为正式比对维度，无展示档之分）：无点击坐标分类需 15 基础 + 15 -unique = 30 张，
- * 点击动作分类另需 12 张点击区交集图 = 42 张。
+ * 独有区图只盯着本分类独占的区域，两者互补。产物必须全部齐全才参与识别
+ * （交集低档、-unique 与点击区交集图均为正式比对维度，无展示档之分）：每个分类 = 15 基础 + 15 -unique
+ * + 12 点击区交集图 = 42 张（历史无动作分类旧目录只有 30 张，后台重算后自动补齐）。
  *
  * <p>匹配口径：对照图按「代表色的来源」分三套逐点判据——
  * <ul>
@@ -56,9 +57,9 @@ import java.util.stream.Stream;
  * 消除重复采样对平均的加权），真实画面几乎不可能恰好等于平均色，逐像素完全一致没有意义——
  * 因此采用逐通道容差：三通道差值都不超过 {@code execute.rgb-dist-threshold}（默认 255/3 = 85）才判「匹配」，
  * 任一通道差 > 阈值即「不匹配」。</li>
- * <li><b>点击区交集图</b>（click8/32-same100/90/80/70/60/50，12 张，仅点击动作分类）：
+ * <li><b>点击区交集图</b>（click8/32-same100/90/80/70/60/50，12 张，各分类都按关注点生成）：
  * 对照颜色同样是样本真实像素（各档交集口径），判据同交集/多数类（逐像素完全一致）；
- * 产物是点击坐标附近的方框小图，比对时在画面同一坐标位置裁出方框再逐点比较；
+ * 产物是关注点坐标附近的方框小图，比对时在画面同一坐标位置裁出方框再逐点比较；
  * 框可越出画幅边缘，越界部分在产物与画面两侧都填透明、不参与统计。</li>
  * </ul>
  * 各图分别与当前画面（须与产物同分辨率：靠 resize 对齐，比对不做图片缩放）按同一口径逐点判定
@@ -66,9 +67,9 @@ import java.util.stream.Stream;
  * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区、点击区图内不一致的像素、
  * 以及点击区框越出画幅的出界点（画面与产物同处都填透明对齐）都被剔除）。
  * 各图的占比先按 A~E 五族做族内等权平均（A 全图交集 12 张权 50 → B 多数族 6 张权 15 →
- * C 均值族 6 张权 10 → D 去重均值族 6 张权 10 → E 点击区交集 12 张权 15，仅点击动作分类有 E），
+ * C 均值族 6 张权 10 → D 去重均值族 6 张权 10 → E 点击区交集 12 张权 15），
  * 再按 (50A+15B+10C+10D+15E)/W 加权为分类差异度：W = 适用族的权重之和
- * （点击分类五族齐全 W=100；无点击坐标分类无 E、W=85），各图照常全量参与。
+ * （参与识别的分类五族产物齐全、W 恒为 100；旧产物缺点击区图的分组整体跳过、后台重算后恢复）。
  * 没有任何有效像素的图（空图：基础图公共区全空 / 独有区图没有任何独有像素等）没有可判别的点、
  * 无法据此做区分：判完全不匹配、按不匹配占比满值计入并照常参与所在族均值；-1 只出现在产物缺失 /
  * 比对口径不符的异常防御路径（产物齐全时不会出现），该图才跳过。
@@ -154,8 +155,9 @@ public class FrameClassifier {
             Map.entry("click32-same60", new int[]{1, 0}),
             Map.entry("click32-same50", new int[]{1, 0}));
 
-    /** 点击区交集图维度：产物是以该分类统一点击坐标为心的 1/8、1/32 方框小图 × 交集六档，
-     *  不参与 -unique 独有区互比、也不存在独有区版本。比对时按同一坐标在画面上裁出方框再逐点比较。 */
+    /** 点击区交集图维度：产物是以该分类统一关注点坐标（点击=点击位置 / 无动作=画面关注区域）为心的
+     *  1/8、1/32 方框小图 × 交集六档，不参与 -unique 独有区互比、也不存在独有区版本。
+     *  比对时按同一坐标在画面上裁出方框再逐点比较。 */
     private static final Set<String> CLICK_CROP_KINDS = Set.of(
             "click8-same100", "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
             "click32-same100", "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
@@ -209,8 +211,8 @@ public class FrameClassifier {
     /** 对照图的固定展示/比较顺序（每张基础图紧跟其 -unique 独有区图：
      *  全图交集六档 same100→same50（共 12 张）→ 多数族 max/major8/major32（共 6 张）→
      *  均值族 avg/avg8/avg32（共 6 张）→ 去重均值族 dedup-avg/dedup-avg8/dedup-avg32（共 6 张）→
-     *  点击区交集图 click8 → click32（各六档，无 -unique，共 12 张）；每个分类按其适用维度参与，
-     *  无点击坐标的分类自然跳过最后 12 个）。 */
+     *  点击区交集图 click8 → click32（各六档，无 -unique，共 12 张）；每个分类 42 张全部参与
+     *  （历史无坐标旧目录缺点击区图 → 整目录跳过，后台重算后恢复）。 */
     private static final List<String> KIND_ORDER = List.of(
             "same100", "same100-unique",
             "same90", "same90-unique",
@@ -234,8 +236,8 @@ public class FrameClassifier {
      *  权 50 → B 多数族 6（max/major8/major32 各带 -unique）权 15 → C 均值族 6（avg/avg8/avg32
      *  各带 -unique）权 10 → D 去重均值族 6（dedup-avg/8/32 各带 -unique）权 10 → E 点击区交集 12
      *  （click8→32 × 各档，无 -unique）权 15。每族先对族内各图「不匹配点占比」等权平均得族均值，
-     *  差异度 = (50A+15B+10C+10D+15E)/W：W = 适用族的权重之和，点击分类五族齐全 W=100，
-     *  无点击坐标分类无 E、W=85；空图（产物无任何有效像素、无法做区分）按完全不匹配满值计、照常参与。 */
+     *  差异度 = (50A+15B+10C+10D+15E)/W：W = 适用族的权重之和，
+     *  产物齐全的参与分类五族俱备、恒为 100；空图（产物无任何有效像素、无法做区分）按完全不匹配满值计、照常参与。 */
     private static final int[] FAMILY_WEIGHTS = {50, 15, 10, 10, 15};
     private static final List<List<String>> FAMILY_KINDS = List.of(
             List.of("same100", "same100-unique", "same90", "same90-unique", "same80", "same80-unique",
@@ -267,8 +269,9 @@ public class FrameClassifier {
             "avg32.png", "avg32-unique.png",
             "dedup-avg32.png", "dedup-avg32-unique.png");
 
-    /** 点击动作分类额外必需的 12 张点击区交集图（1/8、1/32 方框 × 交集六档，与 ThinkService 生成配套）。
-     *  任一缺失该点击分类整目录跳过（旧产物未按新规则重算，后台重算后恢复）。 */
+    /** 关注点有效的分类（click=点击点 / 无动作=画面关注区域，默认屏幕中心）必需的 12 张点击区交集图
+     *  （1/8、1/32 方框 × 交集六档，与 ThinkService 生成配套）。任一缺失该分类整目录跳过
+     *  （历史无动作分类旧目录没有 → 后台重算后恢复）。 */
     private static final Set<String> MATCH_CLICK_FILES = Set.of(
             "click8-same100.png", "click8-same90.png", "click8-same80.png", "click8-same70.png", "click8-same60.png", "click8-same50.png",
             "click32-same100.png", "click32-same90.png", "click32-same80.png", "click32-same70.png", "click32-same60.png", "click32-same50.png");
@@ -351,9 +354,9 @@ public class FrameClassifier {
         public String bestFile;
         /** 命中分类定义的动作（click / none / other），来自 info.json。 */
         public String action;
-        /** 命中分类定义的点击坐标（无点击动作时 null）。 */
+        /** 命中分类定义的动作/关注点坐标（无动作分类也会携带；执行层只在 click 动作时使用）。 */
         public Integer clickLeft;
-        /** 命中分类定义的点击坐标（无点击动作时 null）。 */
+        /** 命中分类定义的动作/关注点坐标（无动作分类也会携带；执行层只在 click 动作时使用）。 */
         public Integer clickTop;
         /** 实际参与比较（核心对照图齐全且算出有效差异度）的分类数。 */
         public int scannedSamples;
@@ -451,13 +454,12 @@ public class FrameClassifier {
             }
             int w = wObj.intValue();
             int h = hObj.intValue();
-            // 点击动作分类才有点击区交集图维度（产物齐全性已按 info 校验过）：点击坐标用于在画面上
-            // 定位同一方框裁剪比对；无坐标的分类点击区图文件不存在，自然按缺失处理
-            boolean clickAct = "click".equals(String.valueOf(info.get("action")));
+            // 关注点坐标（click=点击点 / 无动作=画面关注区域，默认屏幕中心）用于在画面上定位同一方框
+            // 裁剪比对点击区交集图；产物齐全性已按 info 校验（有坐标 = 42 张齐全才可比，上面缺点击区图的目录已跳过）
             Integer cl = intOf(info.get("clickLeft"));
             Integer ct = intOf(info.get("clickTop"));
-            int ccx = clickAct && cl != null ? cl : -1;
-            int ccy = clickAct && ct != null ? ct : -1;
+            int ccx = cl != null ? cl : -1;
+            int ccy = ct != null ? ct : -1;
 
             if (work == null) {
                 work = new FrameWork(framePxFull, fw, fh);
@@ -481,7 +483,7 @@ public class FrameClassifier {
             }
             scanned++;
             // 差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W（A~E = 各族「不匹配点占比」的族内等权均值，
-            // 权重 A50/B15/C10/D10/E15；W = 适用族的权重之和：点击分类 100、无点击分类无 E 为 85；
+            // 权重 A50/B15/C10/D10/E15；W = 适用族的权重之和（产物齐全的参与分类五族俱备、恒为 100）；
             // 空图（无有效像素、无法做区分）按完全不匹配满值参与族均值；-1 仅产物缺失/口径不符的异常路径、该图跳过）
             double diff = aggregateDiff(scores);
             GroupBest g = perState.computeIfAbsent(state, s -> new GroupBest());
@@ -530,7 +532,7 @@ public class FrameClassifier {
     /** 分类差异度 = 五族加权平均 (50A+15B+10C+10D+15E)/W（0~100，越小越像）：各族对族内各图的
      *  「不匹配点占比」等权平均（A 全图交集 12 张 / B 多数 6 / C 均值 6 /
      *  D 去重均值 6 / E 点击区交集 12，权重 50/15/10/10/15）；W = 适用族的权重之和——
-     *  点击动作分类五族齐全 W=100，无点击坐标分类无 E 族、W=85。
+     *  参与识别的分类五族产物齐全、恒为 100（旧产物缺点击区图整体跳过，后台重算后补齐）。
      *  空图（产物无任何有效像素：基础图公共区全空 / 独有区图无独有点）在比对侧已判完全不匹配、
      *  按不匹配占比满值计入并照常参与族均值；-1 仅产物缺失 / 比对口径不符的异常防御路径返回
      *  （产物齐全时不会出现），该图跳过不参与族均值。 */
@@ -987,7 +989,8 @@ public class FrameClassifier {
     }
 
     /** 参与比对必需的对照图是否齐全：30 张（15 基础 + 15 -unique，含交集六档）任何分类都必须有；
-     *  匹配动作是鼠标点击且坐标有效的分类另需 12 张点击区交集图（与 ThinkService 的生成条件配套）。
+     *  关注点坐标有效（click=点击点 / 无动作=画面关注区域，默认屏幕中心）的分类再需 12 张点击区交集图
+     *  = 42 张（与 ThinkService 的生成条件配套）。
      *  任一缺失该目录整体跳过（低档图/点击区图文件缺失 = 旧产物未按新规则重算，后台重算后恢复）。 */
     private static boolean artifactsComplete(Path gdir, Map<String, Object> info) {
         return missingArtifactNames(gdir, info) == null;
@@ -1002,10 +1005,9 @@ public class FrameClassifier {
                 miss.add(f);
             }
         }
-        boolean clickAct = "click".equals(String.valueOf(info.get("action")));
         Integer cl = intOf(info.get("clickLeft"));
         Integer ct = intOf(info.get("clickTop"));
-        if (clickAct && cl != null && ct != null) {
+        if (cl != null && ct != null) {
             for (String f : MATCH_CLICK_FILES) {
                 if (!Files.isRegularFile(gdir.resolve(f))) {
                     miss.add(f);

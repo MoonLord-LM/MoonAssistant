@@ -216,19 +216,19 @@ public class AnnotateController {
 
         CaptureMark adopted;
         if (existingDef == null || redef || vacantDef) {
-            // 首次定义 / 原分类内重定义 / 空定义覆盖：以本次提交内容作为该分类的唯一动作
+            // 首次定义 / 原分类内重定义 / 空定义覆盖：以本次提交内容作为该分类的唯一动作。
+            // 任一动作都须给出关注点坐标（click=点击位置，无动作=画面关注区域；未选点默认屏幕中心，
+            // 前端已自动带默认中心，点击区图以该坐标为中心生成）
             String action = mark.getAction();
             Integer left = mark.getLeft();
             Integer top = mark.getTop();
-            if (CaptureMark.ACTION_CLICK.equals(action)) {
-                if (left == null || top == null || left < 0 || top < 0) {
-                    return ResponseEntity.badRequest().body(
-                        "「" + state + "」是首次使用（或重定义），click 动作必须提供非负的点击坐标 left/top");
-                }
-            } else {
+            if (left == null || top == null || left < 0 || top < 0) {
+                return ResponseEntity.badRequest().body(
+                    "「" + state + "」是首次使用（或重定义），必须提供非负的关注点坐标 left/top"
+                        + "（无动作分类默认屏幕中心，请在图上点选）");
+            }
+            if (!CaptureMark.ACTION_CLICK.equals(action)) {
                 action = CaptureMark.ACTION_NONE;
-                left = null;
-                top = null;
             }
             try {
                 adopted = classifyStore.define(state, action, left, top);

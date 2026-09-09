@@ -227,6 +227,12 @@
   .act .ad{color:var(--muted);font-size:11px;margin-left:auto;text-align:right}
   .coord{display:none;margin-top:10px;padding:8px 10px;border:1px dashed rgba(79,140,255,.5);border-radius:8px;background:rgba(79,140,255,.06);font-size:12px}
   .coord b{color:#ff8fa0}
+  /* 无动作分类的关注点 = 绿点（点击分类仍是红点），同样在图上点按可改 */
+  body[data-mode="none"] #dot{background:rgba(47,191,113,.28);border-color:#2fbf71}
+  body[data-mode="none"] #vline,body[data-mode="none"] #hline{background:rgba(47,191,113,.55)}
+  body[data-mode="none"] .coord{border-color:rgba(47,191,113,.55);background:rgba(47,191,113,.07)}
+  body[data-mode="none"] .coord b{color:#9be0b4}
+  body[data-mode="none"] #mainImg,body[data-mode="none"] #imgwrap.zoomed #mainImg{cursor:crosshair}
   .btnrow{display:flex;gap:8px;margin-top:14px}
   .btnrow .btn{flex:1}
   /* 右侧编辑区：按功能分区并各自用一个圆角卡片框包裹（标注信息 / 保存 / 清除与删除） */
