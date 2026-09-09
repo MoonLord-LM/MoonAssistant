@@ -44,16 +44,19 @@ import java.util.stream.Stream;
  * <p>界面语言里：分类标注 = 界面上的文本标签（数据字段 state），匹配动作 = none/click
  * （数据字段 action）；同一分类标注只允许一种匹配动作（控制台已按此规则约束）。
  * 本服务对每组截图逐像素分析，产出基础合成图与独有区图：交集图按覆盖率阈值分
- * 90/80/70/60/50 五档，连同多数 / 均值 / 去重均值 / 8·32 块图族共 14 张基础合成图；
- * 每张基础图各合成一张 -unique 独有区图（14 张）；匹配动作是鼠标点击且坐标有效的组合
- * 另生成 10 张<b>点击区交集图</b>（click8/32-same90/80/70/60/50：1/8、1/32 方框 × 交集五档）。
+ * 100/90/80/70/60/50 六档（100% = 样本完全一致，最严格；其余为覆盖 >90/80/70/60/50%），
+ * 连同多数 / 均值 / 去重均值 / 8·32 块图族共 15 张基础合成图；
+ * 每张基础图各合成一张 -unique 独有区图（15 张）；匹配动作是鼠标点击且坐标有效的组合
+ * 另生成 12 张<b>点击区交集图</b>（click8/32-same100/90/80/70/60/50：1/8、1/32 方框 × 交集六档）。
  * 基础图、独有区图与点击区交集图全部作为执行模式 / 智能比对的比对维度参与识别。</p>
  * <ol>
- *   <li><b>交集图 90% 档</b>（same90.png，覆盖>90%）：统计所有样本在该像素的颜色，
- *       覆盖率 = 该颜色出现的样本占比；覆盖 >90%（一致张数 > 样本数×0.9，严格大于）
- *       时该像素以该主流颜色保留为不透明，否则透明。不透明区 = 样本间公共（稳定）画面。
- *       另有 same80 / same70 / same60 / same50 档：合成方式相同、仅把达标阈值放宽到
- *       >80% / >70% / >60% / >50%，低一致门槛下保留更多公共像素，作为与 90% 档互补的比对维度。</li>
+ *   <li><b>交集图 100% 档</b>（same100.png）：要求样本在该像素完全同色（一致张数 == 样本数，
+ *       最严格），任何截图间有差别的像素一律透明——只保留各张样本完全恒定的画面。
+ *       另有交集图 90% 档（same90.png，覆盖>90%）与 same80 / same70 / same60 / same50 档：
+ *       统计所有样本在该像素的颜色，覆盖率 = 该颜色出现的样本占比；覆盖 >90% / >80% / >70% /
+ *       >60% / >50%（一致张数 > 样本数×对应阈值，严格大于）时以该主流颜色保留为不透明，否则透明。
+ *       低一致门槛下保留更多公共像素，作为与最严格档互补的比对维度。主档口径（coverage、
+ *       公共稳定区判定）仍以 90% 档为准。</li>
  *   <li><b>多数图</b>（major.png）：每个像素取“覆盖率最多”的颜色——逐像素统计所有样本的颜色，
  *       取出现次数最多（同票取样本顺序靠前）的颜色作为该点颜色。</li>
  *   <li><b>均值图</b>（avg.png）：每个像素对全部样本的 R、G、B 分别取平均，
@@ -70,36 +73,37 @@ import java.util.stream.Stream;
  *   <li><b>1/32 均值图</b>（avg32.png）：同上，块为 32×32。</li>
  *   <li><b>1/8 去重均值图</b>（dedup-avg8.png）：按 8×8 网格切块后，先把块内跨样本出现过的颜色
  *       去重，再对去重后的颜色逐通道等权平均；1/32 去重均值图（dedup-avg32.png）块为 32×32。</li>
- *   <li><b>点击区 1/8 交集图</b>（click8-same90/80/70/60/50.png）：以该组统一点击坐标为中心的方框小图——
- *       框取整幅长宽的 1/8（1280×720 → 160×90），框内像素做与对应交集档相同的
- *       “覆盖>90/80/70/60/50%”判定，聚焦要点击的位置；样本间不一致的框内像素透明；
+ *   <li><b>点击区 1/8 交集图</b>（click8-same100/90/80/70/60/50.png）：以该组统一点击坐标为中心的方框小图——
+ *       框取整幅长宽的 1/8（1280×720 → 160×90），框内像素做与对应交集档相同的判定（100% = 全一致，
+ *       其余为“覆盖>90/80/70/60/50%”），聚焦要点击的位置；样本间不一致的框内像素透明；
  *       框中心固定，越出画幅的部分透明。各档框图一并参与识别比对。</li>
- *   <li><b>点击区 1/32 交集图</b>（click32-same90/80/70/60/50.png）：同上，框取整幅长宽的 1/32
+ *   <li><b>点击区 1/32 交集图</b>（click32-same100/90/80/70/60/50.png）：同上，框取整幅长宽的 1/32
  *       （1280×720 → 40×22），按各交集档位判定。</li>
  * </ol>
  *
- * <p>14 张基础图（交集五档与多数/均值/去重均值/8·32 块族）各额外合成一张对应的
- * <b>-unique 独有区图</b>（14 张，全部参与比对）：以该基础图为起点，把
+ * <p>15 张基础图（交集六档与多数/均值/去重均值/8·32 块族）各额外合成一张对应的
+ * <b>-unique 独有区图</b>（15 张，全部参与比对）：以该基础图为起点，把
  * 「其它分类标注（同尺寸的已汇总分组）的<b>同 kind 基础图</b>在同一像素位置
  * 颜色完全相同」的像素剔除（那些位置对“区分本分类”没有贡献），只保留本分类独有的画面区域，
  * 便于快速观察两两相近的分类到底差在哪里；独有区图只在本分类独有区域计分，
  * 作为与基础图互补的正式比对维度、专为拉开相近分类的差异度。
  * 独有区图是跨分类产物：
  * <b>要等全部分组的基础图都生成完才开始算</b>（全集门禁），且该分类适用的全部对照图必须齐全
- * （无点击坐标分类 14 基础 + 14 -unique = 28 张，点击动作分类另需 10 张点击区交集图 = 38 张）
+ * （无点击坐标分类 15 基础 + 15 -unique = 30 张，点击动作分类另需 12 张点击区交集图 = 42 张）
  * 才参与执行识别
  * （见 {@link cn.moonlord.mca.act.FrameClassifier}）。点击区交集图不参与独有区互比，
  * 也没有 -unique 版本。</p>
  *
  * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
  * {@link StoragePaths}），基础图使用固定文件名：
- * {@code same90.png / same90-unique.png / same80.png / same80-unique.png / same70.png /
- * same70-unique.png / same60.png / same60-unique.png / same50.png / same50-unique.png /
- * major.png / major-unique.png / avg.png / avg-unique.png / dedup-avg.png / dedup-avg-unique.png /
- * major8.png / major8-unique.png / avg8.png / avg8-unique.png / dedup-avg8.png / dedup-avg8-unique.png /
- * major32.png / major32-unique.png / avg32.png / avg32-unique.png / dedup-avg32.png / dedup-avg32-unique.png}，
- * 点击动作分类另有 {@code click8-same90/80/70/60/50.png / click32-same90/80/70/60/50.png}
- * 共 10 张点击区交集图，分析信息（样本数、覆盖率、公共点击坐标等）
+ * {@code same100.png / same100-unique.png / same90.png / same90-unique.png / same80.png /
+ * same80-unique.png / same70.png / same70-unique.png / same60.png / same60-unique.png / same50.png /
+ * same50-unique.png / major.png / major-unique.png / avg.png / avg-unique.png / dedup-avg.png /
+ * dedup-avg-unique.png / major8.png / major8-unique.png / avg8.png / avg8-unique.png / dedup-avg8.png /
+ * dedup-avg8-unique.png / major32.png / major32-unique.png / avg32.png / avg32-unique.png /
+ * dedup-avg32.png / dedup-avg32-unique.png}，
+ * 点击动作分类另有 {@code click8-same100/90/80/70/60/50.png / click32-same100/90/80/70/60/50.png}
+ * 共 12 张点击区交集图，分析信息（样本数、覆盖率、公共点击坐标等）
  * 写入同目录 {@code info.json}。产物只被执行模式识别读取、不参与标注样本的修改，
  * 画面标签一律以控制台的人工标注为准。</p>
  *
@@ -121,14 +125,17 @@ public class ThinkService {
     private static final DateTimeFormatter TS_FORMAT =
         DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
-    /** 交集图档位 kind（90 → 50）：五档都是正式比对维度，越低门槛保留的公共像素越多 */
-    private static final List<String> SAME_TIERS = List.of("same90", "same80", "same70", "same60", "same50");
-    /** 与 SAME_TIERS 逐项对应的覆盖率档位阈值（严格大于：判定“一致张数 > 样本数 × 阈值”） */
-    private static final double[] SAME_TIER_AGREE = {0.90, 0.80, 0.70, 0.60, 0.50};
+    /** 交集图档位 kind：同五档 same90/80/70/60/50（越低门槛保留的公共像素越多）加末尾的
+     *  same100（全部样本一致才算达标，最严格；主档仍为数组首元素 same90，覆盖率等口径以它为准） */
+    private static final List<String> SAME_TIERS = List.of("same90", "same80", "same70", "same60", "same50", "same100");
+    /** 与 SAME_TIERS 逐项对应的档位一致门槛：同档判定“一致张数 > 样本数 × 阈值”（严格大于），
+     *  100% 档特判为“一致张数 == 样本数”（样本像素完全一致） */
+    private static final double[] SAME_TIER_AGREE = {0.90, 0.80, 0.70, 0.60, 0.50, 1.0};
 
-    /** 每组合（一个分类标注目录）内固定文件名：14 张基础合成图 = 交集五档 same90/80/70/60/50
+    /** 每组合（一个分类标注目录）内固定文件名：15 张基础合成图 = 交集六档 same100/90/80/70/60/50
      *  + major/avg/dedup-avg 与 major8/avg8/dedup-avg8/major32/avg32/dedup-avg32（major = 多数色、
      *  avg = 均值、dedup-avg = 去重均值，8/32 为块边长），全部参与识别比对 */
+    private static final String FILE_SAME_100 = "same100.png"; // 交集图 100% 档（全部样本一致）
     private static final String FILE_SAME = "same90.png";    // 交集图 90% 档
     private static final String FILE_SAME_80 = "same80.png"; // 交集图 80% 档
     private static final String FILE_SAME_70 = "same70.png"; // 交集图 70% 档
@@ -149,6 +156,10 @@ public class ThinkService {
      *  越出画幅的部分透明；无 -unique、不参与独有区互比 */
     private static final String FILE_C8 = "click8-same90.png";    // 点击区 1/8 交集图 90% 档
     private static final String FILE_C32 = "click32-same90.png";  // 点击区 1/32 交集图 90% 档
+    /** 点击区交集图 100% 档（参与识别比对）：裁剪同尺寸全幅 same100 交集图对应区域，交集口径 =
+     *  全部样本一致；框中心/出界透明规则与 90% 档一致，无 -unique 版本 */
+    private static final String FILE_C8_100 = "click8-same100.png";
+    private static final String FILE_C32_100 = "click32-same100.png";
     /** 点击区交集图低档（参与识别比对）：同坐标方框分别裁全幅 same80/70/60/50 交集图对应区域，
      *  交集口径同对应档（严格大于 80/70/60/50%）；框中心/出界透明规则与 90% 档一致，无 -unique 版本 */
     private static final String FILE_C8_80 = "click8-same80.png";
@@ -160,7 +171,8 @@ public class ThinkService {
     private static final String FILE_C32_60 = "click32-same60.png";
     private static final String FILE_C32_50 = "click32-same50.png";
     /** 独有区图（基础图里剔除“其它分类同 kind 基础图同像素同色”后剩下的区域）：
-     *  14 张基础图各一张，全部参与识别比对 */
+     *  15 张基础图各一张，全部参与识别比对 */
+    private static final String FILE_SAME_100_UNIQUE = "same100-unique.png"; // 交集图 100% 档的独有区图
     private static final String FILE_UNIQUE = "same90-unique.png";   // 交集图 90% 档的独有区图
     private static final String FILE_MAX_UNIQUE = "major-unique.png";
     private static final String FILE_AVG_UNIQUE = "avg-unique.png";
@@ -177,12 +189,13 @@ public class ThinkService {
     private static final String FILE_SAME_50_UNIQUE = "same50-unique.png"; // 交集图 50% 档的独有区图
     private static final String FILE_INFO = "info.json";
 
-    /** 多数/均值/去重均值/8·32 块族与交集 90% 档共 10 张基础图的 kind（交集 80/70/60/50 档由
-     *  SAME_TIERS 补足成 14 张基础图，见 UNIQUE_BASE_KINDS；每张基础图都对应一张「kind + "-unique"」的独有区图） */
+    /** 多数/均值/去重均值/8·32 块族与交集 90% 档共 10 张基础图的 kind（交集 80/70/60/50 与 100%
+     *  same100 档由 SAME_TIERS 补足成 15 张基础图，见 UNIQUE_BASE_KINDS；每张基础图都对应一张
+     *  「kind + "-unique"」的独有区图） */
     private static final List<String> BASE_KINDS = List.of("same90", "max", "avg", "dedup-avg",
             "major8", "avg8", "dedup-avg8", "major32", "avg32", "dedup-avg32");
 
-    /** 需要合成 -unique 独有区图的基础图 kind：全部 14 张基础图（交集五档 + 多数/均值/去重均值/8·32 块族）。
+    /** 需要合成 -unique 独有区图的基础图 kind：全部 15 张基础图（交集六档 + 多数/均值/去重均值/8·32 块族）。
      *  顺序决定 refreshUniqueClass 的逐 kind 计算/进度顺序 */
     private static final List<String> UNIQUE_BASE_KINDS;
     static {
@@ -193,16 +206,18 @@ public class ThinkService {
         UNIQUE_BASE_KINDS = List.copyOf(l);
     }
 
-    /** 点击区交集图全部 kind（生成/比对用）：1/8、1/32 方框 × same90/80/70/60/50 五档，全部参与识别 */
+    /** 点击区交集图全部 kind（生成/比对用）：1/8、1/32 方框 × same100/90/80/70/60/50 六档，全部参与识别 */
     private static final List<String> CLICK_ALL_KINDS = List.of(
-            "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
-            "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
+            "click8-same100", "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
+            "click32-same100", "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
     /** 方框除数：8 = 整幅长宽的 1/8、32 = 1/32 */
     private static final int[] CLICK_DIVS = {8, 32};
 
-    /** kind → 产物文件名：非点击组合 28 张（14 基础 + 14 张 -unique）；点击动作组合最多 38 张
-     *  （另加 10 张点击区交集图）；全部维度参与识别比对，可经 /img/{kind} 读取 */
+    /** kind → 产物文件名：非点击组合 30 张（15 基础 + 15 张 -unique）；点击动作组合最多 42 张
+     *  （另加 12 张点击区交集图）；全部维度参与识别比对，可经 /img/{kind} 读取 */
     private static final Map<String, String> KIND_FILE = Map.ofEntries(
+        Map.entry("same100", FILE_SAME_100),
+        Map.entry("same100-unique", FILE_SAME_100_UNIQUE),
         Map.entry("same90", FILE_SAME),
         Map.entry("same90-unique", FILE_UNIQUE),
         Map.entry("same80", FILE_SAME_80),
@@ -231,11 +246,13 @@ public class ThinkService {
         Map.entry("avg32-unique", FILE_A32_UNIQUE),
         Map.entry("dedup-avg32", FILE_DA32),
         Map.entry("dedup-avg32-unique", FILE_DA32_UNIQUE),
+        Map.entry("click8-same100", FILE_C8_100),
         Map.entry("click8-same90", FILE_C8),
         Map.entry("click8-same80", FILE_C8_80),
         Map.entry("click8-same70", FILE_C8_70),
         Map.entry("click8-same60", FILE_C8_60),
         Map.entry("click8-same50", FILE_C8_50),
+        Map.entry("click32-same100", FILE_C32_100),
         Map.entry("click32-same90", FILE_C32),
         Map.entry("click32-same80", FILE_C32_80),
         Map.entry("click32-same70", FILE_C32_70),
@@ -261,8 +278,10 @@ public class ThinkService {
      *    v12：新增去重均值族 dedup-avg / dedup-avg8 / dedup-avg32 及各自 -unique，
      *    每像素先对样本该点出现过的颜色去重再逐通道等权平均，消除重复采样对平均的加权；
      *    v13：交集低档与点击区低档并入识别比对（产物文件不变，不触发重算）；
-     *    v14：无有效像素的图按 0（完全匹配）计、不再当不可比跳过（产物文件不变，不触发重算）） */
-    private static final int ART_RULE_VERSION = 12;
+     *    v14：无有效像素的图按 0（完全匹配）计、不再当不可比跳过（产物文件不变，不触发重算）；
+     *    v15：新增 100% 交集档 same100/same100-unique 与点击区 click8/32-same100（判定 = 全部样本
+     *    像素一致，主档口径不变仍为 same90），产物文件变化触发全量重算） */
+    private static final int ART_RULE_VERSION = 13;
 
     /** -unique 独有区图全量刷新时，同一尺寸类单一 kind 基础图文件总量上限：超过则本轮跳过，避免瞬时内存过高 */
     private static final long UNIQUE_CLASS_BYTES_LIMIT = 250L * 1024 * 1024;
@@ -370,8 +389,8 @@ public class ThinkService {
      * 把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
-     * 只要样本变化，summary/ 下的对照图（14 张基础合成图 + 14 张 -unique 独有区图，
-     * 点击动作且坐标有效的分类另有 10 张点击区交集图）就会自动保持与最新样本一致，
+     * 只要样本变化，summary/ 下的对照图（15 张基础合成图 + 15 张 -unique 独有区图，
+     * 点击动作且坐标有效的分类另有 12 张点击区交集图）就会自动保持与最新样本一致，
      * 供执行模式随时取用。与前端手动分析共用同一计算池，串行执行互不并发。
      */
     public void requestRecompute() {
@@ -546,7 +565,7 @@ public class ThinkService {
                         continue;   // 与执行模式识别器同口径：该分类适用的对照图齐全才参与
                     }
                     sb.append(d.getFileName()).append('{');
-                    // 产物全集：14 基础 + 14 -unique +（点击动作分类的）10 张点击区交集图 + info，任一重算都使签名失效
+                    // 产物全集：15 基础 + 15 -unique +（点击动作分类的）12 张点击区交集图 + info，任一重算都使签名失效
                     List<String> files = new ArrayList<>();
                     for (String b : UNIQUE_BASE_KINDS) {
                         files.add(KIND_FILE.get(b));
@@ -588,16 +607,16 @@ public class ThinkService {
 
     /**
      * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
-     * 每个分类适用其产物对照图分别同尺度逐像素比对：交集五档 same90/80/70/60/50 / 多数 / 均值 /
-     * 去重均值 / 1-8、1-32 块图及各自的 -unique 独有区图（28 张），点击动作且坐标有效的分类另有
-     * 10 张点击区交集图 click8/32-same90/80/70/60/50——以该分类统一点击坐标为中心的 1/8、1/32
+     * 每个分类适用其产物对照图分别同尺度逐像素比对：交集六档 same100/90/80/70/60/50 / 多数 / 均值 /
+     * 去重均值 / 1-8、1-32 块图及各自的 -unique 独有区图（30 张），点击动作且坐标有效的分类另有
+     * 12 张点击区交集图 click8/32-same100/90/80/70/60/50——以该分类统一点击坐标为中心的 1/8、1/32
      * 方框小图（各交集档），在画面上同坐标裁剪比对。
      * 判据按维度类别分三套：交集/多数类（全部交集档、多数图、1-8/1-32 多数块图、点击区交集图
      * 及各自的 -unique）逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值图、去重均值图、
      * 1-8/1-32 均值块图 / 去重均值块图及各自 -unique）
      * 走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才算匹配，默认 255/3=85），
-     * 分类得分 = 五族加权平均 (50A+15B+10C+10D+15E)/W：A 全图交集 10 张（权 50）、B 多数 6 张（权 15）、
-     * C 均值 6 张（权 10）、D 去重均值 6 张（权 10）、E 点击区交集 10 张（权 15）——每族先把族内各图
+     * 分类得分 = 五族加权平均 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张（权 50）、B 多数 6 张（权 15）、
+     * C 均值 6 张（权 10）、D 去重均值 6 张（权 10）、E 点击区交集 12 张（权 15）——每族先把族内各图
      * 「不匹配点占比」等权平均；W = 适用族的权重之和（点击坐标分类五族齐全 =100、
      * 无坐标分类无 E =85）；各图照常参与，无有效像素（独有区图无独有点等）按 0 完全匹配计。
      * 识别不设阈值门槛：
@@ -865,10 +884,11 @@ public class ThinkService {
                     && Files.isRegularFile(gdir.resolve(FILE_C8))
                     && Files.isRegularFile(gdir.resolve(FILE_C32));
             g.put("hasClick", hasClick);
-            // 点击区交集图低档（same80/70/60/50 × 1/8、1/32 共 8 张）是否齐全：90% 档两图已有且八张都在才展示低档卡片
+            // 点击区交集图 100% 档与低档（same100/80/70/60/50 × 1/8、1/32 共 10 张）是否齐全：
+            // 90% 档两图已有且这十张都在才展示对应卡片（重算前的旧目录没有这些产物 → false）
             g.put("hasClickLow", hasClick && clickDisplayArtifactsComplete(gdir));
             if (complete) {
-                boolean hasUnique = allUniqueArtifactsComplete(gdir);   // 全部 14 张 -unique 是否已随重算生成
+                boolean hasUnique = allUniqueArtifactsComplete(gdir);   // 全部 15 张 -unique 是否已随重算生成
                 g.put("hasUnique", hasUnique);
                 // 各独有区图剩余独有像素占各自全图的比例（kind → 百分数值，与 coverage 同口径）；未生成时为 null
                 g.put("uniqueCov", hasUnique ? normUniqueCov(info.get("uniqueCov")) : null);
@@ -935,10 +955,11 @@ public class ThinkService {
         return out;
     }
 
-    /** 读取分析产物 PNG（kind 图之一：14 基础含交集五档 same90|same80|same70|same60|same50 与
-     * same90|max|avg|dedup-avg|major8|avg8|dedup-avg8|major32|avg32|dedup-avg32 家族、14 张 -unique
+    /** 读取分析产物 PNG（kind 图之一：15 基础含交集六档 same100|same90|same80|same70|same60|same50 与
+     * same100|same90|max|avg|dedup-avg|major8|avg8|dedup-avg8|major32|avg32|dedup-avg32 家族、15 张 -unique
      * 如 same90-unique|max-unique|avg-unique|dedup-avg-unique|major8-unique|avg8-unique|dedup-avg8-unique|
-     * major32-unique|avg32-unique|dedup-avg32-unique|same80-unique…、10 张点击区交集图 click8/32-same90/80/70/60/50，
+     * major32-unique|avg32-unique|dedup-avg32-unique|same80-unique|same100-unique…、12 张点击区交集图
+     * click8/32-same100/90/80/70/60/50，
      * dir=产物目录名，禁止穿越）；非法返回 null */
     public Path resolveArtifact(String kind, String dir) {
         String file = KIND_FILE.get(kind);
@@ -996,7 +1017,7 @@ public class ThinkService {
             }
             // 全部分组的基础图生成完成后，再刷新跨分类依赖的各 -unique 独有区图：
             // refreshUniqueArtifacts 内部带全集门禁（任一有样本分组的基础图未齐则整轮跳过），
-            // 门禁通过后再按「各成员 14 张基础图 mtime 签名」增量检查（签名未变则跳过，成本只有 stat）
+            // 门禁通过后再按「各成员 15 张基础图 mtime 签名」增量检查（签名未变则跳过，成本只有 stat）
             int uniqueClasses = 0;
             try {
                 t.stage = 2;
@@ -1045,7 +1066,7 @@ public class ThinkService {
         return out;
     }
 
-    /** 计算单个分类（state+action）的 14 张基础对照图并刷新产物目录（交集五档 + 多数/均值/去重均值/8·32 块族；固定文件名原子替换；-unique 独有区图由跨分类刷新统一生成） */
+    /** 计算单个分类（state+action）的 15 张基础对照图并刷新产物目录（交集六档 + 多数/均值/去重均值/8·32 块族；固定文件名原子替换；-unique 独有区图由跨分类刷新统一生成） */
     private void computeGroup(String state, String action) throws IOException {
         List<Path> pngs = annotatedPngs();
         List<Path> group = new ArrayList<>();
@@ -1105,12 +1126,13 @@ public class ThinkService {
         }
         int S = imgs.size();
         // 交集图判定：某像素“主流色一致张数 > 样本数 × 档位阈值”即视为达标（严格大于，如 >50% 档
-        // 必须超过半数一致）；单样本时全部像素天然一致（交集图即原图本身），达标数下限自动为 1。
-        // 达标数 = floor(S × 阈值) + 1
+        // 必须超过半数一致）；100% 档达标 = 一致张数 == 样本数（样本像素完全一致，最严格）；
+        // 单样本时全部像素天然一致（交集图即原图本身），各档达标数下限自动为 1。
+        // 达标数 = floor(S × 阈值) + 1（100% 档特判为 S）
         int T = SAME_TIERS.size();
         int[] need = new int[T];
         for (int ti = 0; ti < T; ti++) {
-            need[ti] = (int) Math.floor(S * SAME_TIER_AGREE[ti]) + 1;
+            need[ti] = SAME_TIER_AGREE[ti] >= 1.0 ? S : (int) Math.floor(S * SAME_TIER_AGREE[ti]) + 1;
         }
 
         int n = w * h;
@@ -1249,7 +1271,7 @@ public class ThinkService {
         String dir = dirNameOf(state, action, multiAction);
         Path gdir = groupDir(dir);
         Files.createDirectories(gdir);
-        for (int ti = 0; ti < T; ti++) {   // 五档交集图：same90/80/70/60/50，全部为比对维度
+        for (int ti = 0; ti < T; ti++) {   // 六档交集图：same90/80/70/60/50/same100，全部为比对维度
             atomicWritePng(sameImgs[ti], gdir.resolve(KIND_FILE.get(SAME_TIERS.get(ti))));
         }
         atomicWritePng(maxImg, gdir.resolve(FILE_MAX));
@@ -1261,7 +1283,7 @@ public class ThinkService {
         atomicWritePng(major32Img, gdir.resolve(FILE_M32));
         atomicWritePng(avg32Img, gdir.resolve(FILE_A32));
         atomicWritePng(dedupAvg32Img, gdir.resolve(FILE_DA32));
-        // 点击区交集图（仅 action=click 且点击坐标有效）：以 (cx,cy) 为中心的 1/8、1/32 方框小图 × 交集五档，
+        // 点击区交集图（仅 action=click 且点击坐标有效）：以 (cx,cy) 为中心的 1/8、1/32 方框小图 × 交集六档，
         // 各档直接裁剪同尺寸全幅交集图 sameImgs[ti] 的对应区域——交集口径与该档一致（不足该档一致率的框内像素透明）。
         // 各档框图都参与识别比对。框可越出画幅，出界 cropImage 填透明。
         // 无有效坐标的分类不生成并清理全部点击区残留；识别端该维度按“可判成员”自然跳过
@@ -1312,26 +1334,26 @@ public class ThinkService {
             trim(state), action, S, Math.round(coverage * 10000) / 100.0d, dir);
     }
 
-    /* ----------------------------------------------- -unique 独有区图（14 张基础图各一张 = 14 张） */
+    /* ----------------------------------------------- -unique 独有区图（15 张基础图各一张 = 15 张） */
 
     /**
      * 刷新「classify/ 中当前有样本（≥ 1 张）的全部分组」的各 -unique 独有区图
-     * （交集五档 same90/80/70/60/50 与多数/均值/去重均值/8·32 块族共 14 张基础图各一张，
+     * （交集六档 same100/90/80/70/60/50 与多数/均值/去重均值/8·32 块族共 15 张基础图各一张，
      * 全部参与识别比对）。
      *
      * <p>基础合成图只刻画“本分类稳定出现的画面”，而独有区图进一步要求该稳定像素<b>只属于本分类</b>：
      * 以本分类某张基础图（kind）为起点，逐个与其它分类标注（同尺寸的已汇总分组）的<b>同 kind 基础图</b>
      * 同位比较，凡其它分类该图在该像素颜色完全相同的点都从本图剔除（它们无助于区分分类），
-     * 保留下来的即本分类独有的画面区域。14 个 kind 逐张独立生成、互不干扰。
+     * 保留下来的即本分类独有的画面区域。15 个 kind 逐张独立生成、互不干扰。
      *
      * <p><b>全集门禁</b>：独有区图是跨分类产物——少算一个分类，其它分类“哪些像素独有”的判定就不完整。
-     * 因此只有「当前有样本的全部分组」的 14 张基础对照图（交集五档 + 多数/均值/去重均值/8·32 块族）
+     * 因此只有「当前有样本的全部分组」的 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族）
      * 都生成完毕，本方法才真正开始计算；任一分组基础图尚未齐备（本轮新增样本的分组还没轮到、
      * 或该分组本轮生成失败留下残图），整轮直接跳过，等下一轮补齐后再算——不允许在“分类集合不完整”
      * 的状态下过早生成。
      * 互比对象以 classify/ 有样本的分组为准，而非简单枚举 summary/ 磁盘目录（历史遗留的孤儿目录不参与现行分类判定）。
      *
-     * <p>尺寸不同的分组无法逐像素对齐，彼此不参与比较；同一尺寸类按“各成员 14 张基础图 mtime 序列签名”
+     * <p>尺寸不同的分组无法逐像素对齐，彼此不参与比较；同一尺寸类按“各成员 15 张基础图 mtime 序列签名”
      * 增量更新——自身或任一其它分类的基础图更新过、或任一 -unique 图缺失 / 无独有覆盖率字段时才真正重算
      * 该尺寸类，因此自动重算频繁触发时成本仅为 stat。内存上逐 kind 单独处理：任一时点只保留一个 kind 的
      * 逐成员像素，且每种 kind 的文件总量超限即整类跳过本轮（签名不落盘，下轮自动重算会再尝试）。</p>
@@ -1342,7 +1364,7 @@ public class ThinkService {
         if (!Files.isDirectory(root)) {
             return 0;
         }
-        // 先做全集门禁并收集互比目录：只放行「有样本且 14 张基础图（交集五档 + 多数/均值/去重均值/8·32 块族）齐全」的组
+        // 先做全集门禁并收集互比目录：只放行「有样本且 15 张基础图（交集六档 + 多数/均值/去重均值/8·32 块族）齐全」的组
         List<Path> dirs = new ArrayList<>();
         for (Map<String, Object> g : groups) {
             if (!Boolean.TRUE.equals(g.get("canAnalyze"))) {
@@ -1350,7 +1372,7 @@ public class ThinkService {
             }
             Path d = groupDir(String.valueOf(g.get("dir")));
             if (!baseArtifactsComplete(d)) {
-                log.warn("分组 {} 的基础对照图尚未齐备（交集五档 + 多数/均值/去重均值/8·32 块族），本轮跳过 -unique 独有区图刷新，等补齐后重算",
+                log.warn("分组 {} 的基础对照图尚未齐备（交集六档 + 多数/均值/去重均值/8·32 块族），本轮跳过 -unique 独有区图刷新，等补齐后重算",
                     d.getFileName());
                 return 0;
             }
@@ -1452,7 +1474,7 @@ public class ThinkService {
             info.remove("uniqueCoverage");   // 旧版单一覆盖率字段清理
             atomicWriteJson(d.resolve(FILE_INFO), info);
         }
-        log.info("-unique 独有区图已刷新：{} 个同尺寸分类（{}×{}），每分类 14 张",
+        log.info("-unique 独有区图已刷新：{} 个同尺寸分类（{}×{}），每分类 15 张",
             cls.size(), wh == null ? 0 : wh[0], wh == null ? 0 : wh[1]);
         return true;
     }
@@ -1515,7 +1537,7 @@ public class ThinkService {
         return cov;
     }
 
-    /** 尺寸类签名 = 各成员目录“目录名=14 张基础图最后修改时刻序列”排序后拼接：任一成员任一基础图更新即变化 */
+    /** 尺寸类签名 = 各成员目录“目录名=15 张基础图最后修改时刻序列”排序后拼接：任一成员任一基础图更新即变化 */
     private String classSig(List<Path> cls) {
         List<String> parts = new ArrayList<>(cls.size());
         for (Path d : cls) {
@@ -1593,25 +1615,27 @@ public class ThinkService {
             && Files.isRegularFile(gdir.resolve(FILE_DA32_UNIQUE));
     }
 
-    /** 14 张基础对照图是否齐全（交集五档 + 多数/均值/去重均值/8·32 块族；独有区图跨分类互比的前置） */
+    /** 15 张基础对照图是否齐全（交集六档 + 多数/均值/去重均值/8·32 块族；独有区图跨分类互比的前置） */
     private boolean baseArtifactsComplete(Path gdir) {
         return artifactsComplete(gdir)
+            && Files.isRegularFile(gdir.resolve(FILE_SAME_100))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_80))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_70))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_60))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_50));
     }
 
-    /** 全部 14 张 -unique 独有区图是否齐全（交集五档 + 多数/均值/去重均值/8·32 块族各一张） */
+    /** 全部 15 张 -unique 独有区图是否齐全（交集六档 + 多数/均值/去重均值/8·32 块族各一张） */
     private boolean allUniqueArtifactsComplete(Path gdir) {
         return uniqueArtifactsComplete(gdir)
+            && Files.isRegularFile(gdir.resolve(FILE_SAME_100_UNIQUE))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_80_UNIQUE))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_70_UNIQUE))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_60_UNIQUE))
             && Files.isRegularFile(gdir.resolve(FILE_SAME_50_UNIQUE));
     }
 
-    /** 对照图是否齐全：14 基础 + 14 -unique 必须有；点击动作且有坐标的分类另需全部 10 张点击区交集图。
+    /** 对照图是否齐全：15 基础 + 15 -unique 必须有；点击动作且有坐标的分类另需全部 12 张点击区交集图。
      *  与执行模式识别器同口径（低档/点击区图齐全才参与匹配，旧目录缺图 → 不参与直到后台重算补齐）。 */
     private boolean artifactsAllComplete(Path gdir) {
         return baseArtifactsComplete(gdir) && allUniqueArtifactsComplete(gdir) && clickAllArtifactsComplete(gdir);
@@ -1629,21 +1653,24 @@ public class ThinkService {
         return Files.isRegularFile(gdir.resolve(FILE_C8)) && Files.isRegularFile(gdir.resolve(FILE_C32));
     }
 
-    /** 点击区交集图低档（same80/70/60/50 × 1/8、1/32 共 8 张）是否齐全：参与识别比对且前端据此展示低档卡片；
-     *  缺一张即整体不展示/不参与（重算前的旧目录没有这些产物 → false，后台重算后恢复） */
+    /** 点击区交集图 100% 档与低档（same100/80/70/60/50 × 1/8、1/32 共 10 张，含 100% 档）是否齐全：
+     *  参与识别比对且前端据此展示非 90% 档卡片；缺一张即整体不展示/不参与
+     *  （重算前的旧目录没有这些产物 → false，后台重算后恢复） */
     private boolean clickDisplayArtifactsComplete(Path gdir) {
-        return Files.isRegularFile(gdir.resolve(FILE_C8_80))
+        return Files.isRegularFile(gdir.resolve(FILE_C8_100))
+            && Files.isRegularFile(gdir.resolve(FILE_C8_80))
             && Files.isRegularFile(gdir.resolve(FILE_C8_70))
             && Files.isRegularFile(gdir.resolve(FILE_C8_60))
             && Files.isRegularFile(gdir.resolve(FILE_C8_50))
+            && Files.isRegularFile(gdir.resolve(FILE_C32_100))
             && Files.isRegularFile(gdir.resolve(FILE_C32_80))
             && Files.isRegularFile(gdir.resolve(FILE_C32_70))
             && Files.isRegularFile(gdir.resolve(FILE_C32_60))
             && Files.isRegularFile(gdir.resolve(FILE_C32_50));
     }
 
-    /** 点击区交集图全部 10 张（1/8、1/32 × 交集五档）是否齐全：仅点击动作且点击坐标有效的分类需要
-     *  （无此维度的分类视为通过）。与执行模式识别器同口径；旧目录缺低档图 → 不参与直到重算补齐 */
+    /** 点击区交集图全部 12 张（1/8、1/32 × 交集六档，含 100% 档）是否齐全：仅点击动作且点击坐标有效的
+     *  分类需要（无此维度的分类视为通过）。与执行模式识别器同口径；旧目录缺图 → 不参与直到重算补齐 */
     private boolean clickAllArtifactsComplete(Path gdir) {
         return clickArtifactsComplete(gdir) && clickDisplayArtifactsComplete(gdir);
     }
@@ -1742,7 +1769,7 @@ public class ThinkService {
 
     /**
      * 分类标注整体改名后调用：把 summary/ 下该分类的产物目录整体迁名为新名，并把 info.json 的 state 改为新名。
-     * 样本画面未变，14 张基础图内容不变；-unique 独有区图按像素互比、与目录名无关，均无需重算——
+     * 样本画面未变，15 张基础图内容不变；-unique 独有区图按像素互比、与目录名无关，均无需重算——
      * 改名即刻对执行模式生效，不再出现「删旧产物 + 后台重建」期间对照图不全的半成品目录被识别到而报红字。
      * 产物不齐 / 目录名不是标准同名目录 / 迁移失败的旧目录删除，交由后台按新名重建补齐。
      */
@@ -2018,7 +2045,7 @@ public class ThinkService {
         public volatile int errors;
         /** 正在处理的分类展示文案 */
         public volatile String current = "";
-        /** 当前阶段：1 = 逐分类生成 14 张基础对照图（交集五档 + 多数/均值/去重均值/8·32 块族）；2 = 生成各分类 14 张 -unique 独有区图 */
+        /** 当前阶段：1 = 逐分类生成 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族）；2 = 生成各分类 15 张 -unique 独有区图 */
         public volatile int stage = 1;
 
         Task(String taskId, boolean force) {

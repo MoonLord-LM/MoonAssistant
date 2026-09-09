@@ -29,10 +29,10 @@ import java.util.stream.Stream;
  * 同 kind 汇总图按识别同口径逐点比对（复用 {@link FrameClassifier} 的产物/原图缓存与比对桥接），
  * 统计两个评价指标：
  * <ul>
- * <li>A：该样本与「自分类的该算法汇总图」比对的不匹配点占比（0~100，越小说明该算法生成的
- * 概括图越接近自己分类的原图样本），A = 全体样本该分值的平均值，越低越好；</li>
- * <li>B：该样本在【全部同类汇总图】里匹配最好（分值最小）的分类恰好就是自己的比例
- * （0~100），B = 全体样本该命中比例，越高说明该算法越能把本分类与其它分类区分开。</li>
+ * <li>A：每个原图与「自己分类的该算法生成图」比对的不匹配像素占比，取全部原图的平均值
+ * （越低越好，表明样本比较集中）；</li>
+ * <li>B：每个原图在全部同类生成图里做匹配、最佳值刚好是自己分类的比例，取全部原图的平均值
+ * （越高越好，表明算法区分度较好）。</li>
  * </ul>
  * 按算法逐 kind 独立计算、完成后按「当前样本/产物指纹」缓存结果并标记是否过期（样本或产物有
  * 改动后需重新验证）。独立后台任务线程跑，结果只存内存不落盘。
@@ -101,6 +101,7 @@ public class VerifyService {
         public volatile int processed;
         public volatile int totalSamples;
         public final long startedMs;
+        public volatile long endedMs;   // 结束时刻（finished 置位时记录；0 = 尚未结束）
 
         Run(String fp, int total) {
             this.total = total;
@@ -155,6 +156,10 @@ public class VerifyService {
     }
 
     private void doRun(Run r, String fp, List<String> order) {
+        // 验证会逐 kind 解码全部参与分类的产物像素：先清空识别/汇总阶段累积的常驻像素缓存腾出堆空间
+        // （验证走不写缓存的按需解码、每 kind 用后即释放；执行模式后续首次识别会自动重新解码补齐），
+        // 否则 81 组 × 各 kind 全幅产物叠加会直接把堆撑爆
+        classifier.clearPxCaches();
         List<Ctx> groups = new ArrayList<>();
         List<Smp> samples = new ArrayList<>();
         try {
@@ -163,6 +168,7 @@ public class VerifyService {
         } catch (Exception e) {
             r.error = "准备数据失败：" + e;
             r.finished = true;
+            r.endedMs = System.currentTimeMillis();
             r.running = false;
             log.warn("特征验证准备失败: {}", e.toString());
             return;
@@ -185,6 +191,7 @@ public class VerifyService {
             r.done = i + 1;
         }
         r.finished = true;
+        r.endedMs = System.currentTimeMillis();
         r.running = false;
     }
 
@@ -219,6 +226,9 @@ public class VerifyService {
         if (r != null) {
             Map<String, Object> task = new LinkedHashMap<>();
             task.put("finished", r.finished);
+            if (r.finished && r.endedMs > 0) {
+                task.put("costMs", Math.max(0, r.endedMs - r.startedMs));
+            }
             task.put("error", r.error);
             task.put("done", r.done);
             task.put("total", r.total);

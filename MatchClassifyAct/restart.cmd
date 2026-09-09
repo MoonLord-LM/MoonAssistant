@@ -41,8 +41,8 @@ if "%JAVA_BIN%"=="java" (
     java -version >nul 2>nul || ( echo [restart] no usable java found, set JDK17 path in this script. & exit /b 1 )
 )
 
-rem  Xmx8g：识别端产物像素缓存无界常驻不淘汰（当前 72 组 2636 张产物约 5GB）；产物继续增多时同步上调。
+rem  Xmx16g：给软引用像素缓存（产物 + classify 原图，约 5.5GB+ 规模）充足堆空间、平时全部驻留免重解码；内存吃紧时 JVM 会在 OOM 前自动回收缓存条目兜底，无需按产物规模手动上调。
 echo [restart] starting service (hidden console, logs in log\std.log and log\error.log) ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$base='%~dp0'; New-Item -ItemType Directory -Force -Path ($base+'log') | Out-Null; Start-Process -FilePath '%JAVA_BIN%' -ArgumentList '-Xmx8g','-Dfile.encoding=UTF-8','-jar','target\MatchClassifyAct-0.0.1-SNAPSHOT.jar' -WorkingDirectory $base -WindowStyle Hidden -RedirectStandardOutput ($base+'log\std.log') -RedirectStandardError ($base+'log\error.log')"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$base='%~dp0'; New-Item -ItemType Directory -Force -Path ($base+'log') | Out-Null; Start-Process -FilePath '%JAVA_BIN%' -ArgumentList '-Xmx16g','-Dfile.encoding=UTF-8','-jar','target\MatchClassifyAct-0.0.1-SNAPSHOT.jar' -WorkingDirectory $base -WindowStyle Hidden -RedirectStandardOutput ($base+'log\std.log') -RedirectStandardError ($base+'log\error.log')"
 
 exit /b 0

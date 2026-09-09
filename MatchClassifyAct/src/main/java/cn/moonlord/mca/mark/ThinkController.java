@@ -23,26 +23,26 @@ import java.util.Map;
 
 /**
  * 汇总分析（同「分类标注（state）+ 匹配动作」截图像素分析）展示接口：
- * 生成对照图供人工目检与执行识别——交集图按覆盖率阈值分 90/80/70/60/50 五档，连同
- * 多数 max / 均值 avg / 去重均值 dedup-avg / major8·avg8·dedup-avg8·major32·avg32·dedup-avg32
- * 块降采样共 14 张基础合成图（全部参与识别比对）；
- * 每张基础图各对应一张 -unique 独有区图（same90-unique / same80-unique / same70-unique /
- * same60-unique / same50-unique / max-unique / avg-unique / dedup-avg-unique / major8-unique·
- * avg8-unique·dedup-avg8-unique·major32-unique·avg32-unique·dedup-avg32-unique），共 14 张，
+ * 生成对照图供人工目检与执行识别——交集图分六档：100% = 全部样本像素一致（最严格），其余按覆盖率
+ * 阈值 >90/80/70/60/50% 分档，连同多数 max / 均值 avg / 去重均值 dedup-avg / major8·avg8·
+ * dedup-avg8·major32·avg32·dedup-avg32 块降采样共 15 张基础合成图（全部参与识别比对）；
+ * 每张基础图各对应一张 -unique 独有区图（same100-unique / same90-unique / same80-unique /
+ * same70-unique / same60-unique / same50-unique / max-unique / avg-unique / dedup-avg-unique /
+ * major8-unique·avg8-unique·dedup-avg8-unique·major32-unique·avg32-unique·dedup-avg32-unique），共 15 张，
  * 全部参与识别比对。
- * 点击动作且有坐标的分类另生成 10 张点击区交集图（以点击坐标为中心的 1/8、1/32 方框交集小图 ×
- * 交集五档 click8/32-same90/80/70/60/50，全部参与识别比对；无 -unique 版、不参与独有区互比）。
+ * 点击动作且有坐标的分类另生成 12 张点击区交集图（以点击坐标为中心的 1/8、1/32 方框交集小图 ×
+ * 交集六档 click8/32-same100/90/80/70/60/50，全部参与识别比对；无 -unique 版、不参与独有区互比）。
  * 独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，
  * 是跨分类产物、等全部分组的基础图生成完后才统一计算，与该分类适用的全部对照图一起构成
- * 固定比对维度参与执行模式 / 智能分析的匹配：无点击坐标分类 14 基础 + 14 -unique = 28 张，
- * 点击动作分类另需 10 张点击区交集图 = 38 张（见 {@link FrameClassifier}；缺图目录待后台重算补齐后自动恢复）。
+ * 固定比对维度参与执行模式 / 智能分析的匹配：无点击坐标分类 15 基础 + 15 -unique = 30 张，
+ * 点击动作分类另需 12 张点击区交集图 = 42 张（见 {@link FrameClassifier}；缺图目录待后台重算补齐后自动恢复）。
  *
  * <pre>
  *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir / 点击区交集图齐全标记 hasClick / 低档齐全 hasClickLow）
  *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下各基础图与点击区图，随后补 -unique 独有区图）
  *   POST /api/annotate/think/rebuild                        一键重建：清空 summary/ 全部产物后全量重算 → {taskId}
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 图之一：same90|same90-unique|same80|same80-unique|same70|same70-unique|same60|same60-unique|same50|same50-unique|max|max-unique|avg|avg-unique|dedup-avg|dedup-avg-unique|major8|major8-unique|avg8|avg8-unique|dedup-avg8|dedup-avg8-unique|major32|major32-unique|avg32|avg32-unique|dedup-avg32|dedup-avg32-unique|click8-same90|click8-same80|click8-same70|click8-same60|click8-same50|click32-same90|click32-same80|click32-same70|click32-same60|click32-same50；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 图之一：same100|same100-unique|same90|same90-unique|same80|same80-unique|same70|same70-unique|same60|same60-unique|same50|same50-unique|max|max-unique|avg|avg-unique|dedup-avg|dedup-avg-unique|major8|major8-unique|avg8|avg8-unique|dedup-avg8|dedup-avg8-unique|major32|major32-unique|avg32|avg32-unique|dedup-avg32|dedup-avg32-unique|click8-same100|click8-same90|click8-same80|click8-same70|click8-same60|click8-same50|click32-same100|click32-same90|click32-same80|click32-same70|click32-same60|click32-same50；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */

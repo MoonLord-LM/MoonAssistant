@@ -9,6 +9,7 @@ import cn.moonlord.mca.config.ExecuteProperties;
 import cn.moonlord.mca.config.StoragePaths;
 import cn.moonlord.mca.mark.CaptureMark;
 import cn.moonlord.mca.mark.ClassifyStore;
+import cn.moonlord.mca.mark.ThinkService;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
@@ -36,8 +37,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 执行模式的运行主轴：每轮 = 找到目标窗口 → 截取最新画面（必要时先 resize 把窗口强制对齐到
- * 与标注样本相同的尺寸）→ 把画面与各分类 summary/ 产物（对照图，14 张基础合成图 + 14 张 -unique 独有区图，
- * 点击动作分类另有 10 张点击区交集图）逐点比对识别出当前状态 →
+ * 与标注样本相同的尺寸）→ 把画面与各分类 summary/ 产物（对照图，15 张基础合成图 + 15 张 -unique 独有区图，
+ * 点击动作分类另有 12 张点击区交集图）逐点比对识别出当前状态 →
  * 解析该状态定义的动作与点击坐标 → 对外发布 Snapshot（含当前画面缓存，供控制台页实时展示与执行）。
  *
  * <p>与「标注模式的截图循环」是同一层截图/调窗机制，但各自独立调度：
@@ -56,6 +57,8 @@ public class ExecutionService {
     private static final int MAX_VERIFY_ATTEMPTS = 3;
     /** 找不到目标窗口时的告警节流。 */
     private static final long FIND_FAIL_LOG_INTERVAL = 20 * 1000L;
+    /** 识别一轮抛出异常时的告警节流（错误已进快照由页面展示，日志无需每轮刷屏）。 */
+    private static final long CLASSIFY_FAIL_LOG_INTERVAL = 20 * 1000L;
 
     private final WindowFinder windowFinder;
     private final ScreenCaptureService screenCaptureService;
@@ -66,6 +69,8 @@ public class ExecutionService {
     private final CaptureProperties captureProperties;
     private final ExecuteProperties executeProperties;
     private final StoragePaths storage;
+    /** 标注分析服务：执行页存入分类样本后请求其自动补齐/刷新汇总产物。 */
+    private final ThinkService thinkService;
 
     /** 执行循环开关：true = 周期自动截图识别；false = 停止（页面始终可「立即识别」一次）。 */
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -80,6 +85,7 @@ public class ExecutionService {
     private volatile String clickMode = null;
 
     private long nextFindFailLogTime = 0;
+    private long nextClassifyFailLogTime = 0;
 
     /* ================================================================ 对外控制 ========== */
 
@@ -194,21 +200,31 @@ public class ExecutionService {
                     System.currentTimeMillis() - t0);
         }
 
-        FrameCapture cap = captureCompliant(window, targetW, targetH, enforce);
-        if (cap == null || cap.image == null) {
-            String msg = "截图失败：目标窗口未捕获到画面"
-                    + (enforce ? "，或窗口尺寸尚未调整到目标 " + targetW + "x" + targetH + "（执行循环会持续调整重试）" : "");
-            return errorSnapshot(window, msg, System.currentTimeMillis() - t0);
-        }
-        // 截图成功后再取一次窗口几何信息，保证展示的是最新（resize 可能已移动/缩放窗口）
-        WindowInfo finalWin = cap.window;
-        WindowInfo fresh = windowFinder.findTarget(captureProperties.getWindowKeywords());
-        if (fresh != null && !fresh.isMinimized()) {
-            finalWin = fresh;
-        }
+        try {
+            FrameCapture cap = captureCompliant(window, targetW, targetH, enforce);
+            if (cap == null || cap.image == null) {
+                String msg = "截图失败：目标窗口未捕获到画面"
+                        + (enforce ? "，或窗口尺寸尚未调整到目标 " + targetW + "x" + targetH + "（执行循环会持续调整重试）" : "");
+                return errorSnapshot(window, msg, System.currentTimeMillis() - t0);
+            }
+            // 截图成功后再取一次窗口几何信息，保证展示的是最新（resize 可能已移动/缩放窗口）
+            WindowInfo finalWin = cap.window;
+            WindowInfo fresh = windowFinder.findTarget(captureProperties.getWindowKeywords());
+            if (fresh != null && !fresh.isMinimized()) {
+                finalWin = fresh;
+            }
 
-        FrameClassifier.Outcome oc = frameClassifier.classify(cap.image);
-        return snapshotNow(finalWin, cap.image, oc, null, System.currentTimeMillis() - t0, oc.elapsedMs);
+            FrameClassifier.Outcome oc = frameClassifier.classify(cap.image);
+            return snapshotNow(finalWin, cap.image, oc, null, System.currentTimeMillis() - t0, oc.elapsedMs);
+        } catch (Exception e) {
+            // 识别异常兜底：出错误快照供页面展示，绝不丢空 latest / 让定时轮重复抛栈
+            if (System.currentTimeMillis() > nextClassifyFailLogTime) {
+                nextClassifyFailLogTime = System.currentTimeMillis() + CLASSIFY_FAIL_LOG_INTERVAL;
+                log.warn("执行模式识别一轮异常（页面已展示错误，下轮自动重试）：{}", e.toString());
+            }
+            return errorSnapshot(window, "识别失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()),
+                    System.currentTimeMillis() - t0);
+        }
     }
 
     /**
@@ -555,7 +571,9 @@ public class ExecutionService {
                 Files.move(tmp, png, StandardCopyOption.REPLACE_EXISTING);
             }
             classifyStore.saveSample(name, st);
-            log.info("执行模式快速标记：画面 {}x{} 另存为分类「{}」的样本 {}", s.imageWidth(), s.imageHeight(), st, name);
+            thinkService.requestRecompute();   // 样本集合已变化：自动补齐/刷新该分类对照图，无需手动去汇总分析
+            log.info("执行模式快速标记：画面 {}x{} 另存为分类「{}」的样本 {}（已请求后台重算）",
+                    s.imageWidth(), s.imageHeight(), st, name);
             res.put("ok", true);
             res.put("name", name);
             res.put("state", st);

@@ -77,6 +77,16 @@ const fmtLogTime = t => {
   const d = new Date(t), p = n => String(n).padStart(2, "0");
   return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 };
+/* 毫秒耗时 → “，耗时 Xs / Xm Ys”后缀（去重清理、特征验证等后端 costMs 通用展示；0/缺失返回空串） */
+function fmtCostSuffix(ms){
+  if(!ms || ms <= 0) return "";
+  const sec = ms / 1000;
+  if(ms < 60000){
+    return "，耗时 " + (sec >= 1 ? sec.toFixed(1).replace(/\.0$/, "") + "s" : ms + "ms");
+  }
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return "，耗时 " + m + "m " + (s < 10 ? "0" : "") + s + "s";
+}
 function makeLogRow(it){
   const row = document.createElement("div");
   row.className = "logrow " + (it.kind || "info");
@@ -109,6 +119,7 @@ function openLogPanel(){
         '<span class="xt2">历史日志</span>' +
         '<span class="xsub" id="logTotal"></span>' +
         '<span class="xsp"></span>' +
+        '<button type="button" class="btn logclr" id="logCopy" title="复制全部历史日志文本到剪贴板">复制</button>' +
         '<button type="button" class="btn logclr" id="logClear">清空</button>' +
         '<button type="button" class="x" id="logClose" title="关闭（Esc）">✕</button>' +
       '</div>' +
@@ -143,6 +154,22 @@ function openLogPanel(){
   document.addEventListener("keydown", onKey);
   ov.addEventListener("click", e => { if(e.target === ov) close(); });   // 点弹层外（旁边）即关闭
   $("logClose").addEventListener("click", close);
+  const cpy = $("logCopy");
+  if(cpy) cpy.addEventListener("click", async ()=>{
+    const text = LOG.map(it => fmtLogTime(it.at) + " [" + logKindOf(it.kind) + "] " + it.txt).join("\n");
+    if(!text){ toast("历史日志为空，没有可复制内容。", ""); return; }
+    let ok = false;
+    try{ await navigator.clipboard.writeText(text); ok = true; }
+    catch(e){                                    // 非安全上下文 / 权限被拒时退回 textarea + execCommand
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try{ ok = document.execCommand("copy"); }catch(e2){}
+      ta.remove();
+    }
+    toast(ok ? "已复制 " + LOG.length + " 条历史日志到剪贴板。" : "复制失败，请手动框选复制。", ok ? "ok" : "err");
+    refreshTotal();                              // 上面的提示也计入 LOG，同步条数
+  });
   const clr = $("logClear");
   if(clr) clr.addEventListener("click", ()=>{
     LOG = [];
@@ -1252,6 +1279,7 @@ function showCapStopModal(msg){
 /* ---------------- 退出程序：确认 → 停后端 → 校验“真的停止”后才自关本页 ---------------- */
 let exiting = false;    // 是否已从本页发起退出
 let closeArmed = false; // 自动关闭本页流程是否已启动
+let lostAsking = false; // 后端失联确认框是否正显示（恢复自动收起 / 用户决策后才复位）
 
 const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 
@@ -1277,9 +1305,16 @@ function askExitConfirm(){
   });
 }
 
-/* 探测后端是否仍存活（连接被拒/无响应视为已停止） */
+/* 带超时的 fetch：服务“连得上但请求永不返回”（GC 濒死/线程池耗尽）也按超时算失败，避免失联探测无限挂起 */
+function fetchT(url, opt, ms){
+  const ctl = new AbortController();
+  const timer = setTimeout(()=> ctl.abort(), ms || 3000);
+  return fetch(url, Object.assign({}, opt || {}, { signal:ctl.signal })).finally(()=> clearTimeout(timer));
+}
+
+/* 探测后端是否仍存活（连接被拒/超时无响应视为已停止） */
 function probeAlive(){
-  return fetch("/api/app/meta", { cache:"no-store" }).then(()=> true).catch(()=> false);
+  return fetchT("/api/app/meta", { cache:"no-store" }, 3000).then(()=> true).catch(()=> false);
 }
 
 /* 移除退出相关全屏覆盖（正在退出 / 已退出 / 退出失败），保证各阶段界面正确切换 */
@@ -1310,6 +1345,40 @@ function showExitScreen(){
     '<button class="btn danger" id="exitClose" type="button">立即关闭本页</button>';
   document.body.appendChild(ov);
   $("exitClose").addEventListener("click", ()=>{ try{ window.close(); }catch(e){ /* 忽略 */ } });
+}
+
+/* 后端探测失联（连接失败/请求超时）确认框：自动弹出类似「退出程序」的确认，由用户决定是否结束本程序。
+   确定 → 走正常停服流程 startExit（尝试停后端并关页）；取消 → 继续探测等待，服务恢复后自动收起。 */
+function showLostAsk(){
+  if(lostAsking) return;
+  lostAsking = true;
+  const ov = document.createElement("div");
+  ov.id = "lostAsk";
+  ov.innerHTML =
+    '<div class="xcard">' +
+      '<div class="xt2" style="color:var(--amber)">后端服务状态未知</div>' +
+      '<div class="msg">多次探测后端均超时/无响应：服务可能已停止，或内存不足（OutOfMemory）导致进程退出。<br>' +
+        '是否结束本程序？结束会尝试停止后端服务并关闭本页。<br>' +
+        '若服务只是正在重启，可点「取消」继续等待——恢复后本提示自动消失。</div>' +
+      '<div class="xrow">' +
+        '<button class="btn" id="lostCancel" type="button">取消（继续等待）</button>' +
+        '<button class="btn danger" id="lostQuit" type="button">结束程序</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  $("lostCancel").addEventListener("click", ()=>{
+    hideLostAsk();
+    toast("已取消，继续探测等待后端恢复…", "");
+  });
+  $("lostQuit").addEventListener("click", ()=>{
+    hideLostAsk();
+    startExit();
+  });
+}
+
+function hideLostAsk(){
+  const a = document.getElementById("lostAsk"); if(a) a.remove();
+  lostAsking = false;
 }
 
 /* 多次尝试后后端仍存活：如实提示并提供重试 */
@@ -1346,8 +1415,8 @@ async function startExit(){
   let deadCount = 0;                     // 连续探测“不可达”次数（>=2 才判定退出，防网络抖动误判）
   while(Date.now() < deadline){
     try{
-      await fetch("/api/system/shutdown", { method:"POST", keepalive:true, cache:"no-store" });
-    }catch(e){ /* 服务端可能已先行关闭，交由下方探测判定 */ }
+      await fetchT("/api/system/shutdown", { method:"POST", keepalive:true, cache:"no-store" }, 2500);
+    }catch(e){ /* 服务端可能已先行关闭/无响应，交由下方探测判定 */ }
     await sleepMs(500);
     const alive = await probeAlive();
     if(!alive){
@@ -1477,7 +1546,7 @@ function renderThinkDock(g){
     text = '样本有变：新增 / 改动样本后对照图尚未重算，稍后会自动更新。';
   }else{
     const tail = g.hasUnique
-      ? '对照图已生成：14 张基础合成图（含交集 90/80/70/60/50 五档与多数/均值/去重均值/8·32 块图）+ 14 张独有区图' + (g.hasClick ? ' + 10 张点击区交集图' : '') + '。'
+      ? '对照图已生成：15 张基础合成图（含交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图）+ 15 张独有区图' + (g.hasClick ? ' + 12 张点击区交集图' : '') + '。'
       : '对照图已生成；各独有区图（本分类独有区域）将在随后的后台重算中补齐。';
     text = g.coverage != null
       ? '交集图像素覆盖率<b class="kv">' + fmtCov(g.coverage) + '</b>，' + tail
@@ -1525,21 +1594,21 @@ function showThinkEmpty(cls, title){
 }
 const THINK_EMPTY = "没有分类标注";
 /* 汇总分析对照图（每张基础图与其 -unique 独有区图成对出现，按族依次排：
-  全图交集五档 90/80/70/60/50 各带 -unique（共 10 张）→
+  全图交集六档 100/90/80/70/60/50 各带 -unique（共 12 张）→
   多数族 max/major8/major32 各带 -unique（共 6 张）→
   均值族 avg/avg8/avg32 各带 -unique（共 6 张）→
   去重均值族 dedup-avg/dedup-avg8/dedup-avg32 各带 -unique（共 6 张）；
-  点击动作分类另有 10 张点击区交集图 click8/32-same90/80/70/60/50
+  点击动作分类另有 12 张点击区交集图 click8/32-same100/90/80/70/60/50
   （1/8、1/32 方框 × 各交集档，均参与识别），仅该分类展示）。
   识别差异度 = 五族加权平均 (50A+15B+10C+10D+15E)/W：每族先把族内各图「不匹配点占比」等权平均，
-  A 全图交集 10 张（权 50）/ B 多数族 6 张（权 15）/ C 均值族 6 张（权 10）/
-  D 去重均值族 6 张（权 10）/ E 点击区交集 10 张（权 15，仅点击动作分类）；
+  A 全图交集 12 张（权 50）/ B 多数族 6 张（权 15）/ C 均值族 6 张（权 10）/
+  D 去重均值族 6 张（权 10）/ E 点击区交集 12 张（权 15，仅点击动作分类）；
   W = 适用族的权重之和（有点击 E 为 100、无点击坐标分类无 E 为 85）；
   无有效像素的图（独有区图无独有点等）按 0 完全匹配计、照常参与族均值；
-  -unique 图须等全部分组的基础图（14 张：交集五档 + 多数/均值/去重均值/8·32 块族）都生成完后
+  -unique 图须等全部分组的基础图（15 张：交集六档 + 多数/均值/去重均值/8·32 块族）都生成完后
   由后台统一补算，未生成前本组先不展示独有区图卡片） */
-const IMG_IDS = ["imgSame","imgUnique","imgSame80","imgSame80U","imgSame70","imgSame70U","imgSame60","imgSame60U","imgSame50","imgSame50U","imgMax","imgMaxU","imgM8","imgM8U","imgM32","imgM32U","imgAvg","imgAvgU","imgA8","imgA8U","imgA32","imgA32U","imgDAvg","imgDAvgU","imgDA8","imgDA8U","imgDA32","imgDA32U","imgC8","imgC8S80","imgC8S70","imgC8S60","imgC8S50","imgC32","imgC32S80","imgC32S70","imgC32S60","imgC32S50"];
-const TCS_IDS = ["tcsSame","tcsUnique","tcsSame80","tcsSame80U","tcsSame70","tcsSame70U","tcsSame60","tcsSame60U","tcsSame50","tcsSame50U","tcsMax","tcsMaxU","tcsM8","tcsM8U","tcsM32","tcsM32U","tcsAvg","tcsAvgU","tcsA8","tcsA8U","tcsA32","tcsA32U","tcsDAvg","tcsDAvgU","tcsDA8","tcsDA8U","tcsDA32","tcsDA32U","tcsC8","tcsC8S80","tcsC8S70","tcsC8S60","tcsC8S50","tcsC32","tcsC32S80","tcsC32S70","tcsC32S60","tcsC32S50"];
+const IMG_IDS = ["imgSame100","imgSame100U","imgSame","imgUnique","imgSame80","imgSame80U","imgSame70","imgSame70U","imgSame60","imgSame60U","imgSame50","imgSame50U","imgMax","imgMaxU","imgM8","imgM8U","imgM32","imgM32U","imgAvg","imgAvgU","imgA8","imgA8U","imgA32","imgA32U","imgDAvg","imgDAvgU","imgDA8","imgDA8U","imgDA32","imgDA32U","imgC8S100","imgC8","imgC8S80","imgC8S70","imgC8S60","imgC8S50","imgC32S100","imgC32","imgC32S80","imgC32S70","imgC32S60","imgC32S50"];
+const TCS_IDS = ["tcsSame100","tcsSame100U","tcsSame","tcsUnique","tcsSame80","tcsSame80U","tcsSame70","tcsSame70U","tcsSame60","tcsSame60U","tcsSame50","tcsSame50U","tcsMax","tcsMaxU","tcsM8","tcsM8U","tcsM32","tcsM32U","tcsAvg","tcsAvgU","tcsA8","tcsA8U","tcsA32","tcsA32U","tcsDAvg","tcsDAvgU","tcsDA8","tcsDA8U","tcsDA32","tcsDA32U","tcsC8S100","tcsC8","tcsC8S80","tcsC8S70","tcsC8S60","tcsC8S50","tcsC32S100","tcsC32","tcsC32S80","tcsC32S70","tcsC32S60","tcsC32S50"];
 
 /* ---- 对照图加载容错：快速切换分组时，同一 <img> 连续换 src 会中止上一组在途请求，
    浏览器偶发把中止/瞬时失败残留成裂图（此时服务端文件其实完好——再点裂图在弹窗里能正常加载）。
@@ -1804,7 +1873,12 @@ function openGroup(g){
       if(c == null && k === "same90") c = g.coverage;
       return fmtCov(c);
     };
-    const kinds = [["same90","imgSame","tcsSame",tierCov("same90")],
+    // 100% 档（全部样本一致）产物是否已生成：重算后的 info.sameCov 才有 same100 键，
+    // 重算前的旧目录缺图 → same100 主图整卡隐藏，避免留出空框/裂图
+    const has100 = !!(g.sameCov && g.sameCov.same100 != null);
+    const kinds = [["same100","imgSame100","tcsSame100",tierCov("same100")],
+                   ["same100-unique","imgSame100U","tcsSame100U", uc("same100-unique")],
+                   ["same90","imgSame","tcsSame",tierCov("same90")],
                    ["same90-unique","imgUnique","tcsUnique", uc("same90-unique")],
                    ["same80","imgSame80","tcsSame80",tierCov("same80")],
                    ["same80-unique","imgSame80U","tcsSame80U", uc("same80-unique")],
@@ -1832,14 +1906,16 @@ function openGroup(g){
                    ["dedup-avg8-unique","imgDA8U","tcsDA8U", uc("dedup-avg8-unique")],
                    ["dedup-avg32","imgDA32","tcsDA32", sz32(W) + "×" + sz32(H) + " · 去重均值"],
                    ["dedup-avg32-unique","imgDA32U","tcsDA32U", uc("dedup-avg32-unique")]];
-    // 点击区交集图卡片（以统一点击坐标为中心的 1/8、1/32 方框 × 交集五档）：
-    // 全部参与识别比对。90% 档两图齐全（g.hasClick）才展示；低档八图额外要求 g.hasClickLow
+    // 点击区交集图卡片（以统一点击坐标为中心的 1/8、1/32 方框 × 交集六档）：
+    // 全部参与识别比对。90% 档两图齐全（g.hasClick）才展示；100% 与低档十图额外要求 g.hasClickLow
     // （重算前的旧目录可能没有这些产物 → 整卡隐藏，避免留出空框/裂图）
-    const clickCards = [["click8-same90","imgC8","tcsC8", sz8(W) + "×" + sz8(H) + " · 点击区 90%"],
+    const clickCards = [["click8-same100","imgC8S100","tcsC8S100", sz8(W) + "×" + sz8(H) + " · 点击区 100%"],
+                        ["click8-same90","imgC8","tcsC8", sz8(W) + "×" + sz8(H) + " · 点击区 90%"],
                         ["click8-same80","imgC8S80","tcsC8S80", sz8(W) + "×" + sz8(H) + " · 点击区 80%"],
                         ["click8-same70","imgC8S70","tcsC8S70", sz8(W) + "×" + sz8(H) + " · 点击区 70%"],
                         ["click8-same60","imgC8S60","tcsC8S60", sz8(W) + "×" + sz8(H) + " · 点击区 60%"],
                         ["click8-same50","imgC8S50","tcsC8S50", sz8(W) + "×" + sz8(H) + " · 点击区 50%"],
+                        ["click32-same100","imgC32S100","tcsC32S100", sz32(W) + "×" + sz32(H) + " · 点击区 100%"],
                         ["click32-same90","imgC32","tcsC32", sz32(W) + "×" + sz32(H) + " · 点击区 90%"],
                         ["click32-same80","imgC32S80","tcsC32S80", sz32(W) + "×" + sz32(H) + " · 点击区 80%"],
                         ["click32-same70","imgC32S70","tcsC32S70", sz32(W) + "×" + sz32(H) + " · 点击区 70%"],
@@ -1854,6 +1930,11 @@ function openGroup(g){
     let shownCards = 0;
     for(const [kind,imgId,tcsId,label] of kinds){
       const el = $(imgId), card = el.closest(".tcard");
+      if(kind === "same100" && !has100){
+        $(tcsId).textContent = "";
+        card.style.display = "none";
+        continue;
+      }
       if(kind.endsWith("-unique") && !g.hasUnique){
         // -unique 独有区图需跨分类对比：本组尚未经「全部分组基础图齐备后的那次重算」生成 → 先不展示
         // （随后台自动重算补齐，或对该组重新分析）
@@ -1925,8 +2006,8 @@ async function pollAnalyze(id, label){
     if(t.status === "running"){
       // 后台为单线程串行计算池：任务刚提交 / 排在自动重算等其它分析后面时，total 尚未统计出来（0/0），
       // 此时只报“正在…”，避免把无意义的 0/0 当作卡死；total 确定后显示真实进度 processed/N。
-      // 任务分 2 轮：第 1 轮逐分类生成 14 张基础对照图（交集五档 + 多数/均值/去重均值/8·32 块族；processed/total 计数），
-      // 第 2 轮生成各分类 14 张 -unique 独有区图（跨分类按 kind 推进，current 指示当前图种）。
+      // 任务分 2 轮：第 1 轮逐分类生成 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族；processed/total 计数），
+      // 第 2 轮生成各分类 15 张 -unique 独有区图（跨分类按 kind 推进，current 指示当前图种）。
       // 进度不挤在列表头小角，改为：图片下方 dock 实时刷新进行态 + 右下角 taskTip 单条闪现（文本变化入库）
       const hasN = t.total > 0;
       const stage = t.stage === 2 ? 2 : 1;
@@ -1951,7 +2032,7 @@ async function pollAnalyze(id, label){
    不会与自动重算/其它分析互踩；产物由 classify/ 已标注样本派生，删除不影响原始截图与标注 */
 async function rebuildThink(){
   if(thinkBusy){ toast("已有分析任务进行中，请稍候", "warn"); return; }
-  if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类适用的对照图（14 张基础合成图：交集 90/80/70/60/50 五档与多数/均值/去重均值/8·32 块图，各带 1 张独有区图共 14 张；点击动作分类另含 10 张点击区交集图，全部参与识别）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
+  if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类适用的对照图（15 张基础合成图：交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图，各带 1 张独有区图共 15 张；点击动作分类另含 12 张点击区交集图，全部参与识别）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
   thinkBusy = true; renderThinkList();
   thinkBusyDock("正在全量重建全部对照图…（将先清空 summary/ 旧产物）");
   try{
@@ -2119,7 +2200,7 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 五族加权 (50A+15B+10C+10D+15E)/W（A 全图交集 10 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 10 张权 15，仅点击分类有 E；每族先对族内各图等权平均；W = 适用族的权重之和：有点击 E=100、无 E=85；无有效像素的图按 0 完全匹配计、照常参与族均值），越小越像；候选另带一行「按已分类原图匹配」（rawBest）：与全部已分类原始截图逐像素完全一致直比的最低一张，与对照图候选合并后统一按差异分值由小到大排序，最小的那行就是顶部建议分类 */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 五族加权 (50A+15B+10C+10D+15E)/W（A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15，仅点击分类有 E；每族先对族内各图等权平均；W = 适用族的权重之和：有点击 E=100、无 E=85；无有效像素的图按 0 完全匹配计、照常参与族均值），越小越像；候选另带一行「按已分类原图匹配」（rawBest）：与全部已分类原始截图逐像素完全一致直比的最低一张，与对照图候选合并后统一按差异分值由小到大排序，最小的那行就是顶部建议分类 */
 function renderSuggest(list, rawBest){
   const comp = (list && list.length) ? list : [];
   const raw = (rawBest && typeof rawBest.diffPercent === "number") ? rawBest : null;
@@ -2150,7 +2231,7 @@ function renderSuggest(list, rawBest){
       ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
     candBlock +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类适用的对照图（14 张基础图：交集五档 90/80/70/60/50、多数/均值/去重均值/8·32 块图，各带 1 张 -unique 独有区图共 14 张，全部参与比对；点击动作且坐标有效的分类另含 click8/32-same90/80/70/60/50 十张点击区交集图——以点击坐标为中心的 1/8、1/32 方框 × 各交集档）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数/点击区类（全部交集档、多数/多数块图/点击区交集图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）颜色是样本平均色 / 去重平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W，A 全图交集（交集五档及各自 -unique，10 张，权 50）、B 多数（max/major8/major32 及各自 -unique，6 张，权 15）、C 均值（avg/avg8/avg32 及各自 -unique，6 张，权 10）、D 去重均值（dedup-avg/8/32 及各自 -unique，6 张，权 10）、E 点击区交集（10 张，权 15，仅点击动作分类）——每族先把族内各图不匹配点占比等权平均再加权；W = 适用族的权重之和（点击分类 =100，无点击坐标分类无 E、W=85），越小越像；无有效像素的图（独有区图无独有点等）按 0 完全匹配计、照常参与族均值、不报错；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 完全匹配、不给分类加分歧；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类适用的对照图（15 张基础图：交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/均值/去重均值/8·32 块图，各带 1 张 -unique 独有区图共 15 张，全部参与比对；点击动作且坐标有效的分类另含 click8/32-same100/90/80/70/60/50 十二张点击区交集图——以点击坐标为中心的 1/8、1/32 方框 × 各交集档）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数/点击区类（全部交集档、多数/多数块图/点击区交集图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）颜色是样本平均色 / 去重平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W，A 全图交集（交集六档及各自 -unique，12 张，权 50）、B 多数（max/major8/major32 及各自 -unique，6 张，权 15）、C 均值（avg/avg8/avg32 及各自 -unique，6 张，权 10）、D 去重均值（dedup-avg/8/32 及各自 -unique，6 张，权 10）、E 点击区交集（12 张，权 15，仅点击动作分类）——每族先把族内各图不匹配点占比等权平均再加权；W = 适用族的权重之和（点击分类 =100，无点击坐标分类无 E、W=85），越小越像；无有效像素的图（独有区图无独有点等）按 0 完全匹配计、照常参与族均值、不报错；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 完全匹配、不给分类加分歧；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2264,7 +2345,7 @@ let VK_SEQ = "";             // 列表渲染签名（避免无变化时每 1 秒
 let VK_TMR = null;           // 特征验证视图下的专用轮询定时器
 let vkBusy = false;          // 请求去重（防止上一轮未返回时下一轮叠发）
 
-const VER_SAME = { same90:"90%", same80:"80%", same70:"70%", same60:"60%", same50:"50%" };
+const VER_SAME = { same100:"100%", same90:"90%", same80:"80%", same70:"70%", same60:"60%", same50:"50%" };
 
 function vkInfo(kind){
   const uniq = kind.endsWith("-unique");
@@ -2275,11 +2356,11 @@ function vkInfo(kind){
   else if(b === "max"){ name = "多数图 全幅"; dim = "多数图"; }
   else if(b === "avg"){ name = "均值图 全幅"; dim = "均值图"; }
   else if(b === "dedup-avg"){ name = "去重均值 全幅"; dim = "去重均值图"; }
-  else if(b.startsWith("major")){ name = "多数图 " + b.slice(5) + "×" + b.slice(5); dim = "多数图"; }
-  else if(b.startsWith("avg")){ name = "均值图 " + b.slice(3) + "×" + b.slice(3); dim = "均值图"; }
-  else if(b.startsWith("dedup-avg")){ name = "去重均值 " + b.slice(9) + "×" + b.slice(9); dim = "去重均值图"; }
-  else if(/^click(8|32)-same(90|80|70|60|50)$/.test(kind)){
-    const m = kind.match(/^click(8|32)-same(90|80|70|60|50)$/);
+  else if(b.startsWith("major")){ name = "多数图 " + (b.endsWith("8") ? "1/8" : "1/32"); dim = "多数图"; }
+  else if(b.startsWith("avg")){ name = "均值图 " + (b.endsWith("8") ? "1/8" : "1/32"); dim = "均值图"; }
+  else if(b.startsWith("dedup-avg")){ name = "去重均值 " + (b.endsWith("8") ? "1/8" : "1/32"); dim = "去重均值图"; }
+  else if(/^click(8|32)-same(100|90|80|70|60|50)$/.test(kind)){
+    const m = kind.match(/^click(8|32)-same(100|90|80|70|60|50)$/);
     name = "点击区交集 " + (m[1] === "8" ? "1/8" : "1/32") + " · " + VER_SAME["same" + m[2]];
     dim = "点击动作分类 · 点击坐标方框";
   }
@@ -2414,7 +2495,8 @@ async function vkPoll(){
   if(wasRunning && !j.running){
     if(err){ toast("特征验证中断：" + err, "err"); }
     else{
-      toast("特征验证已完成，结果已缓存。", "ok");
+      const costTxt = fmtCostSuffix(Number(j.task && j.task.costMs));
+      toast("特征验证已完成，结果已缓存" + costTxt + "。", "ok");
       if(VK_SEL) vkLoadDetail(VK_SEL);
     }
   }else if(!VK_SEL && !j.running){
@@ -2459,10 +2541,10 @@ function renderVerifyDetail(){
   $("vdSum").innerHTML =
     '<div class="vcard"><div class="vcap">A · 自分类平均匹配值</div>' +
     '<div class="vval">' + fmtV(d.a) + '</div>' +
-    '<div class="vsub">全体样本与「自分类该算法汇总图」比对的不匹配占比均值，越低越像自己</div></div>' +
+    '<div class="vsub">每张原图与「自己分类的该算法生成图」比对的不匹配占比均值，越低样本越集中</div></div>' +
     '<div class="vcard"><div class="vcap">匹配正确分类的比例</div>' +
     '<div class="vval ' + vkBC(d.b) + '">' + fmtV(d.b) + '</div>' +
-    '<div class="vsub">在全部同类汇总图里匹配最好且分类正确的样本占比，越高区分度越好</div></div>' +
+    '<div class="vsub">每张原图在全部同类生成图里匹配最佳且刚好是自己分类的占比，越高区分度越好</div></div>' +
     '<div class="vmeta">样本 ' + d.samples + ' 张 · 参与分类 ' + d.groups + ' 个</div>';
   const tb = $("vdRows"); tb.innerHTML = "";
   if(!d.rows || !d.rows.length || d.samples === 0){
@@ -2603,7 +2685,7 @@ document.addEventListener("visibilitychange", ()=>{
 
 /* ---------------- 服务端版本检测：后端重新打包/重启后自动刷新页面 ---------------- */
 const META_MS = 2000;      // 每 2 秒探一次：既做版本/存活探测，也借 savedSeq 感知“新截图已保存”以即时刷新列表
-const META_DOWN_LIMIT = 8; // 连续这么多次探不到后端即判定“程序已退出”（容忍快速重启的间隙）
+const META_DOWN_LIMIT = 5; // 连续这么多次探测不到后端（单次最多等 3s 超时）即判定“失联”，弹“是否结束”确认
 let baseCodeTs = null;     // 页面打开时记录的后端代码构建时间（基线）
 let lastSavedSeqShown = null;  // 已同步过的截图保存计数（基线；变化 = 有新截图落盘，需刷新列表）
 let pendingReload = false; // 编辑未保存时挂起的刷新（保存后再执行）
@@ -2616,10 +2698,15 @@ async function checkAppVersion(){
   try{
     // shotAfter = 已并入历史日志的最后一条截图结果 seq：后端把其后新增的截图结果（shotLog）一并返回；
     // 首次为 -1 → 全量回填启动以来全部截图结果（补齐轮询间隙被节流的中间条，供历史日志回溯）
-    const r = await fetch("/api/app/meta?shotAfter=" + lastShotLogSeq, { cache:"no-store" });
+    const r = await fetchT("/api/app/meta?shotAfter=" + lastShotLogSeq, { cache:"no-store" }, 3000);
     if(!r.ok) return;
     const j = await r.json();
     metaDown = 0;                        // 探测成功：清零连续失败计数
+    if(lostAsking || metaGone){
+      // 失联后服务已恢复：自动收起失联确认并复位状态（用户点过“取消”等待的同样在此放行）
+      metaGone = false;
+      if(lostAsking){ hideLostAsk(); toast("后端服务已恢复连接。", "ok"); }
+    }
     // 截图 resize 持续不达标 → 后端已自动暂停：弹窗提示并同步按钮态（仅提示一次，用户 resume 后可再次提示）
     const stopReason = j && j.captureStopReason;
     if(stopReason && stopReason !== lastStopReasonShown){
@@ -2665,11 +2752,8 @@ async function checkAppVersion(){
       const thresholdTxt = isFinite(thr) && thr > 0
         ? "按不一致像素占比 ≤ " + (Number.isInteger(thr) ? String(thr) : String(Math.round(thr * 100) / 100)) + "% "
         : "";
-      // 耗时（后端实际重扫毫秒数）：≥1s 显示 “Xs”，不足 1s 显示 “Xms”；旧后端无该字段时静默不加
-      const costMs = Number(dedup.costMs) || 0;
-      const costTxt = costMs > 0
-        ? "，耗时 " + (costMs >= 1000 ? (costMs / 1000).toFixed(1).replace(/\.0$/, "") + "s" : costMs + "ms")
-        : "";
+      // 耗时（后端实际重扫毫秒数）；旧后端无该字段时静默不加
+      const costTxt = fmtCostSuffix(Number(dedup.costMs) || 0);
       const scanned = Number(dedup.scanned) || 0;
       const msg = (dedup.removed > 0)
         ? "启动重复清理：" + thresholdTxt + "重扫 " + scanned + " 张，删除重复 " + dedup.removed + " 张" + costTxt
@@ -2703,13 +2787,12 @@ async function checkAppVersion(){
       setTimeout(()=> location.reload(), 500);
     }
   }catch(e){
-    /* 探测失败：短时间失败可能是服务重启间隙；连续多次失败 = 程序已退出 → 提示并尝试自关 */
+    /* 探测失败（含单次超时）：短时失败可能是服务重启间隙；连续失败 = 后端失联（已停/OOM 退出/垂死）→ 问是否结束 */
     if(exiting || metaGone) return;
     if(++metaDown >= META_DOWN_LIMIT){
       metaGone = true;
-      if(document.hidden){ needExitUI = true; return; }  // 后台先不打扰/不误关，回到前台立即提示
-      showExitScreen();
-      armPageClose(1200);   // 先让“已退出”提示可见，再尝试关页
+      if(document.hidden){ needExitUI = true; return; }  // 后台先不打扰，回到前台再弹确认
+      showLostAsk();
     }
   }
 }
@@ -2726,10 +2809,9 @@ function maybeAutoReload(){
 
 document.addEventListener("visibilitychange", ()=>{
   if(document.hidden) return;
-  if(needExitUI){                          // 后台已判定程序退出：回到页面立即展示提示并尝试自关
+  if(needExitUI){                          // 后台已判定后端失联：回到页面立即弹“是否结束”确认
     needExitUI = false;
-    showExitScreen();
-    armPageClose(1200);
+    showLostAsk();
     return;
   }
   if(baseCodeTs !== null) checkAppVersion();   // 切回页面立刻复核一次
@@ -3046,14 +3128,15 @@ function renderExecCandidates(list){
   });
 }
 
-/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（14 基础图 + 14 -unique 独有区图，点击动作分类另含 10 张点击区交集图）的分值 ---- */
+/* ---- 各对照图分值明细弹层：某候选分类 summary 产物目录里各张对照图（15 基础图 + 15 -unique 独有区图，点击动作分类另含 12 张点击区交集图）的分值 ---- */
 function openKindScores(it){
   if(!it || !Array.isArray(it.kinds) || !it.kinds.length){
     toast("该候选缺少对照图分值明细（未参与比对）", "err");
     return;
   }
   if($("kindScoreModal")) $("kindScoreModal").remove();
-  const zh = { same90:"交集图 90%", "same90-unique":"独有交集图 90%",
+  const zh = { same100:"交集图 100%", "same100-unique":"独有交集图 100%",
+               same90:"交集图 90%", "same90-unique":"独有交集图 90%",
                same80:"交集图 80%", "same80-unique":"独有交集图 80%",
                same70:"交集图 70%", "same70-unique":"独有交集图 70%",
                same60:"交集图 60%", "same60-unique":"独有交集图 60%",
@@ -3067,14 +3150,17 @@ function openKindScores(it){
                major32:"多数块 32×32", "major32-unique":"独有多数块 32×32",
                avg32:"均值块 32×32", "avg32-unique":"独有均值块 32×32",
                "dedup-avg32":"去重均值块 32×32", "dedup-avg32-unique":"独有去重均值块 32×32",
-               "click8-same90":"点击区交集 1/8 · 90%", "click8-same80":"点击区交集 1/8 · 80%",
+               "click8-same100":"点击区交集 1/8 · 100%", "click8-same90":"点击区交集 1/8 · 90%",
+               "click8-same80":"点击区交集 1/8 · 80%",
                "click8-same70":"点击区交集 1/8 · 70%", "click8-same60":"点击区交集 1/8 · 60%",
                "click8-same50":"点击区交集 1/8 · 50%",
-               "click32-same90":"点击区交集 1/32 · 90%", "click32-same80":"点击区交集 1/32 · 80%",
+               "click32-same100":"点击区交集 1/32 · 100%", "click32-same90":"点击区交集 1/32 · 90%",
+               "click32-same80":"点击区交集 1/32 · 80%",
                "click32-same70":"点击区交集 1/32 · 70%", "click32-same60":"点击区交集 1/32 · 60%",
                "click32-same50":"点击区交集 1/32 · 50%" };
   // kind → 磁盘文件名（仅 max/max-unique 映射 major 名，其余与 kind 同名 + ".png"）
-  const kf = { same90:"same90.png", "same90-unique":"same90-unique.png",
+  const kf = { same100:"same100.png", "same100-unique":"same100-unique.png",
+               same90:"same90.png", "same90-unique":"same90-unique.png",
                same80:"same80.png", "same80-unique":"same80-unique.png",
                same70:"same70.png", "same70-unique":"same70-unique.png",
                same60:"same60.png", "same60-unique":"same60-unique.png",
@@ -3088,10 +3174,12 @@ function openKindScores(it){
                major32:"major32.png", "major32-unique":"major32-unique.png",
                avg32:"avg32.png", "avg32-unique":"avg32-unique.png",
                "dedup-avg32":"dedup-avg32.png", "dedup-avg32-unique":"dedup-avg32-unique.png",
-               "click8-same90":"click8-same90.png", "click8-same80":"click8-same80.png",
+               "click8-same100":"click8-same100.png", "click8-same90":"click8-same90.png",
+               "click8-same80":"click8-same80.png",
                "click8-same70":"click8-same70.png", "click8-same60":"click8-same60.png",
                "click8-same50":"click8-same50.png",
-               "click32-same90":"click32-same90.png", "click32-same80":"click32-same80.png",
+               "click32-same100":"click32-same100.png", "click32-same90":"click32-same90.png",
+               "click32-same80":"click32-same80.png",
                "click32-same70":"click32-same70.png", "click32-same60":"click32-same60.png",
                "click32-same50":"click32-same50.png" };
   const rows = it.kinds.map(ks => {
@@ -3119,7 +3207,7 @@ function openKindScores(it){
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "标注分类：" + escHtml(it.state || "—") + "<br>" +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按维度类别分两套：交集/多数类（交集五档 90/80/70/60/50、多数/多数块图/点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。点击区交集图是点击动作分类以点击坐标为中心的 1/8、1/32 方框 × 各交集档的交集图。分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 10 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 10 张权 15；每族先把族内各图不匹配点占比等权平均，再除以 W（有点击 E=100、无点击坐标分类无 E=85）；无有效像素的图按 0 完全匹配计、照常参与族均值</div>" +
+        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图/点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。点击区交集图是点击动作分类以点击坐标为中心的 1/8、1/32 方框 × 各交集档的交集图。分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15；每族先把族内各图不匹配点占比等权平均，再除以 W（有点击 E=100、无点击坐标分类无 E=85）；无有效像素的图按 0 完全匹配计、照常参与族均值</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";
@@ -3141,7 +3229,7 @@ async function execQuickMark(state, btn){
   });
   if(j && j.ok){
     if(execShownAt === at0) execShownStored = true;   // 同帧存入成功：其它候选行与「存入待标注」联动置灰
-    toast("已把当前画面存入分类「" + state + "」的样本。需在标注模式对该分类重新执行「汇总分析」，后续识别才会按新样本匹配。", "ok");
+    toast("已把当前画面存入分类「" + state + "」的样本，后台将自动刷新该分类的对照图（约 3 秒后开始重算，完成后后续识别即按新样本匹配）。", "ok");
   } else if(j && j.kind === "dup"){
     // 与某张已保存图差异 ≤ 手动阈值被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与重复参考由后端给出
     toast(j.message || "当前画面与某张已保存图几乎重复（不一致像素占比 ≤ 手动阈值），未存入分类（如需改标请在标注模式修改该样本的分类）", "skip");

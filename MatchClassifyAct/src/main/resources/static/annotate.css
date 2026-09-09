@@ -378,12 +378,12 @@
   #exitScreen,#exitingScreen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:24px}
   #exitScreen .xt,#exitingScreen .xt{font-size:24px;font-weight:700;color:var(--green)}
   #exitScreen .msg,#exitingScreen .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:8px}
-  #exitConfirm,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
+  #exitConfirm,#lostAsk,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
   /* 7 图分值明细弹层：遮罩更暗更不透明，避免后排页面透出来干扰阅读 */
   #kindScoreModal{background:rgba(2,4,9,.92)}
-  #exitConfirm .xcard,#capStopModal .xcard,#xCloseAsk .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
-  #exitConfirm .xt2,#capStopModal .xt2,#xCloseAsk .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
-  #exitConfirm .msg,#capStopModal .msg,#xCloseAsk .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
+  #exitConfirm .xcard,#capStopModal .xcard,#xCloseAsk .xcard,#lostAsk .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #exitConfirm .xt2,#capStopModal .xt2,#xCloseAsk .xt2,#lostAsk .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #exitConfirm .msg,#capStopModal .msg,#xCloseAsk .msg,#lostAsk .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}
   /* 自动暂停弹窗：正文长，按后端 \n 分段、靠左 + 宽松行高排版便于阅读 */
   #capStopModal .xcard{text-align:left}
   #capStopModal .msg{white-space:pre-line;text-align:left;font-size:12.5px;line-height:1.9}
