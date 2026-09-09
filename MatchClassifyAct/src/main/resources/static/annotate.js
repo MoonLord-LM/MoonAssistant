@@ -1604,7 +1604,7 @@ const THINK_EMPTY = "没有分类标注";
   A 全图交集 12 张（权 50）/ B 多数族 6 张（权 15）/ C 均值族 6 张（权 10）/
   D 去重均值族 6 张（权 10）/ E 点击区交集 12 张（权 15，仅点击动作分类）；
   W = 适用族的权重之和（有点击 E 为 100、无点击坐标分类无 E 为 85）；
-  无有效像素的图（独有区图无独有点等）按 0 完全匹配计、照常参与族均值；
+  产物无任何有效像素的空图（独有区图无独有点等）没有可判别的点、无法做区分，判完全不匹配按满值计入、照常参与族均值；
   -unique 图须等全部分组的基础图（15 张：交集六档 + 多数/均值/去重均值/8·32 块族）都生成完后
   由后台统一补算，未生成前本组先不展示独有区图卡片） */
 const IMG_IDS = ["imgSame100","imgSame100U","imgSame","imgUnique","imgSame80","imgSame80U","imgSame70","imgSame70U","imgSame60","imgSame60U","imgSame50","imgSame50U","imgMax","imgMaxU","imgM8","imgM8U","imgM32","imgM32U","imgAvg","imgAvgU","imgA8","imgA8U","imgA32","imgA32U","imgDAvg","imgDAvgU","imgDA8","imgDA8U","imgDA32","imgDA32U","imgC8S100","imgC8","imgC8S80","imgC8S70","imgC8S60","imgC8S50","imgC32S100","imgC32","imgC32S80","imgC32S70","imgC32S60","imgC32S50"];
@@ -1731,6 +1731,7 @@ async function refreshThink(autoAnalyze, silent){
     if(!silent) toast("加载分析状态失败：" + e.message, "err");
     return;
   }
+  if(FILTER !== "think") return;   // 加载期间已切走：丢弃本次结果，防止把已退出的汇总分析主区重新点亮
   const prevKey = selKey;
   GROUPS = arr;
   const sig = thinkSig();
@@ -2200,7 +2201,7 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 五族加权 (50A+15B+10C+10D+15E)/W（A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15，仅点击分类有 E；每族先对族内各图等权平均；W = 适用族的权重之和：有点击 E=100、无 E=85；无有效像素的图按 0 完全匹配计、照常参与族均值），越小越像；候选另带一行「按已分类原图匹配」（rawBest）：与全部已分类原始截图逐像素完全一致直比的最低一张，与对照图候选合并后统一按差异分值由小到大排序，最小的那行就是顶部建议分类 */
+/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 五族加权 (50A+15B+10C+10D+15E)/W（A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15，仅点击分类有 E；每族先对族内各图等权平均；W = 适用族的权重之和：有点击 E=100、无 E=85；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与族均值），越小越像；候选另带一行「按已分类原图匹配」（rawBest）：与全部已分类原始截图逐像素完全一致直比的最低一张，与对照图候选合并后统一按差异分值由小到大排序，最小的那行就是顶部建议分类 */
 function renderSuggest(list, rawBest){
   const comp = (list && list.length) ? list : [];
   const raw = (rawBest && typeof rawBest.diffPercent === "number") ? rawBest : null;
@@ -2231,7 +2232,7 @@ function renderSuggest(list, rawBest){
       ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
     candBlock +
     '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类适用的对照图（15 张基础图：交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/均值/去重均值/8·32 块图，各带 1 张 -unique 独有区图共 15 张，全部参与比对；点击动作且坐标有效的分类另含 click8/32-same100/90/80/70/60/50 十二张点击区交集图——以点击坐标为中心的 1/8、1/32 方框 × 各交集档）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数/点击区类（全部交集档、多数/多数块图/点击区交集图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）颜色是样本平均色 / 去重平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W，A 全图交集（交集六档及各自 -unique，12 张，权 50）、B 多数（max/major8/major32 及各自 -unique，6 张，权 15）、C 均值（avg/avg8/avg32 及各自 -unique，6 张，权 10）、D 去重均值（dedup-avg/8/32 及各自 -unique，6 张，权 10）、E 点击区交集（12 张，权 15，仅点击动作分类）——每族先把族内各图不匹配点占比等权平均再加权；W = 适用族的权重之和（点击分类 =100，无点击坐标分类无 E、W=85），越小越像；无有效像素的图（独有区图无独有点等）按 0 完全匹配计、照常参与族均值、不报错；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空时该维按 0 完全匹配、不给分类加分歧；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
+    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类适用的对照图（15 张基础图：交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/均值/去重均值/8·32 块图，各带 1 张 -unique 独有区图共 15 张，全部参与比对；点击动作且坐标有效的分类另含 click8/32-same100/90/80/70/60/50 十二张点击区交集图——以点击坐标为中心的 1/8、1/32 方框 × 各交集档）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数/点击区类（全部交集档、多数/多数块图/点击区交集图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）颜色是样本平均色 / 去重平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W，A 全图交集（交集六档及各自 -unique，12 张，权 50）、B 多数（max/major8/major32 及各自 -unique，6 张，权 15）、C 均值（avg/avg8/avg32 及各自 -unique，6 张，权 10）、D 去重均值（dedup-avg/8/32 及各自 -unique，6 张，权 10）、E 点击区交集（12 张，权 15，仅点击动作分类）——每族先把族内各图不匹配点占比等权平均再加权；W = 适用族的权重之和（点击分类 =100，无点击坐标分类无 E、W=85），越小越像；产物无任何有效像素的空图（独有区图无独有点等）没有可判别的点、无法做区分，判完全不匹配、按不匹配占比满值计入并照常参与族均值、不报错；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空即空图、该维判完全不匹配、不给该分类留任何靠它“完美命中”的口子；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
   const btn = $("sugAdopt");
   if(btn){
     btn.addEventListener("click", ()=>{
@@ -2484,6 +2485,7 @@ async function vkPoll(){
     j = await r.json();
   }catch(e){ vkBusy = false; return; }
   vkBusy = false;
+  if(FILTER !== "verify") return;   // 等待期间已切走：丢弃本次状态，防止把左栏/明细刷回特征验证
   const prev = VER;
   VER = j;
   if(j && j.kinds) vkCnt = j.kinds.length;
@@ -2542,9 +2544,9 @@ function renderVerifyDetail(){
     '<div class="vcard"><div class="vcap">A · 自分类平均匹配值</div>' +
     '<div class="vval">' + fmtV(d.a) + '</div>' +
     '<div class="vsub">每张原图与「自己分类的该算法生成图」比对的不匹配占比均值，越低样本越集中</div></div>' +
-    '<div class="vcard"><div class="vcap">匹配正确分类的比例</div>' +
+    '<div class="vcard"><div class="vcap">B · 匹配正确分类的比例</div>' +
     '<div class="vval ' + vkBC(d.b) + '">' + fmtV(d.b) + '</div>' +
-    '<div class="vsub">每张原图在全部同类生成图里匹配最佳且刚好是自己分类的占比，越高区分度越好</div></div>' +
+    '<div class="vsub">每张原图与「所有分类的该算法生成图」匹配、匹配度最高的刚好是自己分类的占比，越高区分度越好</div></div>' +
     '<div class="vmeta">样本 ' + d.samples + ' 张 · 参与分类 ' + d.groups + ' 个</div>';
   const tb = $("vdRows"); tb.innerHTML = "";
   if(!d.rows || !d.rows.length || d.samples === 0){
@@ -2557,14 +2559,17 @@ function renderVerifyDetail(){
     const tr = document.createElement("tr");
     const act = (ACT_LABEL[r.action] || r.action || "无动作")
       + (r.clickLeft != null && r.clickTop != null ? "（" + r.clickLeft + "," + r.clickTop + "）" : "");
+    const miss = r.missing
+      ? '<span class="vmiss">该分类无此 kind 产物 · 无法匹配按满值计</span>' : "";
     tr.innerHTML =
       '<td class="st">' + escHtml(r.state) + '</td>' +
-      '<td class="ac">' + escHtml(act) + '</td>' +
+      '<td class="ac">' + escHtml(act) + miss + '</td>' +
       '<td class="nu">' + r.samples + '</td>' +
       '<td class="nu">' + fmtV(r.a) + '</td>' +
       '<td class="nu ' + vkBC(r.b) + '">' + fmtV(r.b) + '</td>' +
       '<td class="nu">' + (r.hit == null ? "—" : r.hit + " / " + r.samples) + '</td>';
-    tr.title = "样本 " + r.samples + " 张：A " + fmtV(r.a) + "，B " + fmtV(r.b);
+    tr.title = "样本 " + r.samples + " 张：A " + fmtV(r.a) + "，B " + fmtV(r.b)
+      + (r.missing ? "；该分类没有该 kind 产物，无法匹配、按满值口径计入 A/B" : "");
     tb.appendChild(tr);
   }
 }
@@ -2632,6 +2637,7 @@ function listSig(arr){ return arr.map(i => [i.name,i.marked,i.state,i.action,i.l
 async function refreshSilent(){
   let arr;
   try{ arr = await fetchAllSafe(); }catch(e){ return false; }
+  if(FILTER === "think" || FILTER === "verify") return true;   // 等待期间已切去分析视图：让对应视图自行刷新，不抢着重绘普通列表
   if(listSig(ALL) === listSig(arr)) return true;   // 无实质变化则不重绘，避免打扰
   ALL = arr;
   try{ DEF = await fetchDefs(); }catch(_){}
@@ -3214,7 +3220,7 @@ function openKindScores(it){
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
     const score = (typeof ks.score === "number" && ks.score >= 0)
         ? '<b style="color:var(--green)">' + ks.score.toFixed(2) + "%</b>"
-        : '<span style="color:#778" title="该图异常无分：产物缺失/解码失败或比对口径不符（产物齐全时不会出现），不参与所在族（A~E）的族内均值；无有效像素的图按 0 完全匹配计、照常显示">跳过</span>';
+        : '<span style="color:#778" title="该图异常无分：产物缺失/解码失败或比对口径不符（产物齐全时不会出现），不参与所在族（A~E）的族内均值；产物无任何有效像素的空图判完全不匹配、按满值计入、照常显示">跳过</span>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:12.5px">' +
       '<span>' + escHtml(nm) +
         '<span style="color:#667;font-size:11px;margin-left:7px">' + escHtml((kf[ks.kind] || ks.kind + ".png") + " · " + grid) + "</span></span>" +
@@ -3229,7 +3235,7 @@ function openKindScores(it){
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "标注分类：" + escHtml(it.state || "—") + "<br>" +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图/点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。点击区交集图是点击动作分类以点击坐标为中心的 1/8、1/32 方框 × 各交集档的交集图。分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15；每族先把族内各图不匹配点占比等权平均，再除以 W（有点击 E=100、无点击坐标分类无 E=85）；无有效像素的图按 0 完全匹配计、照常参与族均值</div>" +
+        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图/点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。点击区交集图是点击动作分类以点击坐标为中心的 1/8、1/32 方框 × 各交集档的交集图。分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15；每族先把族内各图不匹配点占比等权平均，再除以 W（有点击 E=100、无点击坐标分类无 E=85）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与族均值</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";

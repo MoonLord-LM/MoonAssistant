@@ -31,9 +31,12 @@ import java.util.stream.Stream;
  * <ul>
  * <li>A：每个原图与「自己分类的该算法生成图」比对的不匹配像素占比，取全部原图的平均值
  * （越低越好，表明样本比较集中）；</li>
- * <li>B：每个原图在全部同类生成图里做匹配、最佳值刚好是自己分类的比例，取全部原图的平均值
- * （越高越好，表明算法区分度较好）。</li>
+ * <li>B：每个原图与「所有分类的该算法生成图」匹配、匹配度最高的刚好是自己分类的比例，
+ * 取全部原图的平均值（越高越好，表明算法区分度较好）。</li>
  * </ul>
+ * 没有该 kind 产物的分类（如点击区图只对点击分类生成）＝无判别点：与「0 像素空图」同口径，判
+ * 完全不匹配、按不匹配占比满值 100 计入并照常参与——其样本自分类 A 恒满值、B 不会被命中，
+ * 不因缺产物而跳过这些分类及其原图。
  * 按算法逐 kind 独立计算、完成后按「当前样本/产物指纹」缓存结果并标记是否过期（样本或产物有
  * 改动后需重新验证）。独立后台任务线程跑，结果只存内存不落盘。
  */
@@ -369,26 +372,21 @@ public class VerifyService {
                                  Map<String, FrameClassifier.FrameWork> works) {
         long t0 = System.currentTimeMillis();
         String file = classifier.verifyFile(kind);
-        boolean clickKind = kind.startsWith("click");
 
-        // 该 kind 的参与目录：产物存在（点击类还需点击动作与坐标），并成功解码
+        // 参与目录 = 全部分类目录（不再按动作收窄：点击区图只存在于点击分类，其余分类没有该 kind 产物）。
+        // 没有本 kind 产物的分类＝无判别点，与「0 像素空图」同口径：判完全不匹配、按不匹配占比满值 100 计入、
+        // 照常参与 A/B（自分类无法匹配、也永远不会被别的样本命中）；解码失败同视为无产物。
         List<Cand> cands = new ArrayList<>();
+        int real = 0;
         for (Ctx c : groups) {
-            if (clickKind) {
-                if (!CaptureMark.ACTION_CLICK.equals(c.action()) || c.clickLeft() == null || c.clickTop() == null) {
-                    continue;
-                }
-            }
             Path f = Path.of(c.dir(), file);
-            if (!Files.isRegularFile(f)) {
-                continue;
-            }
-            FrameClassifier.CachedPx art = classifier.verifyArtifact(f, kind);
+            FrameClassifier.CachedPx art = Files.isRegularFile(f) ? classifier.verifyArtifact(f, kind) : null;
             if (art != null) {
-                cands.add(new Cand(c, art));
+                real++;
             }
+            cands.add(new Cand(c, art));
         }
-        if (cands.isEmpty()) {
+        if (real == 0) {
             return new KindStat(kind, fp, System.currentTimeMillis(), (int) (System.currentTimeMillis() - t0),
                     null, null, 0, 0, List.of());
         }
@@ -399,7 +397,7 @@ public class VerifyService {
             posOf.put(cands.get(j).ctx.idx(), j);
         }
 
-        // 该 kind 的样本群：归属目录参与了本 kind 且能定位到自分类产物
+        // 该 kind 的样本群：全部分类都有参与位（无产物者按空图满值参与），故归属在扫描目录里的原图全数计入
         List<Smp> pop = samples.stream().filter(s -> posOf.containsKey(s.own().idx())).toList();
         int n = pop.size();
         double[] selfScore = new double[n];
@@ -441,11 +439,17 @@ public class VerifyService {
             int ownPos = selfOf[i];
             for (int j = 0; j < cands.size(); j++) {
                 Cand cd = cands.get(j);
-                double s = classifier.verifyKindScore(work, cd.art, kind,
-                        cd.ctx.clickLeft() == null ? 0 : cd.ctx.clickLeft(),
-                        cd.ctx.clickTop() == null ? 0 : cd.ctx.clickTop());
-                if (s < 0) {
-                    continue;
+                double s;
+                if (cd.art == null) {
+                    // 该分类没有本 kind 产物（如非点击分类没有点击区图）＝无判别点：同 0 像素空图判完全不匹配满值
+                    s = 100.0;
+                } else {
+                    s = classifier.verifyKindScore(work, cd.art, kind,
+                            cd.ctx.clickLeft() == null ? 0 : cd.ctx.clickLeft(),
+                            cd.ctx.clickTop() == null ? 0 : cd.ctx.clickTop());
+                    if (s < 0) {
+                        continue;
+                    }
                 }
                 if (j == ownPos) {
                     self = s;
@@ -491,6 +495,7 @@ public class VerifyService {
             row.put("action", cd.ctx.action());
             row.put("clickLeft", cd.ctx.clickLeft());
             row.put("clickTop", cd.ctx.clickTop());
+            row.put("missing", cd.art == null);   // 该分类无本 kind 产物：A/B 按无法匹配满值口径，前端标注区分
             row.put("samples", c);
             row.put("a", selfSum[j] / c);
             row.put("b", hit[j] * 100.0 / c);

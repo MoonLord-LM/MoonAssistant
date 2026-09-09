@@ -342,6 +342,7 @@
   .vtable tbody tr:hover td{background:rgba(255,255,255,.03)}
   .vtable td.st{font-weight:600;color:var(--text);word-break:break-all}
   .vtable td.ac{color:var(--muted)}
+  .vtable td.ac .vmiss{display:block;font-size:11px;color:#8a93a6;margin-top:2px}
   .vtable td.nu{text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
   .vtable .vdnone{text-align:center;color:var(--muted);padding:22px 12px}
   /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */
