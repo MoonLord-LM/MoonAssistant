@@ -1,5 +1,6 @@
 package cn.moonlord.mca.capture;
 
+import cn.moonlord.mca.config.StoragePaths;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,8 +31,8 @@ import java.util.Set;
  * <p>缓存值 = 两张图不一致像素点占比（%，与 {@link ScreenCaptureService} 判定同口径的两位舍入值），
  * 所以<b>阈值改动不需要重算</b>：判定时拿当前阈值与缓存值重新比较即可，结果与没缓存时完全一致。</p>
  *
- * <p>文件格式（{@code dedup-cache.json}，UTF-8，与 capture/ classify/ summary/ 同级，可随时删除、
- * 删了只是下次重算一遍）：</p>
+ * <p>缓存文件存在 {@code classify/dedup-cache.json}（与已标注截图同目录，UTF-8，可随时删除、
+ * 删了只是下次重算一遍；旧版放在运行目录根下的同名文件首次访问时自动搬进 classify/）。格式：</p>
  *
  * <pre>
  * {
@@ -53,7 +54,7 @@ import java.util.Set;
 @Component
 public class DedupCache {
 
-    /** 缓存文件（相对程序运行目录，与 capture/ classify/ summary/ 同级） */
+    /** 缓存文件名（存在 classify/ 下，与已标注截图同目录，可随时删除） */
     private static final String CACHE_FILE = "dedup-cache.json";
 
     /** 文件格式版本：与代码里的常量不一致（或不是 JSON）则整份丢弃重算，下次落盘即改写为新格式 */
@@ -64,7 +65,12 @@ public class DedupCache {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private final Path file = Paths.get(CACHE_FILE).toAbsolutePath().normalize();
+    /** 缓存文件完整路径 = classify/dedup-cache.json（落盘前确保 classify/ 已存在） */
+    private final Path file;
+
+    public DedupCache(StoragePaths storage) {
+        this.file = storage.classify().resolve(CACHE_FILE);
+    }
 
     /** 互相比较过的文件组：外层键「文件名@mtime」较小的一侧 → 内层「另一侧 → 不一致像素点占比（%）」 */
     private final Map<String, Map<String, Double>> pairs = new LinkedHashMap<>();
@@ -165,6 +171,7 @@ public class DedupCache {
     private void save() {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         try {
+            Files.createDirectories(file.getParent());   // 还没标注过任何图时 classify/ 可能不存在
             try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
                 // 结构本身很简单（键是「文件名@mtime」、值是数字），手写 JSON 反而能完全控制排版：
                 // 每个文件组独占一行、便于直接查看与裁剪；键名统一走 jsonStr() 转义
@@ -208,12 +215,31 @@ public class DedupCache {
         }
     }
 
+    /** 旧版把缓存写在运行目录根下：新位置（classify/）还没有、根下却有时搬进去，省掉一次全量重算 */
+    private void migrateLegacyFile() {
+        if (Files.isRegularFile(file)) {
+            return;
+        }
+        Path legacy = Paths.get(CACHE_FILE).toAbsolutePath().normalize();
+        if (legacy.equals(file) || !Files.isRegularFile(legacy)) {
+            return;
+        }
+        try {
+            Files.createDirectories(file.getParent());
+            Files.move(legacy, file);
+            log.info("去重比对缓存已从 {} 移入 {}", legacy, file);
+        } catch (IOException e) {
+            log.warn("搬移旧去重比对缓存 {} 失败（本次按无缓存重算）: {}", legacy, e.toString());
+        }
+    }
+
     /** 懒加载缓存文件：格式不认识 / 版本不符 / 读取失败都按「无缓存」处理（只是下次要多算一遍，不影响判定结果） */
     private void ensureLoaded() {
         if (loaded) {
             return;
         }
         loaded = true;
+        migrateLegacyFile();
         if (!Files.isRegularFile(file)) {
             return;   // 首次运行：没有缓存文件是正常状态
         }
