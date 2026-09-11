@@ -109,8 +109,8 @@ public class FrameClassifier {
     private static final int[] DEFAULT_FAMILY_WEIGHTS = {50, 15, 10, 10, 15};
     private final int[] familyWeights = DEFAULT_FAMILY_WEIGHTS.clone();
 
-    /** 全幅对照图约 3.7MB/张：当前规模 82 组 3226 张产物约 5.5GB、classify 原图数百张，由 restart.cmd 的 -Xmx16g
-     *  提供充足堆空间让软引用缓存全部驻留；内存吃紧时缓存条目被 JVM 自动回收，不再需要手动上调 -Xmx。 */
+    /** 全幅对照图约 3.7MB/张：当前规模 82 组 3226 张产物约 5.5GB、classify 原图数百张，由 restart.cmd 的 -Xmx24g
+     *  提供充足堆空间让软引用缓存全部驻留；内存吃紧时缓存条目由 JVM 的 GC 自动回收，不需要任何手动清理。 */
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final StoragePaths storage;
@@ -941,14 +941,6 @@ public class FrameClassifier {
     /** kind → 产物文件名（与识别比对同源）。 */
     static String verifyFile(String kind) {
         return ArtifactKind.file(kind);
-    }
-
-    /** 硬清空产物/原图像素缓存（验证开始前调用）：软引用平时由 GC 择机回收，这里主动一次性腾空更彻底，
-     *  给验证计算让出堆（验证走下方不写缓存的按需解码，结束后执行模式首次识别会自动重新解码补齐）。
-     *  与 classify() 互斥防半清。 */
-    public synchronized void clearPxCaches() {
-        cache.clear();
-        rawPxCache.clear();
     }
 
     /** 读一张产物全幅像素但不读写缓存（解码失败返回 null）：验证每次运行都重新解码、比对完随 kind 释放，

@@ -1,6 +1,13 @@
 capture/
+!**/src/main/**/capture/
+!**/src/test/**/capture/
+
 classify/
+!**/src/main/**/classify/
+!**/src/test/**/classify/
+
 summary/
+!**/src/main/**/summary/
+!**/src/test/**/summary/
 
 *.exe
-*.log

@@ -220,7 +220,7 @@
       <div style="margin-top:6px">某分类匹配度 = Σ「(100 − 不匹配占比) × X × Y」÷ Σ「X × Y」（加权平均，只累加该分类有有效产物的特征），匹配度<b style="color:var(--text)">唯一最高</b>的分类即判定结果，与样本归属分类一致即命中。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">打平（并列）处理</b>：逐张样本先看每个特征——某特征的最高匹配值被 <b style="color:var(--text)">≥2 个分类并列</b>（分值一样、分不出该选哪一类）即视为该特征有问题，这张样本的加权平均里<b style="color:var(--text)">整张放弃该特征</b>；放弃后重新加权，若最高匹配度<b style="color:var(--text)">仍然并列</b>（或本张样本的可用特征被全部放弃、无从判定），则给出<b style="color:var(--text)">无法区分</b>的最终结论：既不算命中也不算判错，单独计入「无法区分率」（与特征验证的 E 同口径）。</div>
       <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 3 个：单一最佳匹配特征 / 所有正确率100%特征 / 所有正确率80%-99%特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
-      <div style="margin-top:6px;color:var(--amber)">验证期间请先停掉「特征验证」与执行模式自动识别（会清空像素缓存，识别每帧需重解码）。</div>
+      <div style="margin-top:6px;color:var(--amber)">验证期间建议先停掉「特征验证」与执行模式自动识别（两者都会长时间占用 CPU 与磁盘 IO）。</div>
     </div>
   </div>
 

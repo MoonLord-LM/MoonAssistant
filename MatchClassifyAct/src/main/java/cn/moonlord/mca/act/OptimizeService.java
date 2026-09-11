@@ -47,8 +47,8 @@ import java.util.stream.Stream;
  * <li>归属分类在本算法参与特征上没有「可判定的产物」（无有效产物、或产物存在但比对不了）的样本整张跳过、
  * 不进分母（与特征验证的「可匹配样本」同口径）。</li>
  * </ul>
- * 一次验证跑完全部算法，给出整体与分类级匹配正确率 + 无法区分率。与特征验证同理：会清空像素缓存并重算矩阵，
- * 结果只存内存不落盘。
+ * 一次验证跑完全部算法，给出整体与分类级匹配正确率 + 无法区分率。与特征验证同理：逐张按需解码重算矩阵、
+ * 用后即释放（常驻缓存回收交给 JVM 的 GC），结果只存内存不落盘。
  */
 @Slf4j
 @Service
@@ -543,8 +543,7 @@ public class OptimizeService {
     // ---------------------------------------------------------------- 验证
 
     private void doRun(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo) {
-        // 与特征验证同理：先把识别/汇总累积的常驻像素缓存清掉腾堆，矩阵内按需解码、用后即释放
-        classifier.clearPxCaches();
+        // 与特征验证同理：矩阵内按需解码、用后即释放，常驻缓存回收交给 JVM 的 GC，不做手动清理
         List<Ctx> groups;
         List<Smp> samples;
         try {

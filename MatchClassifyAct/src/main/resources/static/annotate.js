@@ -292,10 +292,19 @@ function taskTip(msg, kind, noLog, holdMs){
    后端在清理线程里逐张更新快照、meta 每 2 秒取一份；这里再挂 1 秒 ticker 复现，
    既避免两次轮询之间消息闪掉，也让「已耗时 N 秒」逐秒走动。进度文本变化频繁故 noLog
    （开始 / 结束各一条消息由 showShotTip 入库）。 */
+/* 启动去重判定量文案：「已比对 N 次 · 复用 M 次」——compared = 本次真的读像素逐点比过的次数，
+   reused = 按「文件名 + 最后修改时间」命中 dedup-cache.json 上次结果、没再比像素的次数；
+   两个都为 0（还没比到任何一对同尺寸图）时返回空串，由 progLine 省略该段 */
+function dedupCmpTxt(compared, reused){
+  const parts = [];
+  if(compared > 0) parts.push("已比对 " + compared + " 次");
+  if(reused > 0) parts.push("复用 " + reused + " 次");
+  return parts.join(" · ");
+}
 function dedupProgText(p){
   const t = Number(p.total) || 0, n = Number(p.done) || 0;
   const age = Math.max(0, Math.round((Date.now() - (Number(p.at) || Date.now())) / 1000));
-  const cmp = Number(p.compared) > 0 ? "已比对 " + Number(p.compared) + " 次" : "";
+  const cmp = dedupCmpTxt(Number(p.compared) || 0, Number(p.reused) || 0);
   if(!t && !n) return progLine("枚举历史截图", 0, 0, "", "", durTxt(age), cmp);   // 还没算出总数
   return progLine("检查重复图片", n, t, "张", p.current, durTxt(age), cmp);
 }
@@ -2596,7 +2605,7 @@ async function startAnalyzeIfNeeded(label){
 }
 
 /* 长任务进度文案统一模板（所有「正在进行中的后台任务」共用，与右下角那条
-   「正在检查重复图片：87/848 张（IMG_xxx.png）（已耗时 2 分 50 秒 · 已比对 3655 次）」同款）：
+   「正在检查重复图片：87/848 张（IMG_xxx.png）（已耗时 2 分 50 秒 · 已比对 42 次 · 复用 3613 次）」同款）：
    「正在<动作>：<已完成>/<总数> <单位>（<当前对象>）（已耗时 N 秒[ · <附加计数>]）」
    计数为 0 时省略计数段、cur 为空时省略对象括号、已耗时与附加计数都为空时省略末段括号 */
 function progLine(act, done, total, unit, cur, ageTxt, extra){
@@ -2628,7 +2637,7 @@ async function pollAnalyze(id, label){
     if(t.status === "running"){
       // 后台为单线程串行计算池（手动批量分析 / 自动重算共用，执行序 = 提交序）：
       // 任务刚提交可能还在排队（queuePos>0，得等前面的任务跑完），也可能已进场做准备工作。
-      // 进度文案统一走 progLine()（与右下角「正在检查重复图片：87/848 张（文件名）（已耗时 2 分 50 秒 · 已比对 3655 次）」
+      // 进度文案统一走 progLine()（与右下角「正在检查重复图片：87/848 张（文件名）（已耗时 2 分 50 秒 · 已比对 42 次 · 复用 3613 次）」
       // 同一模板）：「正在<做什么>：<第几项>/<共几项> <单位>（<当前对象>）（已耗时 N 秒）」，已耗时逐秒走动 →
       // 排队等待 / 长计算都能一眼看出仍在推进，而不是一句看不出在干什么、也不知道进度到哪的「正在准备…」。
       // 任务分 3 个阶段：0 = 准备（一键重建先逐张清场 summary/，再逐分类统计待分析组合，prepAct/prepDone/prepTotal/prepCur 计数）、
@@ -3788,7 +3797,7 @@ function optRender(){
       + (sec ? " · 已耗时 " + durTxt(sec) : "");
     if(stat) stat.textContent = "正在后台验证全部算法的分类准确率…（" + (t.stage || "准备中")
       + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "") + "）\n"
-      + "先停掉特征验证 / 执行模式自动识别，避免与清空像素缓存互相干扰。";
+      + "建议先停掉特征验证 / 执行模式自动识别，避免两者互相争抢 CPU 与磁盘 IO。";
   }else{
     taskBox.style.display = "none";
     fill.style.width = "0%";
@@ -4042,10 +4051,11 @@ async function checkAppVersion(){
         if(dpAt !== lastDedupProgAt){                 // 首次见到本次启动的清理：先提示一条「开始检查」
           lastDedupProgAt = dpAt;
           showShotTip("启动重复清理：开始检查 capture/ + classify/ 的历史截图重复"
-            + "（逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除）…", "");
+            + "（逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除；"
+            + "文件名 + 修改时间都没变过的组合直接复用上次的比对结果、不再重复比对）…", "");
         }
         dedupProg = { at:dpAt, done:Number(dp.done)||0, total:Number(dp.total)||0,
-                      current:dp.current || "", compared:Number(dp.compared)||0 };
+                      current:dp.current || "", compared:Number(dp.compared)||0, reused:Number(dp.reused)||0 };
         dedupProgTick();                              // 立即刷一次（不必等下一个 1 秒 tick）
       }else if(dedupProg){
         dedupProg = null;                             // 扫描结束：撤掉进度消息（结果由 startupDedupNotice 提示）
@@ -4060,16 +4070,18 @@ async function checkAppVersion(){
       const thresholdTxt = isFinite(thr) && thr > 0
         ? "按不一致像素占比 ≤ " + (Number.isInteger(thr) ? String(thr) : String(Math.round(thr * 100) / 100)) + "% "
         : "";
-      // 实际比对量：全尺寸逐像素比对次数 + 其中最低的不一致像素占比（= 最接近重复的一对还差多少）；
-      // 旧后端无该字段、或没有可比对的同尺寸图（minDiff < 0）时省略判据不写
-      const compared = Number(dedup.compared);
+      // 判定量：本次逐像素比对次数 + 复用 dedup-cache.json 上次结果的次数 + 其中最低的不一致像素占比
+      // （= 最接近重复的一对还差多少，含复用的值）；旧后端无这些字段、或没有可比对的同尺寸图时省略该段不写
+      const compared = Number(dedup.compared) || 0;
+      const reused = Number(dedup.reused) || 0;
       const minDiff = Number(dedup.minDiff);
+      const judgeTxt = dedupCmpTxt(compared, reused);
       let cmpTxt = "";
-      if(isFinite(compared) && compared > 0){
+      if(judgeTxt){
         const minTxt = (isFinite(minDiff) && minDiff >= 0)
           ? "，最低不一致 " + (Number.isInteger(minDiff) ? String(minDiff) : String(Math.round(minDiff * 100) / 100)) + "%"
           : "";
-        cmpTxt = "（比对 " + compared + " 次" + minTxt + "）";
+        cmpTxt = "（" + judgeTxt + minTxt + "）";
       }
       // 耗时（后端实际重扫毫秒数）；旧后端无该字段时静默不加
       const costTxt = fmtCostSuffix(Number(dedup.costMs) || 0);

@@ -223,10 +223,8 @@ public class VerifyService {
     }
 
     private void doRun(Run r, String fp, List<String> order) {
-        // 验证会逐 kind 解码全部参与分类的产物像素：先清空识别/汇总阶段累积的常驻像素缓存腾出堆空间
-        // （验证走不写缓存的按需解码、每 kind 用后即释放；执行模式后续首次识别会自动重新解码补齐），
-        // 否则 81 组 × 各 kind 全幅产物叠加会直接把堆撑爆
-        classifier.clearPxCaches();
+        // 验证逐 kind 解码全部参与分类的产物像素，走不写缓存的按需解码、每 kind 用后即释放；
+        // 常驻软引用缓存是否回收交给 JVM 的 GC 决定，这里不做任何手动清理
         List<Ctx> groups = new ArrayList<>();
         List<Smp> samples = new ArrayList<>();
         try {
