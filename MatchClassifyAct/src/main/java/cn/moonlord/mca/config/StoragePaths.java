@@ -42,6 +42,11 @@ public class StoragePaths {
         return resolve(properties.getSummaryDir());
     }
 
+    /** 算法调优权重持久化文件（进程工作目录下，重启后继续生效；删除 = 恢复默认五族权重） */
+    public Path weights() {
+        return resolve("optimize-weights.json");
+    }
+
     private Path resolve(String name) {
         return Paths.get(name).toAbsolutePath().normalize();
     }

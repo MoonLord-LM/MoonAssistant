@@ -1,5 +1,6 @@
 package cn.moonlord.mca.mark;
 
+import cn.moonlord.mca.act.ArtifactKind;
 import cn.moonlord.mca.capture.ScreenCaptureService;
 import cn.moonlord.mca.capture.WindowCaptureTask;
 import lombok.RequiredArgsConstructor;
@@ -38,11 +39,12 @@ import java.util.Map;
  *       {@code shotMaxSeq} = 当前已用的最大 seq：前端若发现本页基线已越过它，说明后端重启（seq 归零重计），下一轮自动重置基线重新全量。</li>
  *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
  *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）；</li>
- *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed, costMs}）：本次启动的历史重复清理结果
+ *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed, costMs, compared, minDiff}）：本次启动的历史重复清理结果
  *       （自动截图与手动去重任一开启时执行）——按两个启用阈值中较低者（默认 min(5, 0.5)=0.5）与保留图
  *       全尺寸逐像素比对，不一致像素点占比 ≤ 阈值即删（近似但不相同的画面一律保留）。不论是否删除了图片，
  *       前端都会据此在右下角提示一次清理完成
- *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片）。</li>
+ *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片），并附实际比对量
+ *       （compared = 全尺寸逐像素比对次数、minDiff = 其中最低的不一致像素点占比，-1 = 无可比对的对）。</li>
  * </ul></p>
  */
 @Slf4j
@@ -102,7 +104,8 @@ public class AppMetaController {
                 m.put("shotLog", arr);
             }
         }
-        // 启动历史重复清理结果：无论是否删除都提示一次，removed 供前端区分「删除重复 N 张 / 检查完成未发现重复」
+        // 启动历史重复清理结果：无论是否删除都提示一次，removed 供前端区分「删除重复 N 张 / 检查完成未发现重复」，
+        // compared / minDiff 供前端补一句「比对 N 次、最低不一致 X%」（minDiff < 0 = 没有可比对的对）
         ScreenCaptureService.StartupDedupNotice dedup = screenCaptureService.getStartupDedupNotice();
         if (dedup != null) {
             Map<String, Object> d = new LinkedHashMap<>();
@@ -111,8 +114,55 @@ public class AppMetaController {
             d.put("scanned", dedup.scanned());
             d.put("removed", dedup.removed());
             d.put("costMs", dedup.costMs());
+            d.put("compared", dedup.compared());
+            d.put("minDiff", dedup.minDiff());
             m.put("startupDedupNotice", d);
         }
+        return m;
+    }
+
+    /**
+     * 产物 kind 元数据：唯一来源 = {@link ArtifactKind}。前端据此动态生成对照图卡片与文案，
+     * 加 / 改 / 删一个产物 kind 只需改注册表，前端零改动。
+     *
+     * <p>{@code kinds} = 各分类共用的 42/54 个识别比对维度；{@code all} = 固定第一条「全部」
+     * 汇总组专用的 12 张产物（交集图六档 6 张 + 多数/均值/去重均值 3 族各「代表图 + 差异最大图」），
+     * 两者分开下发。</p>
+     */
+    @GetMapping("/api/app/kinds")
+    public Map<String, Object> kinds() {
+        List<Map<String, Object>> arr = new ArrayList<>();
+        for (ArtifactKind.Def d : ArtifactKind.all()) {
+            Map<String, Object> k = new LinkedHashMap<>();
+            k.put("kind", d.kind());
+            k.put("file", d.file());
+            k.put("label", ArtifactKind.label(d.kind()));   // 卡片标题（.tn）
+            k.put("family", d.family().name());
+            k.put("crop", d.crop().name());
+            k.put("block", d.block());                      // 1 = 全幅
+            k.put("div", d.cropDiv());                      // 方框图除数（1/8、1/32）；非方框图 1
+            k.put("tier", d.tier());                        // 交集档位；非交集/方框类为 null
+            k.put("unique", d.uniqueOf() != null);
+            arr.add(k);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kinds", arr);
+        m.put("primaryTier", ArtifactKind.PRIMARY_TIER);
+        // 固定第一条「全部」汇总组的 12 张专用产物（交集图六档 6 张 + 多数/均值/去重均值 3 族各 2 张）：
+        // 不属于 kinds()（不参与识别 / 验证 / 调优），前端单独一组卡片渲染
+        List<Map<String, Object>> allArr = new ArrayList<>();
+        for (String kind : ArtifactKind.allKinds()) {
+            ArtifactKind.Def d = ArtifactKind.of(ArtifactKind.allBase(kind));
+            Map<String, Object> k = new LinkedHashMap<>();
+            k.put("kind", kind);
+            k.put("file", ArtifactKind.allFile(kind));
+            k.put("label", ArtifactKind.allLabel(kind));      // 卡片标题（.tn）
+            k.put("base", ArtifactKind.allBase(kind));        // 所属族代表图 kind
+            k.put("family", d == null ? null : d.family().name());   // 族名：INTERSECT = 角标为覆盖率，其余为平均差异
+            k.put("diff", ArtifactKind.allMaxDiff(kind));     // true = 「与代表图差异最大的那张原图」
+            allArr.add(k);
+        }
+        m.put("all", allArr);
         return m;
     }
 

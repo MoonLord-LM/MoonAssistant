@@ -22,6 +22,7 @@
     <button data-f="marked">已标注</button>
     <button data-f="think">汇总分析</button>
     <button data-f="verify">特征验证</button>
+    <button data-f="opt">算法调优</button>
   </div>
   <div class="spacer"></div>
   <!-- 右上角三按钮（自动采集 / 历史日志 / 完全退出）：标注模式与执行模式共用，功能一致——btnCap 不加 mark-only，
@@ -37,6 +38,11 @@
     <div class="thinkfil" id="thinkFil" hidden title="按匹配动作过滤列表（汇总分析=分类，全部/已标注=截图）：点击切换，再点已选中的按钮恢复全部">
       <button type="button" data-a="none">无动作</button>
       <button type="button" data-a="click">鼠标点击</button>
+    </div>
+    <div class="thinkfil" id="vkFil" hidden title="按验证结果过滤算法列表（仅统计已算出结果、且生成成功的算法）：点击切换，再点已选中的按钮恢复全部">
+      <button type="button" data-v="gen100">生成成功率100%</button>
+      <button type="button" data-v="c100">匹配正确率100.00%</button>
+      <button type="button" data-v="c90">匹配正确率90.00+%</button>
     </div>
     <ul id="imgList"></ul>
   </aside>
@@ -61,184 +67,20 @@
         <img id="mainImg" alt="截图">
         <div id="vline"></div>
         <div id="hline"></div>
-        <div id="dot"></div>
+        <div id="avline"></div>
+        <div id="ahline"></div>
+        <div id="dot" title="鼠标点击点（红点）：识别命中后执行时真正点击的位置，也是点击区交集图的框心（仅鼠标点击分类有）"></div>
+        <div id="adot" title="关注点（绿点）：与鼠标点击点相互独立，注意区交集图与匹配裁剪以它为中心（未单独指定时按屏幕中心）"></div>
       </div>
+      <div id="optPane" style="display:none"></div>
       <div id="thinkPane" style="display:none">
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 100% 覆盖率（完全一致）</span><span class="tcs" id="tcsSame100">—</span></div>
-          <div class="tcimg"><img id="imgSame100" alt="交集图100%覆盖率" title="交集图 100% 档：样本在该像素完全一致（全部截图同色）才保留该真实色，最严格、只留下各截图间恒定的像素，参与识别比对与独有区互比；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 100% 覆盖率独有区</span><span class="tcs" id="tcsSame100U">—</span></div>
-          <div class="tcimg"><img id="imgSame100U" alt="交集图100%覆盖率独有区" title="在交集图 100% 覆盖率基础上剔除其它分类同档(100%)同位同色的像素，剩余为本分类独有区域（参与识别比对）；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 90% 覆盖率</span><span class="tcs" id="tcsSame">—</span></div>
-          <div class="tcimg"><img id="imgSame" alt="交集图90%覆盖率" title="交集图 90% 档：样本在该像素覆盖>90% 时取主流色的公共画面，参与识别比对与独有区互比；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 90% 覆盖率独有区</span><span class="tcs" id="tcsUnique">—</span></div>
-          <div class="tcimg"><img id="imgUnique" alt="交集图90%覆盖率独有区" title="在交集图 90% 覆盖率基础上剔除其它分类同档(90%)同位同色的像素，剩余为本分类独有区域（参与识别比对）；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 80% 覆盖率</span><span class="tcs" id="tcsSame80">—</span></div>
-          <div class="tcimg"><img id="imgSame80" alt="交集图80%覆盖率" title="交集图档：样本覆盖>80% 时取主流色，参与识别比对；与其它分类同档互比生成独有区图；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 80% 覆盖率独有区</span><span class="tcs" id="tcsSame80U">—</span></div>
-          <div class="tcimg"><img id="imgSame80U" alt="交集图80%覆盖率独有区" title="在交集图 80% 覆盖率基础上剔除其它分类同档(80%)同位同色的像素，剩余为本分类独有区域（参与识别比对）；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 70% 覆盖率</span><span class="tcs" id="tcsSame70">—</span></div>
-          <div class="tcimg"><img id="imgSame70" alt="交集图70%覆盖率" title="交集图档：样本覆盖>70% 时取主流色，参与识别比对；与其它分类同档互比生成独有区图；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 70% 覆盖率独有区</span><span class="tcs" id="tcsSame70U">—</span></div>
-          <div class="tcimg"><img id="imgSame70U" alt="交集图70%覆盖率独有区" title="在交集图 70% 覆盖率基础上剔除其它分类同档(70%)同位同色的像素，剩余为本分类独有区域（参与识别比对）；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 60% 覆盖率</span><span class="tcs" id="tcsSame60">—</span></div>
-          <div class="tcimg"><img id="imgSame60" alt="交集图60%覆盖率" title="交集图档：样本覆盖>60% 时取主流色，参与识别比对；与其它分类同档互比生成独有区图；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 60% 覆盖率独有区</span><span class="tcs" id="tcsSame60U">—</span></div>
-          <div class="tcimg"><img id="imgSame60U" alt="交集图60%覆盖率独有区" title="在交集图 60% 覆盖率基础上剔除其它分类同档(60%)同位同色的像素，剩余为本分类独有区域（参与识别比对）；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 50% 覆盖率</span><span class="tcs" id="tcsSame50">—</span></div>
-          <div class="tcimg"><img id="imgSame50" alt="交集图50%覆盖率" title="交集图档：样本覆盖>50% 时取主流色，参与识别比对；与其它分类同档互比生成独有区图；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">交集图 50% 覆盖率独有区</span><span class="tcs" id="tcsSame50U">—</span></div>
-          <div class="tcimg"><img id="imgSame50U" alt="交集图50%覆盖率独有区" title="在交集图 50% 覆盖率基础上剔除其它分类同档(50%)同位同色的像素，剩余为本分类独有区域（参与识别比对）；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">多数图（每个像素取覆盖率最多的值）</span><span class="tcs" id="tcsMax">—</span></div>
-          <div class="tcimg"><img id="imgMax" alt="多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">多数图独有区</span><span class="tcs" id="tcsMaxU">—</span></div>
-          <div class="tcimg"><img id="imgMaxU" alt="多数图独有区图" title="在多数图基础上删除其它分类多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 多数图（每个像素取8x8个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM8">—</span></div>
-          <div class="tcimg"><img id="imgM8" alt="1/8 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 多数图独有区</span><span class="tcs" id="tcsM8U">—</span></div>
-          <div class="tcimg"><img id="imgM8U" alt="1/8 多数图独有区图" title="在 1/8 多数图基础上删除其它分类 1/8 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/32 多数图（每个像素取32x32个原始像素的覆盖率最多的值）</span><span class="tcs" id="tcsM32">—</span></div>
-          <div class="tcimg"><img id="imgM32" alt="1/32 多数图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/32 多数图独有区</span><span class="tcs" id="tcsM32U">—</span></div>
-          <div class="tcimg"><img id="imgM32U" alt="1/32 多数图独有区图" title="在 1/32 多数图基础上删除其它分类 1/32 多数图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">均值图（每个像素取RGB的均值）</span><span class="tcs" id="tcsAvg">—</span></div>
-          <div class="tcimg"><img id="imgAvg" alt="均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">均值图独有区</span><span class="tcs" id="tcsAvgU">—</span></div>
-          <div class="tcimg"><img id="imgAvgU" alt="均值图独有区图" title="在均值图基础上删除其它分类均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 均值图（每个像素取8x8个原始像素的RGB的均值）</span><span class="tcs" id="tcsA8">—</span></div>
-          <div class="tcimg"><img id="imgA8" alt="1/8 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 均值图独有区</span><span class="tcs" id="tcsA8U">—</span></div>
-          <div class="tcimg"><img id="imgA8U" alt="1/8 均值图独有区图" title="在 1/8 均值图基础上删除其它分类 1/8 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/32 均值图（每个像素取32x32个原始像素的RGB的均值）</span><span class="tcs" id="tcsA32">—</span></div>
-          <div class="tcimg"><img id="imgA32" alt="1/32 均值图" title="单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/32 均值图独有区</span><span class="tcs" id="tcsA32U">—</span></div>
-          <div class="tcimg"><img id="imgA32U" alt="1/32 均值图独有区图" title="在 1/32 均值图基础上删除其它分类 1/32 均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">去重均值图（每个像素取去重后的RGB的均值）</span><span class="tcs" id="tcsDAvg">—</span></div>
-          <div class="tcimg"><img id="imgDAvg" alt="去重均值图" title="先对全部样本在该像素位置出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计，抽样不均不再把平均拉偏）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">去重均值图独有区</span><span class="tcs" id="tcsDAvgU">—</span></div>
-          <div class="tcimg"><img id="imgDAvgU" alt="去重均值图独有区图" title="在去重均值图基础上删除其它分类去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 去重均值图（每个像素取8x8个原始像素去重后的RGB的均值）</span><span class="tcs" id="tcsDA8">—</span></div>
-          <div class="tcimg"><img id="imgDA8" alt="1/8 去重均值图" title="先对全部样本在该 8×8 块内出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/8 去重均值图独有区</span><span class="tcs" id="tcsDA8U">—</span></div>
-          <div class="tcimg"><img id="imgDA8U" alt="1/8 去重均值图独有区图" title="在 1/8 去重均值图基础上删除其它分类 1/8 去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/32 去重均值图（每个像素取32x32个原始像素去重后的RGB的均值）</span><span class="tcs" id="tcsDA32">—</span></div>
-          <div class="tcimg"><img id="imgDA32" alt="1/32 去重均值图" title="先对全部样本在该 32×32 块内出现过的颜色去重，再对去重后的颜色逐通道取均值（每种颜色一票，重复截图再多也只按一个颜色计）；单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">1/32 去重均值图独有区</span><span class="tcs" id="tcsDA32U">—</span></div>
-          <div class="tcimg"><img id="imgDA32U" alt="1/32 去重均值图独有区图" title="在 1/32 去重均值图基础上删除其它分类 1/32 去重均值图同位同色的像素，剩余为本分类独有区域；单击打开弹窗"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/8 交集图 100% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC8S100">—</span></div>
-          <div class="tcimg"><img id="imgC8S100" alt="点击区1/8交集图100%覆盖率" title="以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），框内样本完全一致的 100% 档，最严格，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/8 交集图 90% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC8">—</span></div>
-          <div class="tcimg"><img id="imgC8" alt="点击区1/8交集图" title="以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），聚焦点击区区域（点击分类=点击点 / 无动作=画面关注区域）；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/8 交集图 80% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC8S80">—</span></div>
-          <div class="tcimg"><img id="imgC8S80" alt="点击区1/8交集图80%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），框内样本覆盖&gt;80% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/8 交集图 70% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC8S70">—</span></div>
-          <div class="tcimg"><img id="imgC8S70" alt="点击区1/8交集图70%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），框内样本覆盖&gt;70% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/8 交集图 60% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC8S60">—</span></div>
-          <div class="tcimg"><img id="imgC8S60" alt="点击区1/8交集图60%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），框内样本覆盖&gt;60% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/8 交集图 50% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC8S50">—</span></div>
-          <div class="tcimg"><img id="imgC8S50" alt="点击区1/8交集图50%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/8 的方框交集图（1280×720 → 160×90），框内样本覆盖&gt;50% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/32 交集图 100% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC32S100">—</span></div>
-          <div class="tcimg"><img id="imgC32S100" alt="点击区1/32交集图100%覆盖率" title="以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22），框内样本完全一致的 100% 档，最严格，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/32 交集图 90% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC32">—</span></div>
-          <div class="tcimg"><img id="imgC32" alt="点击区1/32交集图" title="以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22）；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/32 交集图 80% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC32S80">—</span></div>
-          <div class="tcimg"><img id="imgC32S80" alt="点击区1/32交集图80%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22），框内样本覆盖&gt;80% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/32 交集图 70% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC32S70">—</span></div>
-          <div class="tcimg"><img id="imgC32S70" alt="点击区1/32交集图70%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22），框内样本覆盖&gt;70% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/32 交集图 60% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC32S60">—</span></div>
-          <div class="tcimg"><img id="imgC32S60" alt="点击区1/32交集图60%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22），框内样本覆盖&gt;60% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
-        <div class="tcard">
-          <div class="tch"><span class="tn">点击区 1/32 交集图 50% 覆盖率（以关注点或点击点为中心的方框）</span><span class="tcs" id="tcsC32S50">—</span></div>
-          <div class="tcimg"><img id="imgC32S50" alt="点击区1/32交集图50%覆盖率" title="点击区交集图低档：以本分类统一关注点或点击点坐标为中心、整幅长宽各 1/32 的方框交集图（1280×720 → 40×22），框内样本覆盖&gt;50% 一致的颜色保留，参与识别比对；框中心固定不向画幅内收敛，越出画面的部分为透明；所有分类都按统一关注点或点击点坐标生成。单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭"></div>
-        </div>
       </div>
       <div id="thinkEmpty"><b id="teTitle"></b></div>
       <div id="verifyPane" style="display:none">
         <div id="verifyEmpty" class="vempty">
           <div class="vt">汇总图算法 · 自回归验证</div>
-          <div class="vs">左侧列表 = 每一种「汇总图算法」（全图交集六档（100% = 样本完全一致，另有 90/80/70/60/50%）、多数 / 均值 / 去重均值三族及 8×8·32×32 块图、各档独有区图、各分类的点击区交集图（以统一关注点或点击点坐标为中心），与识别参与比对的是同一套产物）。
-            验证方式：把每个分类的原图，按该算法生成的汇总图逐张与【全部分类】的同一算法汇总图逐点比对（口径与识别一致），统计两个评价指标——<b>A</b> = 每个原图与「自己分类的该算法生成图」比对的不匹配像素占比，取全部原图的平均值（越低越好，表明样本比较集中）；<b>B</b> = 每个原图与「所有分类的该算法生成图」匹配、匹配度最高的刚好是自己分类的比例，取全部原图的平均值（越高越好，表明算法区分度较好）。</div>
+          <div class="vs">左侧列表 = 每一种「汇总图算法」（全图交集六档（100% = 样本完全一致，另有 90/80/70/60/50%）、多数 / 均值 / 去重均值三族及 8×8·32×32 块图、各档独有区图、各分类的注意区交集图（以关注点为中心，未设 = 屏幕中心）与鼠标点击分类的点击区交集图（以点击点为中心），与识别参与比对的是同一套产物）。
+            验证方式：把每个分类的原图，按该算法生成的汇总图逐张与【全部分类】的同一算法汇总图逐点比对（口径与识别一致），统计三个评价指标——<b>A</b> = 每个原图与「自己分类的该算法生成图」比对的匹配像素占比（= 100 − 不匹配占比），取全部原图的平均值（越高越好，表明样本比较集中）；<b>B</b> = 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例（越高说明该算法适用的分类越多）；<b>C</b> = 匹配正确率：只在「能生成有效图的分类」的样本里，与全部分类的该算法生成图比对、匹配度最高的刚好是自己分类的占比（越高说明算法区分度较好）。</div>
           <div class="vhint">先从左侧选中一个算法查看它的评分与分类明细；或点右栏「开始验证」对全部算法顺序计算（样本较多时耗时较长，完成后结果自动缓存）。</div>
         </div>
         <div id="verifyDetail" style="display:none">
@@ -250,7 +92,7 @@
           <div class="vdSum" id="vdSum"></div>
           <div class="vtableWrap">
             <table class="vtable">
-              <thead><tr><th>分类标注</th><th>匹配动作</th><th>样本数</th><th>A · 自分类平均匹配值（越低越像）</th><th>B · 匹配正确分类的比例（越高区分度越好）</th><th>匹配正确分类的个数</th></tr></thead>
+              <thead><tr><th>分类标注</th><th>匹配动作</th><th>A · 自分类平均匹配值（越高越像）</th><th>B · 是否生成成功</th><th>C · 匹配正确率（越高区分度越好）</th><th>匹配正确分类的个数</th></tr></thead>
               <tbody id="vdRows"></tbody>
             </table>
           </div>
@@ -279,23 +121,31 @@
         </div>
       </div>
 
-      <div class="field">
-        <div class="actLine">
-          <label>匹配动作</label>
+      <div class="field" id="coordBox" style="display:none">
+        <div class="optRow">
+          <span class="rowLab">动作</span>
           <div class="actions">
-            <label class="act" data-a="none">
+            <label class="act" data-a="none" title="只匹配、不点击：该分类识别命中后不执行鼠标点击（没有点击点，只有关注点）">
               <input type="radio" name="action" value="none" checked><span class="at">无动作</span>
             </label>
-            <label class="act" data-a="click">
-              <input type="radio" name="action" value="click"><span class="at">鼠标点击</span>
+            <label class="act" data-a="click" title="识别命中后鼠标点击红点位置（点击区交集图框心）；选中本项后在图上点击即可设定该位置，未点选 = 默认屏幕中心">
+              <input type="radio" name="action" value="click"><span class="at">鼠标点击</span><b class="ptval" id="clickPtText">—</b>
+            </label>
+          </div>
+        </div>
+        <div class="optRow">
+          <span class="rowLab">注意</span>
+          <div class="actions">
+            <label class="act" data-n="off" title="不单独指定关注点：注意区交集图 / 匹配裁剪以屏幕中心为中心（未设与设为中心结果一致）">
+              <input type="radio" name="attnUse" id="attnUseOff" value="off" checked><span class="at">无需额外注意</span>
+            </label>
+            <label class="act" data-n="on" title="单独指定关注点（绿点）：注意区交集图 / 匹配裁剪以它为中心；选中本项后在图上点击即可设定，未点选 = 屏幕中心">
+              <input type="radio" name="attnUse" id="attnUseOn" value="on"><span class="at">关注点</span><b class="ptval" id="attnPtText">—</b>
             </label>
           </div>
         </div>
         <div class="hint" id="actHint" role="status"></div>
-      </div>
-
-      <div class="coord" id="coordBox">
-        <span><b id="coordLab">关注点</b> <b id="coordText">—</b>，再点图片可改</span>
+        <div class="hint">图上红点 = 鼠标点击点、绿点 = 关注点（未单独指定时按屏幕中心）；两点各带一套十字线并始终显示，当前编辑目标（外环高亮）的十字线加粗；点「鼠标点击」后点图改红点、点「关注点」后点图改绿点</div>
       </div>
     </div>
 
@@ -318,7 +168,7 @@
     <div class="edHead">
       <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
       <button type="button" class="btn green" id="btnRebuild" style="margin-left:auto;font-size:12px"
-        title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类适用的对照图（15 张基础合成图含交集 100/90/80/70/60/50 六档（100% = 样本完全一致）与多数/均值/去重均值/8·32 块图 + 15 张独有区图 + 12 张点击区交集图，共 42 张，全部参与识别比对；点击区图以各分类统一关注点或点击点坐标为中心（无动作分类=画面关注区域默认屏幕中心 / 点击分类=点击点）；历史遗留的旧文件一并清除）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
+        title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类适用的对照图（15 张基础合成图含交集 100/90/80/70/60/50 六档（100% = 样本完全一致）与多数/均值/去重均值/8·32 块图 + 15 张独有区图 + 12 张注意区交集图，共 42 张，全部参与识别比对；注意区图以各分类关注点为中心（未设 = 屏幕中心，每个分类都生成）；鼠标点击分类另加 12 张以点击点为中心的点击区交集图，共 54 张）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
     </div>
     <div class="tkstat" id="tkInfo" style="margin-top:10px;font-size:12px;line-height:1.8">左侧选择分类标注查看对照图。</div>
     <div id="thinkTask" style="display:none;margin-top:10px">
@@ -341,9 +191,39 @@
     </div>
     <div id="vkVerdict" style="margin-top:12px"></div>
     <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
-      <div><b style="color:var(--text)">A</b> 自分类平均匹配值：每个原图与「自己分类的该算法生成图」比对的不匹配像素占比，取全部原图的平均值（越低越好，表明样本比较集中）。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">B</b> 匹配正确分类的比例：每个原图与「所有分类的该算法生成图」匹配，匹配度最高的刚好是自己分类的比例，取全部原图的平均值（越高越好，表明算法区分度较好）。</div>
-      <div style="margin-top:6px">每种 kind 都对全部原图与全部分类比对；某分类没有该 kind 产物（如历史旧产物缺点击区图）＝无判别点，与 0 像素空图同口径：判无法匹配、不匹配占比按满值 100 计入、照常参与。</div>
+      <div><b style="color:var(--text)">A</b> 自分类平均匹配值：每个原图与「自己分类的该算法生成图」比对的匹配像素占比（= 100 − 不匹配占比），取全部原图的平均值（越高越好，表明样本比较集中）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">B</b> 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例（越高说明该算法适用的分类越多）；明细表里逐分类显示为「是否生成成功」＝ <b style="color:var(--text)">是</b> / <b style="color:var(--text)">否</b>（否时附原因：未生成对应产物、或生成结果为全透明图）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">C</b> 匹配正确率：只在「能生成有效图的分类」的样本里，与全部分类的该算法生成图比对、匹配度最高的刚好是自己分类的占比（越高越好，表明算法区分度较好）。</div>
+      <div style="margin-top:6px">每种 kind 都对全部原图与全部分类比对，不按动作收窄；某分类没有该 kind 产物（如历史旧产物缺点击区图）＝无判别点，与 0 像素空图同口径：判无法匹配、A 按匹配占比 0 计入、照常参与 A；但它不进 C 的分母，明细行的 A/C 显示「——」而不是 0%。</div>
+    </div>
+  </div>
+
+  <div id="edOpt" style="display:none">
+    <div class="edHead">
+      <h3 style="margin:0;font-size:14px">算法调优</h3>
+      <button type="button" class="btn green" id="optStartBtn" style="margin-left:auto;font-size:12px"
+        title="启动一次五族权重自动寻优：后端先把 classify/ 全部已标注原图与所有分类产物逐 kind 比对建差异矩阵，再在 0~120 内从默认/均分/随机起点爬山找「命中自家分类样本占比」最高的权重；运行中不可再次启动">开始调优</button>
+    </div>
+    <div id="optStat" style="margin-top:10px;font-size:12px;line-height:1.8;white-space:pre-line;color:var(--text)">正在读取状态…</div>
+    <div class="optPm" style="margin-top:10px">
+      <label style="color:var(--muted);font-size:12px">步长</label>
+      <input id="optStep" type="number" min="1" max="100" step="1" value="10"
+        title="权重搜索步长（0~120 按此步进枚举，默认 10；越小越细但越慢）">
+      <label style="color:var(--muted);font-size:12px">随机起点</label>
+      <input id="optSeeds" type="number" min="4" max="128" step="1" value="24"
+        title="随机起始权重组数（默认 24；越多越不容易陷局部最优，但越慢）">
+    </div>
+    <div id="optTask" style="display:none;margin-top:10px">
+      <div style="font-size:12px;line-height:1.7" id="optTaskStat"></div>
+      <div class="vtBar"><div class="vtFill" id="optFill" style="width:0%"></div></div>
+      <div id="optTaskTxt" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
+    </div>
+    <div id="optVerdict" style="margin-top:12px"></div>
+    <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
+      <div>调优目标 = 已标注样本五族加权命中自家分类占比（并列取安全边际更大者）。五族权重只作用于<b style="color:var(--text)">识别差异度</b>：
+        差异度 = (A·w0 + B·w1 + C·w2 + D·w3 + E·w4) ÷ 参与族权重和；权重 0 = 整族不参与，数值越大该族影响越强。</div>
+      <div style="margin-top:6px">主图区可拖动权重族滑块后点「应用权重」即时看识别效果；「应用最优」把最近一次寻优的最优权重写入运行时并持久化（重启仍生效），「恢复默认」还原 50/15/10/10/15 并删除持久化文件。</div>
+      <div style="margin-top:6px;color:var(--amber)">调优与特征验证 / 执行模式自动识别不要并行（调优会清空像素缓存，识别期间每帧需重解码）。</div>
     </div>
   </div>
 
@@ -382,7 +262,7 @@
         <img id="execImg" alt="最新画面（点击可放大）">
         <div id="execVline"></div>
         <div id="execHline"></div>
-        <div id="execDot" title="识别出的点击点"></div>
+        <div id="execDot" title="识别出的鼠标点击点"></div>
       </div>
     </div>
   </div>
@@ -396,7 +276,7 @@
       <div class="kvrow"><span class="k">耗时</span><span class="v" id="execCost">—</span></div>
       <div class="kvrow"><span class="k">匹配动作</span><span class="v" id="execAction">—</span></div>
       <div class="kvrow"><span class="k">点击坐标</span><span class="v" id="execPos">—</span></div>
-      <div class="kvrow" title="最近似分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 点击区交集 12 张权 15（各分类都按关注点或点击点坐标生成）；每族先对族内各图「不匹配点占比」等权平均，再除以 W（参与分类产物齐全、恒为 100）；0~100 越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
+      <div class="kvrow" title="最近似分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 方框交集区（注意区 12 + 点击区 12）24 张权 15（注意区以关注点为中心每个分类都有，点击区以点击点为中心仅鼠标点击分类有）；每族先对族内各图「不匹配点占比」等权平均，再除以 W（参与分类产物齐全、恒为 100）；0~100 越低越接近样本；仅作参考展示，不设达标阈值"><span class="k">差异分值</span><span class="v" id="execDiff">—</span></div>
       <div class="kvrow"><span class="k">比对分组</span><span class="v" id="execSamples">—</span></div>
       <div class="kvrow"><span class="k">目标窗口</span><span class="v" id="execWin">—</span></div>
     </div>
@@ -450,3 +330,4 @@
 <script src="annotate.js"></script>
 </body>
 </html>
+

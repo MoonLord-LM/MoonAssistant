@@ -30,20 +30,25 @@ import java.util.Map;
  * same70-unique / same60-unique / same50-unique / max-unique / avg-unique / dedup-avg-unique /
  * major8-unique·avg8-unique·dedup-avg8-unique·major32-unique·avg32-unique·dedup-avg32-unique），共 15 张，
  * 全部参与识别比对。
- * 全部分类都以统一关注点坐标（click=点击点 / 无动作=画面关注区域，默认屏幕中心）为中心，
- * 另生成 12 张点击区交集图（1/8、1/32 方框交集小图 × 交集六档
- * click8/32-same100/90/80/70/60/50，全部参与识别比对；无 -unique 版、不参与独有区互比）。
+ * 每个分类以注意点（未设 = 屏幕中心）为中心另生成 12 张注意区交集图（1/8、1/32 方框交集小图 × 交集六档
+ * attn8/32-same100/90/80/70/60/50，每个分类都有），鼠标点击分类再以鼠标点击点为中心生成 12 张点击区交集图
+ * （click8/32-same100/90/80/70/60/50），全部参与识别比对；两套均无 -unique 版、不参与独有区互比。
  * 独有区图在基础图上剔除「其它分类同 kind 基础图同像素同色」的区域，
  * 是跨分类产物、等全部分组的基础图生成完后才统一计算，与该分类适用的全部对照图一起构成
- * 固定比对维度参与执行模式 / 智能分析的匹配：每个分类 15 基础 + 15 -unique + 12 张点击区交集图 = 42 张
- * （见 {@link FrameClassifier}；历史无坐标旧目录缺图 → 待后台重算补齐后自动恢复）。
+ * 固定比对维度参与执行模式 / 智能分析的匹配：每个分类 15 基础 + 15 -unique + 12 张注意区交集图 = 42 张，
+ * 鼠标点击分类另加 12 张点击区交集图 = 54 张
+ * （见 {@link FrameClassifier}；历史旧目录缺图 → 待后台重算补齐后自动恢复）。
+ *
+ * <p>列表首位另有一个不属于任何分类标注的固定「全部」组（{@code all=true}）：取 classify/ 全部已标注截图
+ * 合成 12 张专用产物 = 交集图六档 6 张（100% 档公共部分 + 90/80/70/60/50 档样本间稳定区）+ 多数 / 均值 /
+ * 去重均值 3 张代表图 + 这 3 族「与代表图差异最大的一张原图」，仅供整体目检，不做分组、不参与识别比对。</p>
  *
  * <pre>
- *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir / 点击区交集图齐全标记 hasClick / 低档齐全 hasClickLow）
- *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下各基础图与点击区图，随后补 -unique 独有区图）
+ *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir / 注意区交集图齐全标记 hasAttn / 低档齐全 hasAttnLow / 点击区齐全 hasClick 与低档 hasClickLow；首位恒为固定「全部」组，带 all=true、dir=_all_、items=12 张专用产物）
+ *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下各基础图与注意区/点击区图，随后补 -unique 独有区图）
  *   POST /api/annotate/think/rebuild                        一键重建：清空 summary/ 全部产物后全量重算 → {taskId}
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
- *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 图之一：same100|same100-unique|same90|same90-unique|same80|same80-unique|same70|same70-unique|same60|same60-unique|same50|same50-unique|max|max-unique|avg|avg-unique|dedup-avg|dedup-avg-unique|major8|major8-unique|avg8|avg8-unique|dedup-avg8|dedup-avg8-unique|major32|major32-unique|avg32|avg32-unique|dedup-avg32|dedup-avg32-unique|click8-same100|click8-same90|click8-same80|click8-same70|click8-same60|click8-same50|click32-same100|click32-same90|click32-same80|click32-same70|click32-same60|click32-same50；
+ *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 图之一：same100|same100-unique|same90|same90-unique|same80|same80-unique|same70|same70-unique|same60|same60-unique|same50|same50-unique|max|max-unique|avg|avg-unique|dedup-avg|dedup-avg-unique|major8|major8-unique|avg8|avg8-unique|dedup-avg8|dedup-avg8-unique|major32|major32-unique|avg32|avg32-unique|dedup-avg32|dedup-avg32-unique|attn8-same100|attn8-same90|attn8-same80|attn8-same70|attn8-same60|attn8-same50|attn32-same100|attn32-same90|attn32-same80|attn32-same70|attn32-same60|attn32-same50|click8-same100|click8-same90|click8-same80|click8-same70|click8-same60|click8-same50|click32-same100|click32-same90|click32-same80|click32-same70|click32-same60|click32-same50；「全部」组 dir=_all_ 另接受 same100|same90|same80|same70|same60|same50|max|avg|dedup-avg 及 max/avg/dedup-avg 的 -maxdiff；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
  * </pre>
  */
@@ -112,7 +117,7 @@ public class ThinkController {
         return ResponseEntity.ok(t);
     }
 
-    /** 读取分析产物 PNG（kind = 类头 19 种图之一；dir = 分类标注产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异） */
+    /** 读取分析产物 PNG（kind = 全部对照图 kind 之一；dir = 产物目录名做 UTF-8 → Base64 后传入，避免容器字符集差异，固定「全部」组传 {@code _all_}） */
     @GetMapping("/img/{kind}")
     public ResponseEntity<?> image(@PathVariable String kind, @RequestParam String dir) {
         String folder = decodeDir(dir);

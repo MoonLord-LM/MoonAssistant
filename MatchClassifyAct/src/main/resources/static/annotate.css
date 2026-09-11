@@ -1,5 +1,6 @@
   :root{
     --bg:#0d1017; --panel:#151a24; --panel2:#1a2030; --border:#262e40;
+    --border-strong:#414f76;   /* 左右中三栏（面板外框 / 拖拽条）用：比 --border 明显亮，栏与栏的分界一眼可见 */
     --text:#d9dee8; --muted:#8b94a7; --accent:#4f8cff; --accent-soft:rgba(79,140,255,.15);
     --green:#2fbf71; --green-soft:rgba(47,191,113,.14);
     --amber:#f0a83c; --danger:#ff5c6c;
@@ -29,7 +30,7 @@
   /* 执行模式：实时画面识别 + 动作执行（画面顶栏放「立即识别 / 执行动作」，右侧识别信息） */
   #execPane{display:flex;flex-direction:column;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0;box-sizing:border-box}
   .exec-main{flex:1;min-height:0;display:flex;gap:0}
-  .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden}
   .exec-stage .stagebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-height:42px}
   .exec-stage .fname{font-size:14px;font-weight:600;white-space:nowrap}
   .exec-stage .dims{font-size:12px;color:var(--muted);border:1px solid var(--border);background:var(--panel2);border-radius:20px;padding:1px 10px;white-space:nowrap;font-variant-numeric:tabular-nums;margin-left:auto}
@@ -48,11 +49,11 @@
   #execHline{left:0;right:0;height:1px}
   /* 右栏宽度分隔条：可拖拽调节（拖中间竖条；双击复位；宽度存 localStorage） */
   .exec-split{flex:none;width:9px;align-self:stretch;cursor:col-resize;display:flex;align-items:center;justify-content:center;position:relative}
-  .exec-split::before{content:"";width:3px;height:38px;border-radius:3px;background:var(--border);transition:background .15s,height .15s}
+  .exec-split::before{content:"";width:3px;height:38px;border-radius:3px;background:var(--border-strong);transition:background .15s,height .15s}
   .exec-split:hover::before,.exec-split.dragging::before{background:rgba(47,191,113,.75);height:64px}
   body.split-dragging{cursor:col-resize;user-select:none}
   .exec-side{width:380px;flex:none;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;overflow-y:auto;
-    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;min-height:0}
+    background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);padding:12px;min-height:0}
   .exec-side .edsec{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:11px 12px}
   .exec-side .edhead{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;margin-bottom:8px;text-transform:uppercase}
   .exec-side .mopt{display:flex;align-items:flex-start;gap:8px;padding:6px 0;font-size:12.5px;line-height:1.55;color:var(--text);cursor:pointer}
@@ -138,13 +139,14 @@
   .btn.cap:not(.on){border-color:rgba(240,168,60,.5);color:var(--amber);background:rgba(240,168,60,.08)}
   .btn.cap:not(.on):hover{background:rgba(240,168,60,.2)}
   .layout{display:flex;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0}
-  .sidebar{width:318px;flex:none;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .sidebar{width:318px;flex:none;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden}
   .listhead{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
   .thinkfil{display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border)}
   .thinkfil[hidden]{display:none}
   .thinkfil button{font-size:11.5px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);cursor:pointer;white-space:nowrap}
   .thinkfil button:hover{border-color:#3a4560;color:var(--text)}
   .thinkfil button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  #vkFil{flex-wrap:wrap}   /* 特征验证过滤条 3 个条件较长，窄侧栏内自动折行 */
   #imgList{flex:1;overflow:auto;margin:0;padding:6px;list-style:none}
   .row{padding:8px 10px;border-radius:8px;border:1px solid transparent;cursor:pointer;margin-bottom:3px}
   .row:hover{background:var(--panel2)}
@@ -156,7 +158,7 @@
   .chip.u{color:var(--amber);background:rgba(240,168,60,.12)}
   .row .r2{color:var(--muted);font-size:12px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .empty{padding:24px 12px;text-align:center;color:var(--muted);font-size:13px}
-  .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative}   /* 底部 dock 浮层以本容器为锚点，不随内部滚动区（.imgarea）一起滚动 */
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden;position:relative}   /* 底部 dock 浮层以本容器为锚点，不随内部滚动区（.imgarea）一起滚动 */
   .stagebar{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)}
   .stagebar .fname{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
   .stagebar .sub{color:var(--muted);font-size:12px}
@@ -179,19 +181,31 @@
   .zoomCtl button:disabled{opacity:.35;cursor:default}
   .zoomCtl .zpct{min-width:44px;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted);padding:2px 2px}
   #dot{position:absolute;width:16px;height:16px;border-radius:50%;background:rgba(255,51,85,.28);border:2px solid #ff3355;box-shadow:0 0 0 2px rgba(255,255,255,.85);transform:translate(-50%,-50%);pointer-events:none;display:none}
+  /* 两个点各带一套十字辅助线、始终同时展示：红点的线（#vline / #hline）恒红、绿点的线（#avline / #ahline）恒绿；
+     当前编辑目标（body[data-pt]）那一套加粗 → 一眼看出正在改哪个点 */
   #vline,#hline{position:absolute;background:rgba(255,51,85,.55);pointer-events:none;display:none}
-  #vline{top:0;bottom:0;width:1px}
-  #hline{left:0;right:0;height:1px}
+  #avline,#ahline{position:absolute;background:rgba(47,191,113,.55);pointer-events:none;display:none}
+  #vline,#avline{top:0;bottom:0;width:1px}
+  #hline,#ahline{left:0;right:0;height:1px}
+  body[data-pt="click"] #vline{width:2px;background:rgba(255,51,85,.85)}
+  body[data-pt="click"] #hline{height:2px;background:rgba(255,51,85,.85)}
+  body[data-pt="attn"] #avline{width:2px;background:rgba(47,191,113,.85)}
+  body[data-pt="attn"] #ahline{height:2px;background:rgba(47,191,113,.85)}
+  /* 点击点（红点 #dot）与关注点（绿点 #adot）同时标在图上：红 = 鼠标点击点（仅鼠标点击分类有）、
+     绿 = 关注点（任意分类，未设 = 默认屏幕中心）；两者颜色恒定，当前编辑目标靠外环高亮（.on）区分 */
+  #adot{position:absolute;width:12px;height:12px;border-radius:50%;background:rgba(47,191,113,.25);
+    border:2px solid #2fbf71;box-shadow:0 0 0 1px rgba(255,255,255,.7);transform:translate(-50%,-50%);
+    pointer-events:none;display:none;z-index:3}
   .imgplaceholder{color:var(--muted);font-size:13px;margin:auto}
   /* 「未标注」列表为空（全部已标注 / 尚无图）时的中区提示：文字与「手动采集」按钮纵向居中成一组 */
   .imgarea.emptycol{flex-direction:column;align-items:center;justify-content:center;text-align:center}
   .imgarea.emptycol .imgplaceholder{margin:0}
   #capManualBtn{margin-top:18px;padding:8px 20px;font-size:13px;font-weight:600}
-  .editor{width:400px;flex:none;display:flex;flex-direction:column;justify-content:center;justify-content:safe center;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;overflow:auto}
+  .editor{width:400px;flex:none;display:flex;flex-direction:column;justify-content:center;justify-content:safe center;background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);padding:14px 16px;overflow:auto}
   /* 标注编辑区分隔条：拖中间竖条可调编辑区宽度（双击复位为默认宽），宽度持久化 localStorage。
      负 margin 抵消 flex gap，使图片区→编辑区总间隙仍约 12px，条夹在两面板之间不额外占宽 */
   .mark-split{flex:none;width:9px;align-self:stretch;margin:0 -10.5px;cursor:col-resize;display:flex;align-items:center;justify-content:center;position:relative;z-index:6}
-  .mark-split::before{content:"";width:3px;height:76px;border-radius:3px;background:var(--border);transition:background .15s,height .15s}
+  .mark-split::before{content:"";width:3px;height:76px;border-radius:3px;background:var(--border-strong);transition:background .15s,height .15s}
   .mark-split:hover::before,.mark-split.dragging::before{background:var(--accent);height:120px}
   .editor h3{margin:0 0 4px;font-size:14px}
   .editor .esub{color:var(--muted);font-size:12px;margin-bottom:14px}
@@ -204,8 +218,8 @@
   .tags:empty{display:none}
   /* 分类标注：已产生的标签在上，「分类标注」文字与输入框同一行（字体加大加粗） */
   .labRow{display:flex;align-items:center;gap:8px;white-space:nowrap}
-  .labRow label{margin:0;font-size:13px;font-weight:600;color:var(--text)}
-  .labRow input{flex:1;min-width:0}
+  .labRow label{margin:0;font-size:13.5px;font-weight:600;color:var(--text)}
+  .labRow input{flex:1;min-width:0;font-size:13.5px}
   .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 5px 3px 11px;border:1.5px solid rgba(79,140,255,.55);border-radius:16px;color:var(--text);background:rgba(79,140,255,.1);cursor:pointer;transition:border-color .12s,background .12s}
   .tag:hover{border-color:var(--accent);background:rgba(79,140,255,.2)}
   .tag .txt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -226,24 +240,62 @@
   .tag.fil .cnt{background:var(--accent)}
   input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:8px;outline:none}
   input[type=text]:focus{border-color:var(--accent)}
-  /* 匹配动作：「匹配动作」标签与「无动作 / 鼠标点击」选项同一行（字体加大加粗、紧凑横向） */
-  .actLine{display:flex;align-items:center;gap:10px}
-  .actLine>label{margin:0;font-size:13px;font-weight:600;color:var(--text);white-space:nowrap}
+  /* 编辑区两行单选：标签列固定宽度、左对齐在最左（动作 / 注意），选项 chip 紧随其后 —— 两行左边缘严格对齐 */
+  .optRow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+  .optRow + .optRow{margin-top:8px}
+  .rowLab{flex:none;width:34px;font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap}
   .actions{display:flex;flex:1;min-width:0;flex-wrap:wrap;gap:6px}
-  .act{display:flex;align-items:center;gap:6px;flex:none;padding:4px 10px;border:1px solid var(--border);border-radius:14px;cursor:pointer;transition:border-color .12s,background .12s}
+  .act{display:flex;align-items:center;gap:6px;flex:none;padding:4px 11px;border:1px solid #39445e;border-radius:14px;cursor:pointer;transition:border-color .12s,background .12s}
   .act:hover{border-color:#3a4560}
   .act.on{border-color:var(--accent);background:var(--accent-soft)}
   .act input{accent-color:var(--accent);margin:0}
-  .act .at{font-size:13.5px;white-space:nowrap}
+  .act .at{font-size:14px;white-space:nowrap}
   .act .ad{color:var(--muted);font-size:11px;margin-left:auto;text-align:right}
-  .coord{display:none;margin-top:10px;padding:8px 10px;border:1px dashed rgba(79,140,255,.5);border-radius:8px;background:rgba(79,140,255,.06);font-size:12px}
-  .coord b{color:#ff8fa0}
-  /* 无动作分类的关注点 = 绿点（点击分类仍是红点），同样在图上点按可改 */
-  body[data-mode="none"] #dot{background:rgba(47,191,113,.28);border-color:#2fbf71}
-  body[data-mode="none"] #vline,body[data-mode="none"] #hline{background:rgba(47,191,113,.55)}
-  body[data-mode="none"] .coord{border-color:rgba(47,191,113,.55);background:rgba(47,191,113,.07)}
-  body[data-mode="none"] .coord b{color:#9be0b4}
+  /* 无动作分类没有点击点（红点不绘出），只有注意点绿点；光标同样可点图取点 */
   body[data-mode="none"] #mainImg,body[data-mode="none"] #imgwrap.zoomed #mainImg{cursor:crosshair}
+  /* 当前编辑目标（data-pt）的外环高亮（十字线加粗规则见 #vline / #avline 处），点颜色本身恒定 */
+  #dot.on{box-shadow:0 0 0 2px rgba(255,255,255,.9),0 0 0 6px rgba(255,51,85,.45)}
+  #adot.on{box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 0 6px rgba(47,191,113,.45)}
+  #imgarea{position:relative}
+  #optPane{position:absolute;inset:0;overflow:auto;height:100%;box-sizing:border-box;padding:12px}
+  /* 算法调优主图区：五族权重编辑 / 最近结果对比 / 产物生效范围表 */
+  #optPane .optWrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+  .optTop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .optTop .ot{font-size:18px;font-weight:700;letter-spacing:.3px}
+  .optTop .otSub{color:var(--muted);font-size:12.5px}
+  .optcard{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:12px 14px}
+  .optcard h4{margin:0 0 6px;font-size:13px}
+  .optcard .ocap{font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.6}
+  .optWRow{display:flex;align-items:center;gap:12px;padding:8px 2px;border-bottom:1px dashed rgba(38,46,64,.55)}
+  .optWRow:last-child{border-bottom:0}
+  .optWRow .wl{flex:none;width:190px;font-size:12.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .optWRow input[type=range]{flex:1;min-width:90px;accent-color:var(--accent);cursor:pointer}
+  .optWRow input[type=range]:disabled{opacity:.45;cursor:not-allowed}
+  .optWRow .wv{flex:none;width:40px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .optWBtnRow{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
+  .optWBtnRow .btn{font-size:12px}
+  .optResWrap{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+  .optResWrap .vcard{flex:1 1 260px;min-width:230px}
+  .optWeightsChip{display:inline-flex;gap:6px;flex-wrap:wrap}
+  .owchip{font-size:11px;padding:1px 8px;border-radius:14px;border:1px solid var(--green);color:var(--green);background:var(--green-soft);font-variant-numeric:tabular-nums}
+  .optTblWrap{overflow:auto;max-height:46vh;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}
+  .optTbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .optTbl th{position:sticky;top:0;z-index:1;background:var(--panel);color:var(--muted);text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  .optTbl td{padding:5px 10px;border-bottom:1px solid rgba(38,46,64,.5)}
+  .optTbl tbody tr:hover td{background:rgba(255,255,255,.03)}
+  .optTbl td.nu{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .famDot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:1px;flex:none}
+  .famD0{background:#4f8cff}.famD1{background:#2fbf71}.famD2{background:#f0a83c}.famD3{background:#b07cff}.famD4{background:#ff8fa0}
+  /* 算法调优右栏：搜索参数输入 / 进度 */
+  #edOpt .optPm{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  #edOpt .optPm input{width:58px;padding:4px 6px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:7px;font:inherit}
+  #edOpt .optPm input:focus{outline:none;border-color:var(--accent)}
+  #edOpt .optPm input:disabled{opacity:.5}
+  /* 选项 chip 内的坐标文本：红 = 鼠标点击点、绿 = 关注点（与图上红 / 绿点一致）；等宽数字不跳动 */
+  .act .ptval{margin-left:2px;font-size:12.5px}
+  .ptval{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  #clickPtText{color:#ff8fa0}
+  #attnPtText{color:#9be0b4}
   .btnrow{display:flex;gap:8px;margin-top:14px}
   .btnrow .btn{flex:1}
   /* 右侧编辑区：按功能分区并各自用一个圆角卡片框包裹（标注信息 / 保存 / 清除与删除） */
@@ -256,6 +308,13 @@
   .hint.show{display:block}
   .hint.info{color:var(--amber)}
   .hint.ok{color:#9ad8a8}
+  /* 编辑区点控件下的说明条（动态提示 + 图例）：浅底 + 左侧色条，字号比全局 hint 略大 */
+  #coordBox .hint{margin:8px 0 0;padding:7px 10px;border-radius:8px;font-size:12.5px;line-height:1.6;
+    background:rgba(255,255,255,.035);border-left:2px solid var(--border)}
+  #coordBox .hint+.hint{margin-top:6px}
+  #coordBox .hint.info{background:rgba(240,168,60,.08);border-left-color:var(--amber)}
+  #coordBox .hint.ok{background:rgba(47,191,113,.08);border-left-color:var(--green)}
+  #coordBox .hint.bad{background:rgba(255,90,90,.10);border-left-color:var(--danger)}
   .hint.bad{color:#ffd2c9;background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.4);padding:6px 9px;border-radius:8px}
   kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
   #toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:50}
@@ -360,7 +419,8 @@
   .vtable tbody tr:hover td{background:rgba(255,255,255,.03)}
   .vtable td.st{font-weight:600;color:var(--text);word-break:break-all}
   .vtable td.ac{color:var(--muted)}
-  .vtable td.ac .vmiss{display:block;font-size:11px;color:#8a93a6;margin-top:2px}
+  .vtable .vmiss{font-size:11px;color:#8a93a6}
+  .vtable td.nugen{white-space:normal}
   .vtable td.nu{text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
   .vtable .vdnone{text-align:center;color:var(--muted);padding:22px 12px}
   /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */

@@ -25,27 +25,30 @@ import java.util.stream.Stream;
 /**
  * 分类标注中心表 + 样本标注读写（分类 → 动作/坐标的单一事实来源）。
  *
- * <p><b>数据模型（schema=1）</b>：同一分类标注的动作与“关注点”坐标是“分类级定义”，与具体样本无关，
+ * <p><b>数据模型（schema=1）</b>：同一分类标注的动作与“鼠标点击点 / 注意点”是“分类级定义”，与具体样本无关，
  * 只在 <code>classify/data.json</code> 保存一份；每张样本图旁的 json 只记它的分类归属，不再逐张复制坐标。
- * 任一动作都必须带关注点坐标（click=鼠标点击位置 / 无动作=画面关注区域，默认屏幕中心），
- * 汇总分析会以它为中心为全部分类生成点击区交集图：</p>
+ * 两个点互相独立：left/top = 鼠标点击点（仅 click 分类，执行时真正点击的位置，也是点击区交集图框心）；
+ * attnLeft/attnTop = 注意点（任意分类可选，注意区图/匹配裁剪以它为中心；<b>全部分类一致的默认值
+ * = 屏幕中心</b>，不再回退点击点）。汇总分析分别以注意点、点击点为框心生成两套方框交集图：</p>
  * <pre>
  * classify/data.json
  *   { "schema": 1, "states": {
- *       "登录页": { "action": "click", "left": 640, "top": 360 },
- *       "加载中": { "action": "none", "left": 640, "top": 360 } } }
+ *       "登录页": { "action": "click", "left": 640, "top": 360, "attnLeft": 640, "attnTop": 360 },
+ *       "加载中": { "action": "none", "attnLeft": 640, "attnTop": 360 } } }
  * classify/IMG_x.png        样本截图
  * classify/IMG_x.json       { "state": "登录页" }        // 仅归属，动作坐标查 data.json
  * </pre>
  *
  * <p><b>读取样本</b>：{@link #readSample(String)} 以“样本 json 的 state + 中心表定义”合成完整标注，
- * 因此对 API 与页面保持原来的字段形状（state/action/left/top），只是数据不再逐图冗余。</p>
+ * 因此对 API 与页面保持原来的字段形状（state/action/left/top/attnLeft/attnTop），只是数据不再逐图冗余。</p>
  *
  * <p><b>兼容与迁移</b>：历史版本是“每张图 json 自带 action/left/top”全量写法。首次访问本服务时
  * （懒迁移）会扫描 classify/ 下的旧 json，按分类取<b>众数</b>动作/坐标归纳出 data.json
  * （与界面“智能带入多数点”的口径一致；同分类里个别不一致的历史异位点不会带偏），
  * 之后把旧样本 json 就地瘦身为仅 {state}。读取路径始终以 data.json 为准，
- * 若某分类未建定义则回退样本 json 自带字段（兼容归纳前 / 归纳遗漏的旧文件）。</p>
+ * 若某分类未建定义则回退样本 json 自带字段（兼容归纳前 / 归纳遗漏的旧文件）。
+ * 旧版只有单个“关注点”left/top：无动作分类该点实为注意点 → 启动迁移到 attn 字段并清空 left/top；
+ * click 分类的 left/top 语义不变（注意点缺省 = 屏幕中心，见 {@link CaptureMark}）。</p>
  */
 @Slf4j
 @Service
@@ -67,12 +70,16 @@ public class ClassifyStore {
         this.storage = storage;
     }
 
-    /** 单条分类定义：动作 + 关注点坐标（click=点击位置 / 无动作=关注区域，默认屏幕中心）；属于分类而非样本 */
+    /** 单条分类定义：动作 + 鼠标点击点 + 注意点（均属于分类而非样本）。
+     *  click 分类：left/top = 点击位置；无动作分类：left/top 恒为 null（无点击）。
+     *  attnLeft/attnTop = 注意点（可选；未设 = 默认屏幕中心，全部分类一致，不再回退点击点）。 */
     @Data
     public static class ClassDef {
         private String action = CaptureMark.ACTION_NONE;
         private Integer left;
         private Integer top;
+        private Integer attnLeft;
+        private Integer attnTop;
     }
 
     /** classify/data.json 的结构 */
@@ -204,8 +211,14 @@ public class ClassifyStore {
             if (best != null) {
                 ClassDef cd = new ClassDef();
                 cd.setAction(best.action());
-                cd.setLeft(best.left());
-                cd.setTop(best.top());
+                // 旧样本 json 的单点：click = 点击点存 left/top；none = 画面关注点（即新模型的注意点）
+                if (CaptureMark.ACTION_CLICK.equals(best.action())) {
+                    cd.setLeft(best.left());
+                    cd.setTop(best.top());
+                } else {
+                    cd.setAttnLeft(best.left());
+                    cd.setAttnTop(best.top());
+                }
                 d.getStates().put(e.getKey(), cd);
                 defs++;
             }
@@ -284,6 +297,8 @@ public class ClassifyStore {
                 m.setAction(cd.getAction());
                 m.setLeft(cd.getLeft());
                 m.setTop(cd.getTop());
+                m.setAttnLeft(cd.getAttnLeft());
+                m.setAttnTop(cd.getAttnTop());
             }
         }
         return m;
@@ -331,9 +346,9 @@ public class ClassifyStore {
         return out;
     }
 
-    /** 一次性补齐历史「无动作」分类缺失的关注点坐标（幂等：仅处理 left/top 为空的非 click 定义），
+    /** 一次性补齐历史「无动作」分类缺失的注意点坐标（幂等：仅处理 attn 为空的非 click 定义），
      *  按该分类首张样本图分辨率的屏幕中心补全，使点击区图可对全部分类统一生成
-     *  （click=点击坐标 / 无动作=画面关注点，默认屏幕中心）。样本无可读尺寸时跳过并告警。
+     *  （click=鼠标点击点 + 注意点；无动作=注意点，默认屏幕中心）。样本无可读尺寸时跳过并告警。
      *
      *  @return 本次补齐的分类数（未动任何数据时返回 0）
      */
@@ -344,24 +359,26 @@ public class ClassifyStore {
         for (Map.Entry<String, ClassDef> e : d.getStates().entrySet()) {
             ClassDef cd = e.getValue();
             if (cd == null || CaptureMark.ACTION_CLICK.equals(cd.getAction())
-                || (cd.getLeft() != null && cd.getTop() != null)) {
+                || (cd.getAttnLeft() != null && cd.getAttnTop() != null)) {
                 continue;
             }
             int[] wh = sampleDimOf(e.getKey());
             if (wh == null || wh[0] <= 0 || wh[1] <= 0) {
-                log.warn("一次性补齐关注点：无动作分类「{}」没有可读尺寸的样本，无法推断屏幕中心，跳过", e.getKey());
+                log.warn("一次性补齐注意点：无动作分类「{}」没有可读尺寸的样本，无法推断屏幕中心，跳过", e.getKey());
                 continue;
             }
             int cx = wh[0] / 2;
             int cy = wh[1] / 2;
-            cd.setLeft(cx);
-            cd.setTop(cy);
+            cd.setAttnLeft(cx);
+            cd.setAttnTop(cy);
+            cd.setLeft(null);   // 无动作分类没有点击点
+            cd.setTop(null);
             n++;
-            log.info("一次性补齐无动作分类「{}」关注点 → 屏幕中心 ({},{}，画幅 {}×{})", e.getKey(), cx, cy, wh[0], wh[1]);
+            log.info("一次性补齐无动作分类「{}」注意点 → 屏幕中心 ({},{}，画幅 {}×{})", e.getKey(), cx, cy, wh[0], wh[1]);
         }
         if (n > 0) {
             saveData(d);
-            log.info("一次性补齐关注点完成：为 {} 个无动作分类写入屏幕中心默认点", n);
+            log.info("一次性补齐注意点完成：为 {} 个无动作分类写入屏幕中心默认点", n);
         }
         return n;
     }
@@ -407,6 +424,8 @@ public class ClassifyStore {
         m.setAction(cd.getAction());
         m.setLeft(cd.getLeft());
         m.setTop(cd.getTop());
+        m.setAttnLeft(cd.getAttnLeft());
+        m.setAttnTop(cd.getAttnTop());
         return m;
     }
 
@@ -418,20 +437,54 @@ public class ClassifyStore {
         atomicWrite(Map.of("state", state == null ? "" : state.trim()), sampleJson(imageFile));
     }
 
-    /** 建立 / 覆盖某分类的定义（动作 + 坐标），返回落盘后的完整定义 */
-    public synchronized CaptureMark define(String state, String action, Integer left, Integer top)
-        throws IOException {
+    /** 建立 / 覆盖某分类的定义（动作 + 鼠标点击点 + 注意点），返回落盘后的完整定义。
+     *  调用方负责口径：click 分类必须给非负 left/top（注意点可选）；none 分类 left/top 传 null、须给 attn。 */
+    public synchronized CaptureMark define(String state, String action,
+        Integer left, Integer top, Integer attnLeft, Integer attnTop) throws IOException {
         ensureMigrated();
         String st = state.trim();
         ClassDef cd = new ClassDef();
         cd.setAction(action);
         cd.setLeft(left);
         cd.setTop(top);
+        cd.setAttnLeft(attnLeft);
+        cd.setAttnTop(attnTop);
         DataFile d = table();
         d.getStates().put(st, cd);
         saveData(d);
-        log.debug("分类定义已写入 data.json：{} = {}/{},{}/{}", st, action, left, top);
+        log.debug("分类定义已写入 data.json：{} = {}/点击点 {},{}/注意点 {},{}", st, action, left, top, attnLeft, attnTop);
         return toMark(st, cd);
+    }
+
+    /** 语义规整（每次进程首访时执行，幂等）：无动作分类历史只存了单个关注点 left/top（实为注意点）
+     *  → 迁到 attn 字段并清空 left/top；click 分类注意点未设即维持 null（回退点击点）。 */
+    private synchronized void normalizeDefs() {
+        DataFile d = table();
+        boolean changed = false;
+        for (Map.Entry<String, ClassDef> e : d.getStates().entrySet()) {
+            ClassDef cd = e.getValue();
+            if (cd == null) {
+                continue;
+            }
+            if (!CaptureMark.ACTION_CLICK.equals(cd.getAction())) {
+                if (cd.getAttnLeft() == null && cd.getAttnTop() == null
+                    && cd.getLeft() != null && cd.getTop() != null) {
+                    cd.setAttnLeft(cd.getLeft());
+                    cd.setAttnTop(cd.getTop());
+                    cd.setLeft(null);
+                    cd.setTop(null);
+                    changed = true;
+                    log.info("分类「{}」迁移：无动作分类的旧关注点坐标 → 注意点 ({},{})", e.getKey(), cd.getAttnLeft(), cd.getAttnTop());
+                }
+            }
+        }
+        if (changed) {
+            try {
+                saveData(d);
+            } catch (IOException ex) {
+                log.error("写分类定义迁移失败（内存表仍生效，重启后重试）：{}", ex.toString());
+            }
+        }
     }
 
     /**
@@ -491,12 +544,13 @@ public class ClassifyStore {
         return true;
     }
 
-    /** 启动/首次访问前的幂等初始化（懒迁移，内部自动执行一次，通常无需外部调用） */
+    /** 启动/首次访问前的幂等初始化（懒迁移 + 语义规整，内部自动执行一次，通常无需外部调用） */
     public synchronized void ensureMigrated() {
         if (migrated) {
             return;
         }
         migrateOnce();
+        normalizeDefs();   // 旧单点模型 → 点击点/注意点双点语义
     }
 
     private String trim(String s) {

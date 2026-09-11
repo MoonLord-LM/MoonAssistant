@@ -20,7 +20,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
@@ -32,17 +31,20 @@ import java.util.stream.Stream;
  * 其余覆盖 >90%/80%/70%/60%/50%，代表色是样本中达到该档一致门槛的真实像素）与多数 max / 均值 avg /
  * 去重均值 dedup-avg / major8·avg8·dedup-avg8·major32·avg32·dedup-avg32 块降采样，
  * 每张基础图各带一张 -unique 独有区图（共 15 张，全部参与比对）；
- * 每个分类定义带关注点坐标（click=鼠标点击位置 / 无动作=画面关注区域，默认屏幕中心），关注点有效的
- * 全部分类都会额外生成 12 张<b>点击区交集图</b>
- * click8/32-same100/90/80/70/60/50——以该分类统一关注点或点击点坐标为框心、宽高分别取整幅 1/8 与 1/32 的
- * 方框小图（1280×720 → 160×90 与 40×22），交集判定口径与同档交集图一致，聚焦“关注 / 要点击的位置”。
+ * 每个分类定义带两个互相独立的点（注意点：未设 = 屏幕中心；点击点：仅 click 分类有）。在此之上各生成
+ * 一套 12 张<b>方框交集图</b>（宽高分别取整幅 1/8 与 1/32 的方框小图，1280×720 → 160×90 与 40×22，
+ * 交集判定口径与同档交集图一致，聚焦“要点击的位置 / 要关注的位置”）：
+ * <b>注意区交集图</b> attn8/32-same100/90/80/70/60/50 以<b>注意点</b>为框心，<b>每个分类都有</b>；
+ * <b>点击区交集图</b> click8/32-same100/90/80/70/60/50 以<b>鼠标点击点</b>为框心，仅 click 分类有。
+ * 两套图的裁剪模板/出界透明规则完全一致，只是框心不同，可分别考察“点哪儿”与“看哪儿”。
  * 方框中心固定、不向画幅内收敛：越出画幅边缘的部分按透明像素处理（产物与画面裁口同公式）。
  * 这些图把同一分类的多张样本合成成一张张“该状态的代表画面”。每张 -unique 独有区图在该基础图基础上
  * 剔除了「其它分类同 kind 基础图同位同色」的像素——那些区域对区分本分类没有贡献，只在独有区上统计
  * 差异相当于专门考察“该状态独有的画面区域”，能进一步拉开相近分类的差距；基础图覆盖整幅画面、
  * 独有区图只盯着本分类独占的区域，两者互补。产物必须全部齐全才参与识别
- * （交集低档、-unique 与点击区交集图均为正式比对维度，无展示档之分）：每个分类 = 15 基础 + 15 -unique
- * + 12 点击区交集图 = 42 张（历史无动作分类旧目录只有 30 张，后台重算后自动补齐）。
+ * （交集低档、-unique 与两套方框交集图均为正式比对维度，无展示档之分）：每个分类 = 15 基础 + 15 -unique
+ * + 12 注意区交集图 = 42 张；click 分类另有 12 张点击区交集图 = 54 张
+ * （历史旧目录只有 30/42 张，后台重算后自动补齐）。
  *
  * <p>匹配口径：对照图按「代表色的来源」分三套逐点判据——
  * <ul>
@@ -57,19 +59,20 @@ import java.util.stream.Stream;
  * 消除重复采样对平均的加权），真实画面几乎不可能恰好等于平均色，逐像素完全一致没有意义——
  * 因此采用逐通道容差：三通道差值都不超过 {@code execute.rgb-dist-threshold}（默认 255/3 = 85）才判「匹配」，
  * 任一通道差 > 阈值即「不匹配」。</li>
- * <li><b>点击区交集图</b>（click8/32-same100/90/80/70/60/50，12 张，各分类都按关注点生成）：
+ * <li><b>注意区交集图</b>（attn8/32-same100/90/80/70/60/50，12 张，每个分类都按注意点生成）与
+ * <b>点击区交集图</b>（click8/32-same100/90/80/70/60/50，12 张，仅 click 分类按点击点生成）：
  * 对照颜色同样是样本真实像素（各档交集口径），判据同交集/多数类（逐像素完全一致）；
- * 产物是关注点坐标附近的方框小图，比对时在画面同一坐标位置裁出方框再逐点比较；
- * 框可越出画幅边缘，越界部分在产物与画面两侧都填透明、不参与统计。</li>
+ * 产物是框心坐标附近的方框小图，比对时在画面同一坐标位置（点击区用点击点、注意区用注意点）裁出
+ * 方框再逐点比较；框可越出画幅边缘，越界部分在产物与画面两侧都填透明、不参与统计。</li>
  * </ul>
  * 各图分别与当前画面（须与产物同分辨率：靠 resize 对齐，比对不做图片缩放）按同一口径逐点判定
  * 并统计各自的「不匹配点占比」（0~100，
- * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区、点击区图内不一致的像素、
- * 以及点击区框越出画幅的出界点（画面与产物同处都填透明对齐）都被剔除）。
+ * 透明像素不参与统计：基础图的非公共区、独有区图的非独有区、方框图内不一致的像素、
+ * 以及方框越出画幅的出界点（画面与产物同处都填透明对齐）都被剔除）。
  * 各图的占比先按 A~E 五族做族内等权平均（A 全图交集 12 张权 50 → B 多数族 6 张权 15 →
- * C 均值族 6 张权 10 → D 去重均值族 6 张权 10 → E 点击区交集 12 张权 15），
+ * C 均值族 6 张权 10 → D 去重均值族 6 张权 10 → E 方框交集区 24 张权 15），
  * 再按 (50A+15B+10C+10D+15E)/W 加权为分类差异度：W = 适用族的权重之和
- * （参与识别的分类五族产物齐全、W 恒为 100；旧产物缺点击区图的分组整体跳过、后台重算后恢复）。
+ * （参与识别的分类五族产物齐全、W 恒为 100；旧产物缺方框图的分组整体跳过、后台重算后恢复）。
  * 没有任何有效像素的图（空图：基础图公共区全空 / 独有区图没有任何独有像素等）没有可判别的点、
  * 无法据此做区分：判完全不匹配、按不匹配占比满值计入并照常参与所在族均值；-1 只出现在产物缺失 /
  * 比对口径不符的异常防御路径（产物齐全时不会出现），该图才跳过。
@@ -78,7 +81,7 @@ import java.util.stream.Stream;
  *
  * <p>坐标可靠性：整个工程靠 resize 把窗口/截图尺寸强制对齐到与标注样本一致，summary 产物
  * 与当前画面天然等尺寸、像素一一对应，因此命中分类记录在 info.json 里的点击坐标可直接用于执行动作
- * （点击区交集图的方框也以同一坐标定位，画面与产物裁剪位置天然一致）。
+ * （点击点/注意点两套方框图也分别以同一坐标定位，画面与产物裁剪位置天然一致）。
  *
  * <p>性能：画面每轮只预计算一次 8·32 多数/均值块压缩序列，全部分类共用同一份结果；全幅类图
  * 直接与画面整幅像素逐点比较，不再对同一画面重复压缩；产物像素缓存带 mtime/size 失效。
@@ -92,190 +95,62 @@ public class FrameClassifier {
      *  （匹配口径统一为「三通道差都 ≤ distThr」）。 */
     private static final int EXACT_MATCH_DIST = 0;
 
-    /** 逐像素「完全一致」判据的维度（交集/多数类，颜色来自样本真实像素）：交集六档 same100/90/80/70/60/50
-     *  max(major) / major8 / major32 及各自的 -unique 独有区图，加点击区交集图 click8/32-same100/90/80/70/60/50，
-     * 共 30 张；其余 12 张均值类（avg/avg8/avg32、dedup-avg/dedup-avg8/dedup-avg32 及各自 -unique，
-     * 颜色是样本平均色 / 去重平均色）走逐通道容差 {@code execute.rgb-dist-threshold}。 */
-    private static final Set<String> EXACT_KINDS = Set.of(
-            "same100", "same100-unique",
-            "same90", "same90-unique",
-            "same80", "same80-unique",
-            "same70", "same70-unique",
-            "same60", "same60-unique",
-            "same50", "same50-unique",
-            "max", "max-unique",
-            "major8", "major8-unique",
-            "major32", "major32-unique",
-            "click8-same100", "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
-            "click32-same100", "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
+    /* 全部产物维度（kind / 磁盘文件名 / 块压缩口径 / 是否走「完全一致」判据 / 方框形态 / 权重族 /
+     * 展示顺序）的唯一权威定义见 {@link ArtifactKind}，本类不再各自维护一份 kind 清单。 */
 
-    /** 各产物维度参与比对时的压缩口径：{块边长, 压缩模式}，模式 1=块内多数 / 0=块内均值 / 2=块内去重均值；
-     *  全幅图块边长为 1 不压缩（点击区交集图 click8/32-same 走独立裁剪分支）。 */
-    private static final Map<String, int[]> KIND_DOWN = Map.ofEntries(
-            Map.entry("same100", new int[]{1, 0}),
-            Map.entry("same100-unique", new int[]{1, 0}),
-            Map.entry("same90", new int[]{1, 0}),
-            Map.entry("same90-unique", new int[]{1, 0}),
-            Map.entry("same80", new int[]{1, 0}),
-            Map.entry("same80-unique", new int[]{1, 0}),
-            Map.entry("same70", new int[]{1, 0}),
-            Map.entry("same70-unique", new int[]{1, 0}),
-            Map.entry("same60", new int[]{1, 0}),
-            Map.entry("same60-unique", new int[]{1, 0}),
-            Map.entry("same50", new int[]{1, 0}),
-            Map.entry("same50-unique", new int[]{1, 0}),
-            Map.entry("max", new int[]{1, 0}),
-            Map.entry("max-unique", new int[]{1, 0}),
-            Map.entry("avg", new int[]{1, 0}),
-            Map.entry("avg-unique", new int[]{1, 0}),
-            Map.entry("dedup-avg", new int[]{1, 2}),
-            Map.entry("dedup-avg-unique", new int[]{1, 2}),
-            Map.entry("major8", new int[]{8, 1}),
-            Map.entry("major8-unique", new int[]{8, 1}),
-            Map.entry("avg8", new int[]{8, 0}),
-            Map.entry("avg8-unique", new int[]{8, 0}),
-            Map.entry("dedup-avg8", new int[]{8, 2}),
-            Map.entry("dedup-avg8-unique", new int[]{8, 2}),
-            Map.entry("major32", new int[]{32, 1}),
-            Map.entry("major32-unique", new int[]{32, 1}),
-            Map.entry("avg32", new int[]{32, 0}),
-            Map.entry("avg32-unique", new int[]{32, 0}),
-            Map.entry("dedup-avg32", new int[]{32, 2}),
-            Map.entry("dedup-avg32-unique", new int[]{32, 2}),
-            Map.entry("click8-same100", new int[]{1, 0}),
-            Map.entry("click8-same90", new int[]{1, 0}),
-            Map.entry("click8-same80", new int[]{1, 0}),
-            Map.entry("click8-same70", new int[]{1, 0}),
-            Map.entry("click8-same60", new int[]{1, 0}),
-            Map.entry("click8-same50", new int[]{1, 0}),
-            Map.entry("click32-same100", new int[]{1, 0}),
-            Map.entry("click32-same90", new int[]{1, 0}),
-            Map.entry("click32-same80", new int[]{1, 0}),
-            Map.entry("click32-same70", new int[]{1, 0}),
-            Map.entry("click32-same60", new int[]{1, 0}),
-            Map.entry("click32-same50", new int[]{1, 0}));
-
-    /** 点击区交集图维度：产物是以该分类统一关注点坐标（点击=点击位置 / 无动作=画面关注区域）为心的
-     *  1/8、1/32 方框小图 × 交集六档，不参与 -unique 独有区互比、也不存在独有区版本。
-     *  比对时按同一坐标在画面上裁出方框再逐点比较。 */
-    private static final Set<String> CLICK_CROP_KINDS = Set.of(
-            "click8-same100", "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
-            "click32-same100", "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
-
-    /** 识别端使用的对照图（15 基础 + 15 -unique 独有区 + 12 点击区交集图，与 ThinkService 产物保持一致）
-     *  的文件名。 */
-    private static final Map<String, String> KIND_FILE = Map.ofEntries(
-            Map.entry("same100", "same100.png"),
-            Map.entry("same100-unique", "same100-unique.png"),
-            Map.entry("same90", "same90.png"),
-            Map.entry("same90-unique", "same90-unique.png"),
-            Map.entry("same80", "same80.png"),
-            Map.entry("same80-unique", "same80-unique.png"),
-            Map.entry("same70", "same70.png"),
-            Map.entry("same70-unique", "same70-unique.png"),
-            Map.entry("same60", "same60.png"),
-            Map.entry("same60-unique", "same60-unique.png"),
-            Map.entry("same50", "same50.png"),
-            Map.entry("same50-unique", "same50-unique.png"),
-            Map.entry("max", "major.png"),
-            Map.entry("max-unique", "major-unique.png"),
-            Map.entry("avg", "avg.png"),
-            Map.entry("avg-unique", "avg-unique.png"),
-            Map.entry("dedup-avg", "dedup-avg.png"),
-            Map.entry("dedup-avg-unique", "dedup-avg-unique.png"),
-            Map.entry("major8", "major8.png"),
-            Map.entry("major8-unique", "major8-unique.png"),
-            Map.entry("avg8", "avg8.png"),
-            Map.entry("avg8-unique", "avg8-unique.png"),
-            Map.entry("dedup-avg8", "dedup-avg8.png"),
-            Map.entry("dedup-avg8-unique", "dedup-avg8-unique.png"),
-            Map.entry("major32", "major32.png"),
-            Map.entry("major32-unique", "major32-unique.png"),
-            Map.entry("avg32", "avg32.png"),
-            Map.entry("avg32-unique", "avg32-unique.png"),
-            Map.entry("dedup-avg32", "dedup-avg32.png"),
-            Map.entry("dedup-avg32-unique", "dedup-avg32-unique.png"),
-            Map.entry("click8-same100", "click8-same100.png"),
-            Map.entry("click8-same90", "click8-same90.png"),
-            Map.entry("click8-same80", "click8-same80.png"),
-            Map.entry("click8-same70", "click8-same70.png"),
-            Map.entry("click8-same60", "click8-same60.png"),
-            Map.entry("click8-same50", "click8-same50.png"),
-            Map.entry("click32-same100", "click32-same100.png"),
-            Map.entry("click32-same90", "click32-same90.png"),
-            Map.entry("click32-same80", "click32-same80.png"),
-            Map.entry("click32-same70", "click32-same70.png"),
-            Map.entry("click32-same60", "click32-same60.png"),
-            Map.entry("click32-same50", "click32-same50.png"));
-
-    /** 对照图的固定展示/比较顺序（每张基础图紧跟其 -unique 独有区图：
-     *  全图交集六档 same100→same50（共 12 张）→ 多数族 max/major8/major32（共 6 张）→
-     *  均值族 avg/avg8/avg32（共 6 张）→ 去重均值族 dedup-avg/dedup-avg8/dedup-avg32（共 6 张）→
-     *  点击区交集图 click8 → click32（各六档，无 -unique，共 12 张）；每个分类 42 张全部参与
-     *  （历史无坐标旧目录缺点击区图 → 整目录跳过，后台重算后恢复）。 */
-    private static final List<String> KIND_ORDER = List.of(
-            "same100", "same100-unique",
-            "same90", "same90-unique",
-            "same80", "same80-unique",
-            "same70", "same70-unique",
-            "same60", "same60-unique",
-            "same50", "same50-unique",
-            "max", "max-unique",
-            "major8", "major8-unique",
-            "major32", "major32-unique",
-            "avg", "avg-unique",
-            "avg8", "avg8-unique",
-            "avg32", "avg32-unique",
-            "dedup-avg", "dedup-avg-unique",
-            "dedup-avg8", "dedup-avg8-unique",
-            "dedup-avg32", "dedup-avg32-unique",
-            "click8-same100", "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
-            "click32-same100", "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50");
-
-    /** 差异度五族权重与其包含的 kind（覆盖全部 42 张适用图）：A 全图交集 12（same100→50 各带 -unique）
+    /** 差异度五族权重与其包含的 kind（覆盖全部适用图）：A 全图交集 12（same100→50 各带 -unique）
      *  权 50 → B 多数族 6（max/major8/major32 各带 -unique）权 15 → C 均值族 6（avg/avg8/avg32
-     *  各带 -unique）权 10 → D 去重均值族 6（dedup-avg/8/32 各带 -unique）权 10 → E 点击区交集 12
-     *  （click8→32 × 各档，无 -unique）权 15。每族先对族内各图「不匹配点占比」等权平均得族均值，
+     *  各带 -unique）权 10 → D 去重均值族 6（dedup-avg/8/32 各带 -unique）权 10 → E 方框交集区 24
+     *  （点击区 click8→32 × 各档 12 张 + 注意区 attn8→32 × 各档 12 张，均无 -unique；click 分类 24 张、
+     *  无动作分类只有注意区 12 张）权 15。每族先对族内各图「不匹配点占比」等权平均得族均值，
      *  差异度 = (50A+15B+10C+10D+15E)/W：W = 适用族的权重之和，
      *  产物齐全的参与分类五族俱备、恒为 100；空图（产物无任何有效像素、无法做区分）按完全不匹配满值计、照常参与。 */
-    private static final int[] FAMILY_WEIGHTS = {50, 15, 10, 10, 15};
-    private static final List<List<String>> FAMILY_KINDS = List.of(
-            List.of("same100", "same100-unique", "same90", "same90-unique", "same80", "same80-unique",
-                    "same70", "same70-unique", "same60", "same60-unique", "same50", "same50-unique"),
-            List.of("max", "max-unique", "major8", "major8-unique", "major32", "major32-unique"),
-            List.of("avg", "avg-unique", "avg8", "avg8-unique", "avg32", "avg32-unique"),
-            List.of("dedup-avg", "dedup-avg-unique", "dedup-avg8", "dedup-avg8-unique",
-                    "dedup-avg32", "dedup-avg32-unique"),
-            List.of("click8-same100", "click8-same90", "click8-same80", "click8-same70", "click8-same60", "click8-same50",
-                    "click32-same100", "click32-same90", "click32-same80", "click32-same70", "click32-same60", "click32-same50"));
+    /** 默认五族权重（A 全图交集 50 / B 多数 15 / C 均值 10 / D 去重均值 10 / E 方框交集区 15）。
+     *  可经「算法调优」按已标注样本自动寻优后运行时修改（volatile 数组，aggregateDiff 每次拷贝读取）。 */
+    private static final int[] DEFAULT_FAMILY_WEIGHTS = {50, 15, 10, 10, 15};
+    private volatile int[] familyWeights = {50, 15, 10, 10, 15};
 
-    /** 每个分类都必须齐全的 30 张产物对照图（15 基础 + 15 -unique，含交集六档及全部独有区图）：
-     *  任一缺失 = 该分类产物未齐，整目录跳过不参与识别（差异度按五族加权聚合，
-     *  缺图无法保证口径；旧目录未重算补齐前不参与，后台重算后恢复）。 */
-    private static final Set<String> MATCH_CORE_FILES = Set.of(
-            "same100.png", "same100-unique.png",
-            "same90.png", "same90-unique.png",
-            "same80.png", "same80-unique.png",
-            "same70.png", "same70-unique.png",
-            "same60.png", "same60-unique.png",
-            "same50.png", "same50-unique.png",
-            "major.png", "major-unique.png",
-            "avg.png", "avg-unique.png",
-            "dedup-avg.png", "dedup-avg-unique.png",
-            "major8.png", "major8-unique.png",
-            "avg8.png", "avg8-unique.png",
-            "dedup-avg8.png", "dedup-avg8-unique.png",
-            "major32.png", "major32-unique.png",
-            "avg32.png", "avg32-unique.png",
-            "dedup-avg32.png", "dedup-avg32-unique.png");
+    /** 当前生效的五族权重（拷贝返回，只读安全）；未运行时调优过即默认值 */
+    public int[] familyWeights() {
+        return familyWeights.clone();
+    }
 
-    /** 关注点有效的分类（click=点击点 / 无动作=画面关注区域，默认屏幕中心）必需的 12 张点击区交集图
-     *  （1/8、1/32 方框 × 交集六档，与 ThinkService 生成配套）。任一缺失该分类整目录跳过
-     *  （历史无动作分类旧目录没有 → 后台重算后恢复）。 */
-    private static final Set<String> MATCH_CLICK_FILES = Set.of(
-            "click8-same100.png", "click8-same90.png", "click8-same80.png", "click8-same70.png", "click8-same60.png", "click8-same50.png",
-            "click32-same100.png", "click32-same90.png", "click32-same80.png", "click32-same70.png", "click32-same60.png", "click32-same50.png");
+    /** kind 所属权重族下标（0..ArtifactKind.familyCount()-1；未知/不属于任何族返回 -1），算法调优按族聚合时使用 */
+    public int familyIndexOf(String kind) {
+        if (kind == null) {
+            return -1;
+        }
+        for (int i = 0; i < ArtifactKind.familyCount(); i++) {
+            if (ArtifactKind.familyKinds(i).contains(kind)) {
+                return i;
+            }
+        }
+        return -1;
+    }
 
+    /** 恢复默认五族权重 */
+    public void resetFamilyWeights() {
+        familyWeights = DEFAULT_FAMILY_WEIGHTS.clone();
+    }
+
+    /** 默认五族权重（拷贝返回，只读安全） */
+    public int[] defaultWeights() {
+        return DEFAULT_FAMILY_WEIGHTS.clone();
+    }
+
+    /** 运行时设置五族权重（须 5 个非负值）；算法调优页应用结果时调用 */
+    public void setFamilyWeights(int[] w) {
+        if (w == null || w.length != ArtifactKind.familyCount()) {
+            throw new IllegalArgumentException("五族权重须为 " + ArtifactKind.familyCount() + " 个非负值");
+        }
+        int[] copy = w.clone();
+        for (int v : copy) {
+            if (v < 0) {
+                throw new IllegalArgumentException("五族权重须非负");
+            }
+        }
+        this.familyWeights = copy;
+    }
     /** 全幅对照图约 3.7MB/张：当前规模 82 组 3226 张产物约 5.5GB、classify 原图数百张，由 restart.cmd 的 -Xmx16g
      *  提供充足堆空间让软引用缓存全部驻留；内存吃紧时缓存条目被 JVM 自动回收，不再需要手动上调 -Xmx。 */
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -302,7 +177,7 @@ public class FrameClassifier {
         final long size;
         final int w;          // 原图宽（全幅 = 产物宽；块图 = 块降采样宽）
         final int h;          // 原图高
-        final boolean isFull; // true = 全幅类产物（交集六档及 max/avg/dedup-avg 及各自 -unique、点击区方框图）的整幅像素
+        final boolean isFull; // true = 全幅类产物（交集六档及 max/avg/dedup-avg 及各自 -unique、方框交集图）的整幅像素
         final int[] px;
 
         CachedPx(long lastModified, long size, int w, int h, boolean isFull, int[] px) {
@@ -317,10 +192,10 @@ public class FrameClassifier {
 
     /** 当前画面的一次性预计算产物：本帧各分类共用。同一帧原先被每个分类目录各自重复做整帧块压缩
      *  （多数块图每块还带 HashMap 装箱统计）——是识别耗时的最大来源；现在每轮只算一次、全部目录复用，
-     *  全幅类比对直接用下方 full 整幅像素（交集六档及 max/avg/dedup-avg 及各自 -unique、点击区方框共用同一份）。 */
+     *  全幅类比对直接用下方 full 整幅像素（交集六档及 max/avg/dedup-avg 及各自 -unique、方框交集图共用同一份）。 */
     static final class FrameWork {
         final int fw, fh;
-        final int[] full;       // 画面全幅像素（全幅类逐点比对 + 点击区交集图按坐标裁方框共用同一份）
+        final int[] full;       // 画面全幅像素（全幅类逐点比对 + 方框交集图按坐标裁方框共用同一份）
         final int[] b8M, b8A, b8DA;   // 8×8 块多数/均值/去重均值（major8·avg8·dedup-avg8 及各自 -unique 共用）
         final int[] b32M, b32A, b32DA; // 32×32 块多数/均值/去重均值（major32·avg32·dedup-avg32 及各自 -unique 共用）
         final int wb8, hb8, wb32, hb32;
@@ -354,9 +229,11 @@ public class FrameClassifier {
         public String bestFile;
         /** 命中分类定义的动作（click / none / other），来自 info.json。 */
         public String action;
-        /** 命中分类定义的动作/关注点坐标（无动作分类也会携带；执行层只在 click 动作时使用）。 */
+        /** 命中分类的<b>鼠标点击坐标</b>（仅 click 分类执行层使用；来源于 info 的 actLeft/actTop，
+         *  旧产物缺 act 键时回退裁剪中心 —— 两者在旧数据中同点）。 */
         public Integer clickLeft;
-        /** 命中分类定义的动作/关注点坐标（无动作分类也会携带；执行层只在 click 动作时使用）。 */
+        /** 命中分类的<b>鼠标点击坐标</b>（仅 click 分类执行层使用；来源于 info 的 actLeft/actTop，
+         *  旧产物缺 act 键时回退裁剪中心 —— 两者在旧数据中同点）。 */
         public Integer clickTop;
         /** 实际参与比较（核心对照图齐全且算出有效差异度）的分类数。 */
         public int scannedSamples;
@@ -387,13 +264,23 @@ public class FrameClassifier {
     public record RawHit(String file, double diffPercent) {
     }
 
+    /** 某分类的两个框心坐标：actX/actY = 鼠标点击点（点击区图框心，仅 click 分类有效）、
+     *  attnX/attnY = 注意点（注意区图框心，每个分类都有）；缺失的坐标以 -1 表示（该方框图比对直接返回 -1）。
+     *  用独立 record 传参，避免原先 (acx, acy, ccx, ccy) 四个 int 位置传错而编译器无感。 */
+    public record Centers(int actX, int actY, int attnX, int attnY) {
+    }
+
     private static final class GroupBest {
         String state;
         double diff = Double.POSITIVE_INFINITY;
         String dir;
         String action;
-        Integer clickLeft;
-        Integer clickTop;
+        /** 注意点（= info 的 attnLeft/attnTop，旧产物回退历史键 clickLeft/clickTop；注意区图比对框心，非真实点击坐标）。 */
+        Integer cropLeft;
+        Integer cropTop;
+        /** 鼠标点击点（= info actLeft/actTop，仅 click 分类有；点击区图比对框心，也是执行模式真实点击的位置）。 */
+        Integer actLeft;
+        Integer actTop;
         /** 成为该分类最优产物目录那一轮的各图分值明细（按 KIND_ORDER 顺序）。 */
         Map<String, KindScore> kindScores = new LinkedHashMap<>();
     }
@@ -444,7 +331,7 @@ public class FrameClassifier {
             String miss = missingArtifactNames(dir, info);
             if (miss != null) {
                 out.skipped.put(dir.getFileName().toString(), "对照图不齐，缺：" + miss);
-                continue;   // 该分类适用的对照图不齐（未做汇总分析 / -unique 独有区图或点击区交集图尚未补齐）无法比较
+                continue;   // 该分类适用的对照图不齐（未做汇总分析 / -unique 独有区图或方框交集图尚未补齐）无法比较
             }
             Number wObj = info.get("width") instanceof Number n ? n : null;
             Number hObj = info.get("height") instanceof Number n ? n : null;
@@ -454,24 +341,31 @@ public class FrameClassifier {
             }
             int w = wObj.intValue();
             int h = hObj.intValue();
-            // 关注点坐标（click=点击点 / 无动作=画面关注区域，默认屏幕中心）用于在画面上定位同一方框
-            // 裁剪比对点击区交集图；产物齐全性已按 info 校验（有坐标 = 42 张齐全才可比，上面缺点击区图的目录已跳过）
-            Integer cl = intOf(info.get("clickLeft"));
-            Integer ct = intOf(info.get("clickTop"));
+            // 两个框心：注意点（attnLeft/attnTop = 裁剪中心权威键，未设 = 屏幕中心；旧产物缺该键时回退
+            // 历史键 clickLeft/clickTop —— 旧数据里它就是注意点）用于裁注意区交集图；
+            // 点击点（actLeft/actTop，仅 click 分类有）用于裁点击区交集图；
+            // 产物齐全性已按 info 校验（缺注意区图 / click 分类缺点击区图的目录已跳过）
+            Integer cl = pickInt(info, "attnLeft", "clickLeft");
+            Integer ct = pickInt(info, "attnTop", "clickTop");
             int ccx = cl != null ? cl : -1;
             int ccy = ct != null ? ct : -1;
+            Integer al = intOf(info.get("actLeft"));
+            Integer at = intOf(info.get("actTop"));
+            int acx = al != null ? al : ccx;   // 旧产物缺 act 键时回退注意点（旧数据两者同点，行为不变）
+            int acy = at != null ? at : ccy;
+            Centers centers = new Centers(acx, acy, ccx, ccy);
 
             if (work == null) {
                 work = new FrameWork(framePxFull, fw, fh);
             }
             int kindCount = 0;
             Map<String, KindScore> scores = new LinkedHashMap<>();   // 该目录各对照图的分值（空图按完全不匹配满值 100；-1 仅异常防御）
-            for (String kind : KIND_ORDER) {
-                String file = KIND_FILE.get(kind);
+            for (String kind : ArtifactKind.kinds()) {
+                String file = ArtifactKind.file(kind);
                 CachedPx ref = loadCached(dir.resolve(file), kind);
                 KindScore ks = (ref == null) ? new KindScore(kind, file, 0, 0, -1)
                         : new KindScore(kind, file, ref.w, ref.h,
-                        compareKind(work, ref, kind, ccx, ccy));
+                        compareKind(work, ref, kind, centers));
                 scores.put(kind, ks);
                 if (ks.score() >= 0) {
                     kindCount++;
@@ -493,8 +387,10 @@ public class FrameClassifier {
                 g.dir = dir.getFileName().toString();
                 g.kindScores = scores;   // 只保留该分类“最优产物目录”那一轮的各图分值
                 g.action = info.get("action") == null ? null : String.valueOf(info.get("action"));
-                g.clickLeft = intOf(info.get("clickLeft"));
-                g.clickTop = intOf(info.get("clickTop"));
+                g.cropLeft = pickInt(info, "attnLeft", "clickLeft");
+                g.cropTop = pickInt(info, "attnTop", "clickTop");
+                g.actLeft = intOf(info.get("actLeft"));
+                g.actTop = intOf(info.get("actTop"));
             }
         }
 
@@ -511,8 +407,11 @@ public class FrameClassifier {
             out.bestDiffPercent = top.diff;
             out.bestFile = top.dir;
             out.action = top.action;
-            out.clickLeft = top.clickLeft;
-            out.clickTop = top.clickTop;
+            // 点击区裁剪中心（clickLeft/clickTop）与真实鼠标点击点（actLeft/actTop）分离后：
+            // 暴露给执行层的坐标 = 真实点击点（仅 click 分类有）；旧产物无 act 键时回退裁剪中心
+            // （旧数据两者同点，行为不变）
+            out.clickLeft = top.actLeft != null ? top.actLeft : top.cropLeft;
+            out.clickTop = top.actTop != null ? top.actTop : top.cropTop;
             // 已去掉识别阈值门槛：只要有可比的最近似分类即视为可用（差异度仅作展示，不再判已识别/未识别）
             out.recognized = true;
         }
@@ -531,18 +430,20 @@ public class FrameClassifier {
 
     /** 分类差异度 = 五族加权平均 (50A+15B+10C+10D+15E)/W（0~100，越小越像）：各族对族内各图的
      *  「不匹配点占比」等权平均（A 全图交集 12 张 / B 多数 6 / C 均值 6 /
-     *  D 去重均值 6 / E 点击区交集 12，权重 50/15/10/10/15）；W = 适用族的权重之和——
-     *  参与识别的分类五族产物齐全、恒为 100（旧产物缺点击区图整体跳过，后台重算后补齐）。
+     *  D 去重均值 6 / E 方框交集区 24（点击区 12 + 注意区 12，click 分类 24 / 无动作 12），
+     *  权重 50/15/10/10/15）；W = 适用族的权重之和——
+     *  参与识别的分类五族产物齐全、恒为 100（旧产物缺方框图整体跳过，后台重算后补齐）。
      *  空图（产物无任何有效像素：基础图公共区全空 / 独有区图无独有点）在比对侧已判完全不匹配、
      *  按不匹配占比满值计入并照常参与族均值；-1 仅产物缺失 / 比对口径不符的异常防御路径返回
      *  （产物齐全时不会出现），该图跳过不参与族均值。 */
-    private static double aggregateDiff(Map<String, KindScore> scores) {
+    private double aggregateDiff(Map<String, KindScore> scores) {
+        int[] w = familyWeights;   // 每次拷贝读取，权重调优时数据一致
         double sum = 0;
         int wsum = 0;
-        for (int i = 0; i < FAMILY_KINDS.size(); i++) {
+        for (int i = 0; i < ArtifactKind.familyCount(); i++) {
             double fsum = 0;
             int n = 0;
-            for (String kind : FAMILY_KINDS.get(i)) {
+            for (String kind : ArtifactKind.familyKinds(i)) {
                 KindScore ks = scores.get(kind);
                 if (ks != null && ks.score() >= 0) {
                     fsum += ks.score();
@@ -552,8 +453,8 @@ public class FrameClassifier {
             if (n == 0) {
                 continue;   // 整族全为异常 -1 → 权重不进 W（正常产物齐全不会出现）
             }
-            sum += FAMILY_WEIGHTS[i] * fsum / n;
-            wsum += FAMILY_WEIGHTS[i];
+            sum += w[i] * fsum / n;
+            wsum += w[i];
         }
         return wsum == 0 ? 0.0 : sum / wsum;
     }
@@ -561,8 +462,8 @@ public class FrameClassifier {
     private static List<Candidate> candidatesOf(List<GroupBest> sorted) {
         List<Candidate> out = new ArrayList<>(sorted.size());
         for (GroupBest g : sorted) {
-            List<KindScore> kinds = new ArrayList<>(KIND_ORDER.size());
-            for (String kind : KIND_ORDER) {
+            List<KindScore> kinds = new ArrayList<>(ArtifactKind.kinds().size());
+            for (String kind : ArtifactKind.kinds()) {
                 KindScore ks = g.kindScores.get(kind);
                 if (ks != null) {
                     kinds.add(ks);
@@ -691,30 +592,32 @@ public class FrameClassifier {
      * 把画面预计算序列（{@link FrameWork}：整幅像素 / 8·32 多数·均值块压缩，全部分类目录共用同一份）与
      * 某张对照图产物（ref 缓存里已是全像素序列）逐点比对，返回该图「不匹配点占比」百分比（0~100）。
      * 判据按维度类别分两套：交集/多数类（交集六档 same100/90/80/70/60/50、max/major8/major32
-     * 及各自的 -unique、以及全部 12 张点击区交集图 click8/32-same100/90/80/70/60/50）对照颜色是
+     * 及各自的 -unique、以及全部 24 张方框交集图 click8/32-same100/90/80/70/60/50 与
+     * attn8/32-same100/90/80/70/60/50）对照颜色是
      * 样本真实像素，同一状态画面应能逐像素重现 → <b>逐像素完全一致</b>
      * （R/G/B 三通道差都须为 0）才算匹配；均值类（avg/avg8/avg32、dedup-avg/dedup-avg8/dedup-avg32
      * 及各自的 -unique）对照颜色是样本平均 / 去重平均色 → 走逐通道容差
      * {@code execute.rgb-dist-threshold}（三通道差都 ≤ 阈值才算匹配）。
-     * 点击区交集图另按分类点击坐标（cx,cy）在画面上裁同一方框比对：
+     * 方框交集图另在画面上裁同一方框比对：点击区图用鼠标点击点 (acx,acy)、注意区图用注意点 (ccx,ccy)；
      * 框可越出画幅，出界点填透明、与产物同坐标的透明对齐（方框几何与生成端 clickBox 同公式）；
-     * cx/cy < 0（无坐标，正常不会出现）返回 -1。产物与画面分辨率不一致（resize 对齐被破坏）直接抛异常；
+     * 框心 < 0（无坐标，正常不会出现）返回 -1。产物与画面分辨率不一致（resize 对齐被破坏）直接抛异常；
      * 产物口径与该 kind 网格对不上时返回 -1（该图不参与聚合）。
      */
-    private double compareKind(FrameWork work, CachedPx ref, String kind, int cx, int cy) {
-        int[] down = KIND_DOWN.get(kind);
-        if (down == null || down.length != 2) {
+    private double compareKind(FrameWork work, CachedPx ref, String kind, Centers c) {
+        ArtifactKind.Def def = ArtifactKind.of(kind);
+        if (def == null) {
             return -1;
         }
-        int block = down[0];
-        int mode = down[1];   // 1=块内多数 / 0=块内均值 / 2=块内去重均值
-        int distThr = EXACT_KINDS.contains(kind) ? EXACT_MATCH_DIST
-                : executeProperties.getRgbDistThreshold();
+        int block = def.block();
+        int mode = def.mode();   // 1=块内多数 / 0=块内均值 / 2=块内去重均值
+        int distThr = def.exact() ? EXACT_MATCH_DIST : executeProperties.getRgbDistThreshold();
 
-        if (CLICK_CROP_KINDS.contains(kind)) {
-            // 点击区交集图：产物是点击坐标附近整幅 1/8 或 1/32 的方框小图（缓存全像素）。画面按同一
-            // 坐标裁出同尺寸方框逐点比较；框中心不收敛、可越出画幅，出界点画面填透明与产物同坐标的
-            // 透明对齐（产物不足 90% 一致的像素也透明），透明点都不参与统计
+        if (def.crop() != ArtifactKind.Crop.NONE) {
+            // 方框交集图（点击区 / 注意区）：产物是框心附近整幅 1/8 或 1/32 的方框小图（缓存全像素）。
+            // 点击区图按鼠标点击点、注意区图按注意点在画面上裁出同尺寸方框逐点比较；
+            // 框中心不收敛、可越出画幅，出界点画面填透明与产物同坐标的透明对齐，透明点都不参与统计
+            int cx = def.crop() == ArtifactKind.Crop.CLICK ? c.actX() : c.attnX();
+            int cy = def.crop() == ArtifactKind.Crop.CLICK ? c.actY() : c.attnY();
             if (!ref.isFull || cx < 0 || cy < 0) {
                 return -1;
             }
@@ -763,7 +666,7 @@ public class FrameClassifier {
 
     /* ---------------- 像素裁剪 / 块压缩 / 差异判定 ---------------- */
 
-    /** 从全幅画面像素中裁出以 (x0,y0) 为左上角、bw×bh 的方框（点击区交集图比对用：逐像素、不抽样）。
+    /** 从全幅画面像素中裁出以 (x0,y0) 为左上角、bw×bh 的方框（点击区/注意区交集图比对用：逐像素、不抽样）。
      *  x0/y0 可为负、框右/下缘也可越出画面：越界点填透明 0x00000000，与产物端越界透明对齐。 */
     private static int[] cropPixels(int[] px, int w, int h, int x0, int y0, int bw, int bh) {
         int[] out = new int[bw * bh];
@@ -982,16 +885,16 @@ public class FrameClassifier {
         }
         int w = im.getWidth();
         int h = im.getHeight();
-        int[] down = KIND_DOWN.get(kind);
-        boolean isFull = down != null && down.length == 2 && down[0] == 1;   // 全幅 kind（交集六档及 max/avg/dedup-avg 及各自 -unique、点击区方框图）
+        ArtifactKind.Def def = ArtifactKind.of(kind);
+        boolean isFull = def != null && def.block() == 1;   // 全幅 kind（交集六档及 max/avg/dedup-avg 及各自 -unique、两套方框交集图）
         return new CachedPx(attrs.lastModifiedTime().toMillis(), attrs.size(), w, h, isFull,
                 im.getRGB(0, 0, w, h, null, 0, w));
     }
 
-    /** 参与比对必需的对照图是否齐全：30 张（15 基础 + 15 -unique，含交集六档）任何分类都必须有；
-     *  关注点坐标有效（click=点击点 / 无动作=画面关注区域，默认屏幕中心）的分类再需 12 张点击区交集图
-     *  = 42 张（与 ThinkService 的生成条件配套）。
-     *  任一缺失该目录整体跳过（低档图/点击区图文件缺失 = 旧产物未按新规则重算，后台重算后恢复）。 */
+    /** 参与比对必需的对照图是否齐全：30 张（15 基础 + 15 -unique，含交集六档）+ 12 张注意区交集图
+     *  （注意点未设 = 屏幕中心，故每个分类都必须有）；info 记录了点击点（actLeft/actTop）的 click 分类
+     *  再需 12 张点击区交集图（= 54 张）。
+     *  任一缺失该目录整体跳过（旧产物未按新规则重算，后台重算后恢复）。 */
     private static boolean artifactsComplete(Path gdir, Map<String, Object> info) {
         return missingArtifactNames(gdir, info) == null;
     }
@@ -1000,21 +903,31 @@ public class FrameClassifier {
      *  供「该分类被跳过」的原因提示使用（能直接看到缺哪几张，方便定位是未分析还是产物不齐）。 */
     private static String missingArtifactNames(Path gdir, Map<String, Object> info) {
         List<String> miss = new ArrayList<>();
-        for (String f : MATCH_CORE_FILES) {
+        for (String f : filesOf(ArtifactKind.coreKinds())) {
             if (!Files.isRegularFile(gdir.resolve(f))) {
                 miss.add(f);
             }
         }
-        Integer cl = intOf(info.get("clickLeft"));
-        Integer ct = intOf(info.get("clickTop"));
-        if (cl != null && ct != null) {
-            for (String f : MATCH_CLICK_FILES) {
+        for (String f : filesOf(ArtifactKind.attnKinds())) {   // 注意区图每个分类都要求（注意点默认屏幕中心）
+            if (!Files.isRegularFile(gdir.resolve(f))) {
+                miss.add(f);
+            }
+        }
+        Integer al = intOf(info.get("actLeft"));
+        Integer at = intOf(info.get("actTop"));
+        if (al != null && at != null) {       // 只有 click 分类有真实点击点，相应要求点击区图
+            for (String f : filesOf(ArtifactKind.clickKinds())) {
                 if (!Files.isRegularFile(gdir.resolve(f))) {
                     miss.add(f);
                 }
             }
         }
         return miss.isEmpty() ? null : String.join(", ", miss);
+    }
+
+    /** kind 清单 → 产物文件名清单（顺序保持，供齐全性校验与原因提示） */
+    private static List<String> filesOf(List<String> kinds) {
+        return kinds.stream().map(ArtifactKind::file).toList();
     }
 
     /** 汇总输出本轮未参与比对的分类与原因（名单变化或距上次超过 60 秒才打一次，避免识别循环每轮刷屏）。 */
@@ -1053,16 +966,23 @@ public class FrameClassifier {
         return v instanceof Number n ? n.intValue() : null;
     }
 
+    /** 依次取 info 里的两个键（前者优先）：attnLeft/attnTop 为裁剪中心的权威键，
+     *  clickLeft/clickTop 为历史键（旧产物只有它，旧数据里它就是注意点）。 */
+    private static Integer pickInt(Map<String, Object> info, String primary, String legacy) {
+        Integer v = intOf(info.get(primary));
+        return v != null ? v : intOf(info.get(legacy));
+    }
+
     // ---------- 特征验证桥接（供同包 VerifyService 在独立任务中复用识别同口径比对） ----------
 
     /** 验证维度清单 = 识别参与比对的全部 kind（顺序与识别一致）。 */
     static List<String> verifyOrder() {
-        return KIND_ORDER;
+        return ArtifactKind.kinds();
     }
 
     /** kind → 产物文件名（与识别比对同源）。 */
     static String verifyFile(String kind) {
-        return KIND_FILE.get(kind);
+        return ArtifactKind.file(kind);
     }
 
     /** 硬清空产物/原图像素缓存（验证开始前调用）：软引用平时由 GC 择机回收，这里主动一次性腾空更彻底，
@@ -1086,10 +1006,11 @@ public class FrameClassifier {
     }
 
     /** 单张样本（work，已按样本全幅预计算）与单张产物单 kind 逐点比对（识别同口径，0~100）；
+     *  acx/acy = 该分类点击点（点击区图框心）、ccx/ccy = 该分类注意点（注意区图框心）；
      *  产物与画面分辨率不符等不适用情形返回 -1，不抛异常。 */
-    double verifyKindScore(FrameWork work, CachedPx ref, String kind, int ccx, int ccy) {
+    double verifyKindScore(FrameWork work, CachedPx ref, String kind, Centers c) {
         try {
-            return compareKind(work, ref, kind, ccx, ccy);
+            return compareKind(work, ref, kind, c);
         } catch (IllegalArgumentException e) {
             return -1;
         }

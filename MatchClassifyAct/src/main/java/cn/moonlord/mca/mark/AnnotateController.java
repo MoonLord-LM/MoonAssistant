@@ -63,7 +63,8 @@ public class AnnotateController {
     /** 截图目录列表项（含已标注内容的摘要，前端列表可直接展示） */
     public record ImageItem(String name, long size, long lastModified,
                             boolean marked, String state, String action,
-                            Integer left, Integer top) {
+                            Integer left, Integer top,
+                            Integer attnLeft, Integer attnTop) {
     }
 
     private final StoragePaths storage;
@@ -95,6 +96,8 @@ public class AnnotateController {
             String action = null;
             Integer left = null;
             Integer top = null;
+            Integer attnLeft = null;
+            Integer attnTop = null;
             boolean marked = false;
             // classify/ 下的样本：动作与坐标以中心表定义为准（样本 json 只存 state 归属）
             if (png.startsWith(storage.classify())) {
@@ -105,12 +108,14 @@ public class AnnotateController {
                     action = m.getAction();
                     left = m.getLeft();
                     top = m.getTop();
+                    attnLeft = m.getAttnLeft();
+                    attnTop = m.getAttnTop();
                 }
             }
             try {
                 items.add(new ImageItem(e.getKey(), Files.size(png),
                     Files.getLastModifiedTime(png).toMillis(),
-                    marked, state, action, left, top));
+                    marked, state, action, left, top, attnLeft, attnTop));
             } catch (IOException ex) {
                 log.debug("跳过不可读的截图 {}: {}", e.getKey(), ex.toString());
             }
@@ -217,21 +222,42 @@ public class AnnotateController {
         CaptureMark adopted;
         if (existingDef == null || redef || vacantDef) {
             // 首次定义 / 原分类内重定义 / 空定义覆盖：以本次提交内容作为该分类的唯一动作。
-            // 任一动作都须给出关注点坐标（click=点击位置，无动作=画面关注区域；未选点默认屏幕中心，
-            // 前端已自动带默认中心，点击区图以该坐标为中心生成）
+            // 点击点（left/top）与注意点（attnLeft/attnTop）互相独立：
+            //  click 分类必须给出鼠标点击点（默认屏幕中心）；无动作分类无点击点、必须给出注意点
+            //  （默认屏幕中心）；click 分类的注意点也可选，未设 = 默认屏幕中心（不再回退点击点）。
+            //  前端已自动带默认中心。
             String action = mark.getAction();
             Integer left = mark.getLeft();
             Integer top = mark.getTop();
-            if (left == null || top == null || left < 0 || top < 0) {
-                return ResponseEntity.badRequest().body(
-                    "「" + state + "」是首次使用（或重定义），必须提供非负的关注点坐标 left/top"
-                        + "（无动作分类默认屏幕中心，请在图上点选）");
-            }
-            if (!CaptureMark.ACTION_CLICK.equals(action)) {
+            Integer attnLeft = mark.getAttnLeft();
+            Integer attnTop = mark.getAttnTop();
+            boolean click = CaptureMark.ACTION_CLICK.equals(action);
+            if (click) {
+                if (left == null || top == null || left < 0 || top < 0) {
+                    return ResponseEntity.badRequest().body(
+                        "「" + state + "」是首次使用（或重定义），click 分类必须提供非负的鼠标点击坐标 left/top"
+                            + "（未点选时默认屏幕中心，请在图上点选）");
+                }
+            } else {
                 action = CaptureMark.ACTION_NONE;
+                // 兼容旧页面/旧数据形状：无动作分类若只给了 left/top（旧“关注点”）则视为注意点
+                if ((attnLeft == null || attnTop == null) && left != null && top != null) {
+                    attnLeft = left;
+                    attnTop = top;
+                }
+                left = null;
+                top = null;
+            }
+            if (attnLeft != null && (attnLeft < 0 || attnTop == null || attnTop < 0)) {
+                return ResponseEntity.badRequest().body("注意点坐标须成对且非负（attnLeft/attnTop）");
+            }
+            if (!click && (attnLeft == null || attnTop == null)) {
+                return ResponseEntity.badRequest().body(
+                    "「" + state + "」是首次使用（或重定义），无动作分类必须提供非负的注意点坐标 attnLeft/attnTop"
+                        + "（未点选时默认屏幕中心，请在图上点选）");
             }
             try {
-                adopted = classifyStore.define(state, action, left, top);
+                adopted = classifyStore.define(state, action, left, top, attnLeft, attnTop);
             } catch (IOException e) {
                 log.error("写分类定义表失败 {}: {}", state, e.toString());
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
