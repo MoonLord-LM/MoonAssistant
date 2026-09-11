@@ -11,3 +11,4 @@ summary/
 !**/src/test/**/summary/
 
 *.exe
+*.json
