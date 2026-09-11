@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,19 +28,25 @@ import java.util.stream.Stream;
  *
  * <p>按某一种算法生成了每个分类的汇总图后，把 classify/ 的全部已标注原图逐张与【全部分类】的
  * 同 kind 汇总图按识别同口径逐点比对（复用 {@link FrameClassifier} 的产物/原图缓存与比对桥接），
- * 统计三个评价指标：
+ * 统计五个评价指标（对外顺序 A → E，内部字段对应见下）：
  * <ul>
- * <li>A：每个原图与「自己分类的该算法生成图」比对的匹配像素占比（= 100 − 不匹配占比），
- * 取全部原图的平均值（越高越好，表明样本比较集中；无法生成有效图的样本按 0 计入）；</li>
- * <li>B：生成成功率 = 能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例
+ * <li>A = {@link KindStat#b} 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例
  * （越高说明该算法适用的分类越多）；</li>
- * <li>C：匹配正确率 = 只在「能生成有效图的分类」的样本里，与【全部分类】同 kind 汇总图比对、
- * 匹配度最高的刚好是自己分类的占比（越高说明算法区分度越好）；无法生成有效图的分类不进这个
- * 分母，其明细行的 A/C 显示为「——」而不是 0%。</li>
+ * <li>B = {@link KindStat#a} 自分类平均匹配值：归属分类生成了有效图的样本，其原图与「自己分类的该算法
+ * 生成图」比对的匹配占比均值（= 100 − 不匹配占比），越高样本越集中；产物无效分类的样本不参与统计；</li>
+ * <li>C = {@link KindStat#other} 其它分类平均匹配值：其它分类的原图与「该分类的该算法生成图」比对的
+ * 匹配占比均值（= 100 − 不匹配占比），越低越说明该产物不易被别的分类原图匹配、区分度越好；同样只统计
+ * 产物有效的分类；</li>
+ * <li>D = {@link KindStat#c} 匹配正确率：在产物有效的分类里，样本与【全部分类】同 kind 汇总图比对、
+ * 最佳命中「唯一最高」且恰是自己分类的占比（越高说明算法区分度越好）。无法生成有效图的不参与统计，
+ * 无法给出最高值的结果（最高分被 ≥2 个分类并列、分不出该选哪一类）的也不参与统计（只计入 E）
+ * → 分母 = 命中 + 误判；</li>
+ * <li>E = {@link KindStat#e} 无法区分率：可匹配样本里「无法给出最高值的结果」的占比（越低越好）。
+ * 分母 = 全部可匹配样本：命中 + 无法区分 + 误判 = 可匹配样本数（与 D 的分母不同）。</li>
  * </ul>
  * 没有该 kind 产物的分类（如旧目录尚未重算补齐点击区图等）＝无判别点：与「0 像素空图」同口径，判
- * 完全不匹配、对外匹配占比按 0 计入并照常参与 A（其样本自分类 A 恒为 0），但不计入 C 的分母与命中，
- * 也不因缺产物而跳过这些分类及其原图。
+ * 完全不匹配，但不进任何一个指标的分母（其明细行的数值列显示「——」而不是 0%），也不因缺产物而
+ * 跳过这些分类及其原图的枚举。
  * 按算法逐 kind 独立计算、完成后按「当前样本/产物指纹」缓存结果并标记是否过期（样本或产物有
  * 改动后需重新验证）。独立后台任务线程跑，结果只存内存不落盘。
  */
@@ -75,23 +82,31 @@ public class VerifyService {
         public final String fp;
         public final long doneMs;
         public final int costMs;
-        /** A = 自分类平均匹配值（%，匹配占比均值；无有效产物的样本按 0 计入）。 */
+        /** 卡片 B = 自分类平均匹配值（%）：产物有效分类的样本「与自家产物比对」的匹配占比均值；无效产物样本不计。 */
         public final Double a;
-        /** B = 生成成功率（%）：能生成有效合成图的分类数 / 参与分类数。 */
+        /** 卡片 A = 生成成功率（%）：能生成有效合成图的分类数 / 参与分类数。 */
         public final Double b;
-        /** C = 匹配正确率（%）：可匹配样本（归属分类有有效合成图）里最佳命中恰是自家分类的占比。 */
+        /** 卡片 C = 其它分类平均匹配值（%）：其它分类样本与该分类产物比对的匹配占比均值，越低越好。 */
+        public final Double other;
+        /** 卡片 D = 匹配正确率（%）：最佳命中「唯一最高」且恰是自家分类的占比。无法生成有效图的不参与统计，
+         *  无法给出最高值的结果（最高分被 ≥2 个分类并列）的也不参与统计（只计入 E）→ 分母 = 可匹配样本数 − 无法区分样本数。 */
         public final Double c;
-        /** 有效产物分类数（B 分子）与参与分类数（B 分母）。 */
+        /** 卡片 E = 无法区分率（%）：全部可匹配样本里「无法给出最高值的结果（最高分被 ≥2 个分类并列、分不出该选哪一类）」的占比。 */
+        public final Double e;
+        /** 无法区分样本数（E 分子；D 分母 = cSamples − tie）。 */
+        public final int tie;
+        /** 有效产物分类数（A 分子）与参与分类数（A 分母）。 */
         public final int genOk;
         public final int genTotal;
-        /** 可匹配样本数（C 分母）。 */
+        /** 可匹配样本数（B / E 分母；D 的分母 = 它 − 无法区分样本数）。 */
         public final int cSamples;
         public final int samples;
         public final int groups;
         public final List<Map<String, Object>> rows;
 
         public KindStat(String kind, String fp, long doneMs, int costMs,
-                        Double a, Double b, Double c, int genOk, int genTotal, int cSamples,
+                        Double a, Double b, Double other, Double c, Double e, int tie,
+                        int genOk, int genTotal, int cSamples,
                         int samples, int groups, List<Map<String, Object>> rows) {
             this.kind = kind;
             this.fp = fp;
@@ -99,7 +114,10 @@ public class VerifyService {
             this.costMs = costMs;
             this.a = a;
             this.b = b;
+            this.other = other;
             this.c = c;
+            this.e = e;
+            this.tie = tie;
             this.genOk = genOk;
             this.genTotal = genTotal;
             this.cSamples = cSamples;
@@ -153,8 +171,9 @@ public class VerifyService {
         }
     }
 
-    /** 产物是否有有效像素（存在任一点不透明，命中即返回）；解码失败 / 全透明空图 = 生成不出有效图。 */
-    private static boolean hasPixels(FrameClassifier.CachedPx art) {
+    /** 产物是否有有效像素（存在任一点不透明，命中即返回）；解码失败 / 全透明空图 = 生成不出有效图。
+     *  算法调优（OptimizeService）判定「可匹配样本」时共用同一口径，保证 D 与算法匹配正确率可对齐。 */
+    static boolean hasPixels(FrameClassifier.CachedPx art) {
         if (art == null) {
             return false;
         }
@@ -178,6 +197,16 @@ public class VerifyService {
     /** 当前任务进度（无任务时 null）。 */
     public Run currentRun() {
         return run;
+    }
+
+    /** 当前样本 / 产物指纹（供算法调优判断验证结果是否新鲜；内部 3 秒缓存）。 */
+    public String fingerprint() {
+        return fp();
+    }
+
+    /** 某 kind 的验证结果（未验证返回 null）：算法调优读取 A/B/C/D 与分类级明细来组合特征、算基础分 X。 */
+    public KindStat statOf(String kind) {
+        return kind == null ? null : results.get(kind);
     }
 
     /** 启动一次完整验证（计算全部 kind）；已有任务在跑时拒绝并返回 false。 */
@@ -250,6 +279,7 @@ public class VerifyService {
                 k.put("a", null);
                 k.put("b", null);
                 k.put("c", null);
+                k.put("e", null);
                 k.put("genOk", 0);
                 k.put("genTotal", 0);
                 k.put("samples", 0);
@@ -257,8 +287,9 @@ public class VerifyService {
                 boolean fresh = fp.equals(st.fp);
                 k.put("state", fresh ? "done" : "stale");
                 k.put("a", st.a);
-                k.put("b", st.b);          // B 生成成功率（%）
-                k.put("c", st.c);          // C 匹配正确率（%）
+                k.put("b", st.b);          // 生成成功率（%）
+                k.put("c", st.c);          // 匹配正确率（%）
+                k.put("e", st.e);          // 无法区分率（%）
                 k.put("genOk", st.genOk);
                 k.put("genTotal", st.genTotal);
                 k.put("samples", st.samples);
@@ -298,9 +329,12 @@ public class VerifyService {
         out.put("fresh", fp().equals(st.fp));
         out.put("doneMs", st.doneMs);
         out.put("costMs", st.costMs);
-        out.put("a", st.a);
-        out.put("b", st.b);              // B 生成成功率（%）：genOk / genTotal
-        out.put("c", st.c);              // C 匹配正确率（%）：可匹配样本里最佳命中恰是自家分类的占比
+        out.put("a", st.a);              // 自分类平均匹配值（%）
+        out.put("b", st.b);              // 生成成功率（%）：genOk / genTotal
+        out.put("other", st.other);      // 其它分类平均匹配值（%）：越低越好
+        out.put("c", st.c);              // 匹配正确率（%）：能给出结果的样本（可匹配 − 无法区分）里最佳命中恰是自家分类的占比
+        out.put("e", st.e);              // 无法区分率（%）：全部可匹配样本里无法给出最高值的结果（并列）的占比
+        out.put("tie", st.tie);          // 无法区分样本数（D 分母 = cSamples − tie）
         out.put("genOk", st.genOk);
         out.put("genTotal", st.genTotal);
         out.put("cSamples", st.cSamples);
@@ -418,7 +452,8 @@ public class VerifyService {
         return out;
     }
 
-    /** 算一个 kind 的 A / B 与分类级明细。works = 本验证轮共享的每样本画面块压缩缓存（键 = 原图路径）。 */
+    /** 算一个 kind 的四个指标（A 生成成功率 / B 自分类平均匹配值 / C 其它分类平均匹配值 / D 匹配正确率）与分类级明细。
+     *  works = 本验证轮共享的每样本画面块压缩缓存（键 = 原图路径）。 */
     private KindStat computeKind(String kind, String fp, List<Ctx> groups, List<Smp> samples,
                                  Map<String, FrameClassifier.FrameWork> works) {
         long t0 = System.currentTimeMillis();
@@ -426,8 +461,8 @@ public class VerifyService {
 
         // 参与目录 = 全部分类目录（每个分类都生成全套 42 张产物，含 12 张注意区图；
         // click 分类另有 12 张点击区图 = 54 张；缺该 kind 产物只发生在旧目录尚未重算补齐时）。
-        // 没有本 kind 产物的分类＝无判别点，与「0 像素空图」同口径：判完全不匹配（内部按不匹配占比 100 算，
-        // 对外 A 即匹配占比 0）、照常参与 A/B（自分类无法匹配、也永远不会被别的样本命中）；解码失败同视为无产物。
+        // 没有本 kind 产物的分类＝无判别点，与「0 像素空图」同口径：判完全不匹配（内部按不匹配占比 100 算）、
+        // 不进任何指标统计（只用于让该分类行显示「——」）；解码失败同视为无产物。
         List<Cand> cands = new ArrayList<>();
         int real = 0;
         for (Ctx c : groups) {
@@ -440,7 +475,7 @@ public class VerifyService {
         }
         if (real == 0) {
             return new KindStat(kind, fp, System.currentTimeMillis(), (int) (System.currentTimeMillis() - t0),
-                    null, null, null, 0, 0, 0, 0, 0, List.of());
+                    null, null, null, null, null, 0, 0, 0, 0, 0, 0, List.of());
         }
 
         // 目录下标 → 参与目录下标（用于定位样本的“自分类”产物）
@@ -449,15 +484,25 @@ public class VerifyService {
             posOf.put(cands.get(j).ctx.idx(), j);
         }
 
-        // 该 kind 的样本群：全部分类都有参与位（无产物者按不匹配占比满值 100 参与，对外 A = 匹配占比 0），故归属在扫描目录里的原图全数计入
+        // 该 kind 的样本群：全部分类都有参与位（无产物者按不匹配占比满值 100 参与比对，但不进任何指标统计），
+        // 故归属在扫描目录里的原图全数计入
         List<Smp> pop = samples.stream().filter(s -> posOf.containsKey(s.own().idx())).toList();
         int n = pop.size();
         double[] selfScore = new double[n];
         double[] bestScore = new double[n];
+        // 每张样本最佳命中（不匹配占比最小）的分类下标：用于 D 的误判明细；-1 = 未进统计（样本被跳过等）
+        int[] bestPos = new int[n];
+        // C 其它分类平均匹配值：内部累加「不匹配占比」（对外取 100 − 均值）；只统计产物有效的其它分类与归属分类有效的样本
+        double[] otherSum = new double[1];
+        int[] otherCnt = new int[1];
         for (int i = 0; i < n; i++) {
             selfScore[i] = -1;
             bestScore[i] = Double.POSITIVE_INFINITY;
+            bestPos[i] = -1;
         }
+        // 无法区分（最佳匹配被 ≥2 个分类并列）：E 的分子按分类累计，并列到的分类名写进 tiedOf 供明细弹窗展示
+        String[] tiedOf = new String[n];
+        int[] tieCnt = new int[cands.size()];
         double[] selfSum = new double[cands.size()];
         int[] cnt = new int[cands.size()];
         int[] hit = new int[cands.size()];
@@ -486,16 +531,19 @@ public class VerifyService {
                 FrameClassifier.FrameWork prev = works.putIfAbsent(wkey, built);
                 work = prev == null ? built : prev;
             }
+            int vs = cands.size();
+            double[] sv = new double[vs];   // 本样本与每个分类同类产物的不匹配占比；<0 = 比不了（分辨率等异常）
             double self = -1;
-            double best = Double.POSITIVE_INFINITY;
+            double omSum = 0;   // 本样本与「其它分类的该类产物」的不匹配占比之和（C 的分子）
+            int omCnt = 0;
             int ownPos = selfOf[i];
-            boolean ownOk = cands.get(ownPos).valid;   // 自己的分类生成了有效图才算「可匹配样本」（C 的分母）
-            for (int j = 0; j < cands.size(); j++) {
+            boolean ownOk = cands.get(ownPos).valid;   // 自己的分类生成了有效图才算「可匹配样本」（B / D / E 分母）
+            for (int j = 0; j < vs; j++) {
                 Cand cd = cands.get(j);
                 double s;
                 if (cd.art == null) {
                     // 该分类没有本 kind 产物（如旧目录尚未重算、缺方框图）＝无判别点：同 0 像素空图判完全不匹配
-                    // （不匹配占比 100，对外 A = 匹配占比 0）
+                    // （不匹配占比 100）；该分类及其样本不进任何指标统计，只在明细行显示「——」
                     s = 100.0;
                 } else {
                     // 点击区图按鼠标点击点裁框、注意区图按注意点裁框；缺点击点的分类由识别端回退注意点
@@ -505,27 +553,71 @@ public class VerifyService {
                             cd.ctx.attnLeft() == null ? 0 : cd.ctx.attnLeft(),
                             cd.ctx.attnTop() == null ? 0 : cd.ctx.attnTop()));
                     if (s < 0) {
+                        sv[j] = -1;
                         continue;
                     }
                 }
+                sv[j] = s;
                 if (j == ownPos) {
                     self = s;
+                } else if (cd.valid && ownOk) {
+                    omSum += s;   // C：别的分类的原图 vs 该分类产物（仅产物有效、且样本归属分类有效时统计）
+                    omCnt++;
                 }
-                if (s < best) {
-                    best = s;
+            }
+            // 最佳命中只在「生成了有效产物」的分类里选：没有产物的分类＝无判别点（不匹配占比恒 100），
+            // 不可能被选中，也就不该参与「有没有并列」的判定
+            double best = Double.POSITIVE_INFINITY;
+            int bestAt = -1;    // 本样本最佳命中的分类下标（D 的误判明细用）
+            int bestCnt = 0;    // 与最佳命中同分的有效分类个数：≥2 = 分值一样、分不出该选哪一类
+            for (int j = 0; j < vs; j++) {
+                if (sv[j] < 0 || !cands.get(j).valid) {
+                    continue;
+                }
+                if (sv[j] < best) {
+                    best = sv[j];
+                    bestAt = j;
+                    bestCnt = 1;
+                } else if (sv[j] == best) {
+                    bestCnt++;
                 }
             }
             if (self < 0 || best == Double.POSITIVE_INFINITY) {
                 return;
             }
+            // 并列（分值一样、分不出该选哪一类）= 「无法给出最高值的结果」：不进 D 的分母（命中 + 误判），
+            // 单独计入 E（无法区分率）；并列到哪些分类记下来，供前端「查看详细」弹窗解释
+            boolean tie = ownOk && bestCnt >= 2;
+            String tiedStr = null;
+            if (tie) {
+                StringBuilder sb = new StringBuilder();
+                for (int j = 0; j < vs; j++) {
+                    if (j == ownPos || sv[j] < 0 || sv[j] != best || !cands.get(j).valid) {
+                        continue;
+                    }
+                    if (sb.length() > 0) {
+                        sb.append('、');
+                    }
+                    sb.append(cands.get(j).ctx.state());
+                }
+                tiedStr = sb.toString();
+            }
             synchronized (selfSum) {
                 selfScore[i] = self;
                 bestScore[i] = best;
+                bestPos[i] = bestAt;
+                tiedOf[i] = tiedStr;
                 selfSum[ownPos] += self;
                 cnt[ownPos]++;
-                if (ownOk && self == best) {
-                    hit[ownPos]++;   // 无法生成有效图的样本命中一定不算（C 只统计可匹配样本）
+                if (ownOk) {
+                    if (tie) {
+                        tieCnt[ownPos]++;   // E：可匹配样本里最佳匹配被 ≥2 个分类并列的
+                    } else if (self == best) {
+                        hit[ownPos]++;      // D：最佳命中唯一且恰是自家才算命中（产物无效的样本一定不算）
+                    }
                 }
+                otherSum[0] += omSum;
+                otherCnt[0] += omCnt;
             }
             Run rr = run;
             if (rr != null) {
@@ -533,12 +625,13 @@ public class VerifyService {
             }
         });
 
-        // 整库汇总 + 分类级行
-        int totalSamples = 0;
-        double totalA = 0;
-        int totalValid = 0;    // 可匹配样本数（C 分母）：归属分类生成了有效合成图的样本
-        int hitValid = 0;      // 其中最佳命中恰是自家分类的样本数（C 分子）
-        int genOk = 0;         // 生成了有效合成图的分类数（B 分子）
+        // 整库汇总 + 分类级行（B / C / D 的统计一律排除「该分类没生成有效图」的样本）
+        int totalSamples = 0;     // 全部参与分类的样本数（仅用于「样本 N 张」展示）
+        double selfValidSum = 0;  // B（自分类平均匹配值）分子：产物有效分类样本的不匹配占比之和
+        int totalValid = 0;       // B / E 的分母：可匹配样本数（归属分类生成了有效合成图）
+        int hitValid = 0;         // D（匹配正确率）分子：其中最佳命中唯一且恰是自家分类的样本数
+        int tieValid = 0;         // E（无法区分率）分子：其中最佳匹配被 ≥2 个分类并列的样本数
+        int genOk = 0;            // A（生成成功率）分子：生成了有效合成图的分类数
         List<Map<String, Object>> rows = new ArrayList<>();
         for (int j = 0; j < cands.size(); j++) {
             Cand cd = cands.get(j);
@@ -550,10 +643,11 @@ public class VerifyService {
                 continue;
             }
             totalSamples += c;
-            totalA += selfSum[j];
             if (cd.valid) {
                 totalValid += c;
                 hitValid += hit[j];
+                tieValid += tieCnt[j];
+                selfValidSum += selfSum[j];
             }
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("state", cd.ctx.state());
@@ -563,21 +657,72 @@ public class VerifyService {
             row.put("valid", cd.valid);           // 该分类此特征是否生成了有效合成图：false → 前端数值列显示「——」
             row.put("missing", cd.art == null);   // 连产物文件都没有（与「产物存在但全透明」区分展示）
             row.put("samples", c);
-            // A 对外 = 匹配像素占比均值；内部 selfSum 累加的是不匹配占比，故输出取 100 − 均值
-            row.put("a", 100.0 - selfSum[j] / c);
-            // C（该分类行）：只有有效产物分类才有可匹配样本；无法生成有效图 → null（显示「——」而不是 0%）
-            row.put("c", cd.valid ? hit[j] * 100.0 / c : null);
+            // B（该分类行）= 自分类匹配占比均值；内部 selfSum 累加的是不匹配占比，故输出取 100 − 均值；
+            // 无法生成有效图 → null（显示「——」而不是 0%，其样本不进任何指标统计）
+            row.put("a", cd.valid ? 100.0 - selfSum[j] / c : null);
+            // D（该分类行）：无法生成有效图的不参与统计、无法给出最高值的结果（最高分被 ≥2 个分类并列）的
+            // 也不参与统计（只计入 E）→ 分母 = 可匹配样本 − 无法区分样本（= 命中 + 误判）；
+            // 一个都判不出来时给 null（显示「——」，而不是 0%）；无法生成有效图同样给 null
+            int decided = c - tieCnt[j];
+            row.put("c", cd.valid && decided > 0 ? hit[j] * 100.0 / decided : null);
             row.put("hit", hit[j]);
+            row.put("decided", cd.valid ? decided : null);   // 本分类「能给出结果」的样本数（D 的分母）
+            // E（该分类行）= 无法区分率：分母 = 本分类全部可匹配样本（命中 + 无法区分 + 误判）
+            row.put("e", cd.valid ? tieCnt[j] * 100.0 / c : null);
+            row.put("tie", tieCnt[j]);
+            // D 的误判明细（前端「查看详细」弹窗逐图列出）：可匹配样本里最佳命中「唯一且」不是自家分类的，
+            // 按「被误判到的分类」再按原图名排序；命中 / 自家分值 = 匹配占比（100 − 不匹配占比），越高越像
+            List<Map<String, Object>> wrongs = new ArrayList<>();
+            // E 的无法区分明细：最佳匹配并列 ≥2 个分类的样本，列出并列到的分类名
+            List<Map<String, Object>> tieds = new ArrayList<>();
+            if (cd.valid) {
+                for (int i = 0; i < n; i++) {
+                    // 并列的样本归 E 明细（tieds），不算「误判」
+                    if (selfOf[i] != j || tiedOf[i] != null || bestPos[i] < 0 || bestScore[i] >= selfScore[i]) {
+                        continue;
+                    }
+                    Cand hitCand = cands.get(bestPos[i]);
+                    Map<String, Object> w = new LinkedHashMap<>();
+                    w.put("file", pop.get(i).png().getFileName().toString());
+                    w.put("hitState", hitCand.ctx.state());
+                    w.put("hitAction", hitCand.ctx.action());
+                    w.put("hitScore", 100.0 - bestScore[i]);
+                    w.put("selfScore", 100.0 - selfScore[i]);
+                    wrongs.add(w);
+                }
+                for (int i = 0; i < n; i++) {
+                    if (selfOf[i] != j || tiedOf[i] == null) {
+                        continue;
+                    }
+                    Map<String, Object> w = new LinkedHashMap<>();
+                    w.put("file", pop.get(i).png().getFileName().toString());
+                    w.put("selfScore", 100.0 - selfScore[i]);
+                    w.put("hitScore", 100.0 - bestScore[i]);
+                    w.put("tiedWith", tiedOf[i]);
+                    tieds.add(w);
+                }
+                wrongs.sort(Comparator.comparing((Map<String, Object> w) -> String.valueOf(w.get("hitState")))
+                        .thenComparing(w -> String.valueOf(w.get("file"))));
+                tieds.sort(Comparator.comparing((Map<String, Object> w) -> String.valueOf(w.get("tiedWith")))
+                        .thenComparing(w -> String.valueOf(w.get("file"))));
+            }
+            row.put("wrong", wrongs);
+            row.put("wrongCount", wrongs.size());
+            row.put("tied", tieds);
+            row.put("tiedCount", tieds.size());
             rows.add(row);
         }
         rows.sort((a, b) -> String.valueOf(a.get("state")).compareTo(String.valueOf(b.get("state"))));
 
-        // totalA 是全部样本的不匹配占比之和 → 对外 A = 匹配占比均值 = 100 − 均值
-        Double A = totalSamples == 0 ? null : 100.0 - totalA / totalSamples;
-        Double B = cands.isEmpty() ? null : genOk * 100.0 / cands.size();    // B = 生成成功率（按分类计）
-        Double C = totalValid == 0 ? null : hitValid * 100.0 / totalValid;   // C = 匹配正确率（按可匹配样本计）
+        // selfValidSum 是产物有效分类样本的不匹配占比之和 → B = 匹配占比均值 = 100 − 均值
+        Double A = totalValid == 0 ? null : 100.0 - selfValidSum / totalValid;   // 自分类平均匹配值（按可匹配样本计）
+        Double B = cands.isEmpty() ? null : genOk * 100.0 / cands.size();        // 生成成功率（按分类计）
+        Double OTHER = otherCnt[0] == 0 ? null : 100.0 - otherSum[0] / otherCnt[0];   // 其它分类平均匹配值
+        int decidedValid = totalValid - tieValid;   // D 的分母 = 能给出结果的可匹配样本（命中 + 误判），不含无法区分的
+        Double D = decidedValid == 0 ? null : hitValid * 100.0 / decidedValid;   // 匹配正确率（按能给出结果的样本计）
+        Double E = totalValid == 0 ? null : tieValid * 100.0 / totalValid;       // 无法区分率（按全部可匹配样本计）
         return new KindStat(kind, fp, System.currentTimeMillis(), (int) (System.currentTimeMillis() - t0),
-                A, B, C, genOk, cands.size(), totalValid, totalSamples, cands.size(), rows);
+                A, B, OTHER, D, E, tieValid, genOk, cands.size(), totalValid, totalSamples, cands.size(), rows);
     }
 
     private static Integer intOf(Object v) {

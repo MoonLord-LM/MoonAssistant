@@ -105,52 +105,10 @@ public class FrameClassifier {
      *  无动作分类只有注意区 12 张）权 15。每族先对族内各图「不匹配点占比」等权平均得族均值，
      *  差异度 = (50A+15B+10C+10D+15E)/W：W = 适用族的权重之和，
      *  产物齐全的参与分类五族俱备、恒为 100；空图（产物无任何有效像素、无法做区分）按完全不匹配满值计、照常参与。 */
-    /** 默认五族权重（A 全图交集 50 / B 多数 15 / C 均值 10 / D 去重均值 10 / E 方框交集区 15）。
-     *  可经「算法调优」按已标注样本自动寻优后运行时修改（volatile 数组，aggregateDiff 每次拷贝读取）。 */
+    /** 默认五族权重（A 全图交集 50 / B 多数 15 / C 均值 10 / D 去重均值 10 / E 方框交集区 15），固定不可调。 */
     private static final int[] DEFAULT_FAMILY_WEIGHTS = {50, 15, 10, 10, 15};
-    private volatile int[] familyWeights = {50, 15, 10, 10, 15};
+    private final int[] familyWeights = DEFAULT_FAMILY_WEIGHTS.clone();
 
-    /** 当前生效的五族权重（拷贝返回，只读安全）；未运行时调优过即默认值 */
-    public int[] familyWeights() {
-        return familyWeights.clone();
-    }
-
-    /** kind 所属权重族下标（0..ArtifactKind.familyCount()-1；未知/不属于任何族返回 -1），算法调优按族聚合时使用 */
-    public int familyIndexOf(String kind) {
-        if (kind == null) {
-            return -1;
-        }
-        for (int i = 0; i < ArtifactKind.familyCount(); i++) {
-            if (ArtifactKind.familyKinds(i).contains(kind)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /** 恢复默认五族权重 */
-    public void resetFamilyWeights() {
-        familyWeights = DEFAULT_FAMILY_WEIGHTS.clone();
-    }
-
-    /** 默认五族权重（拷贝返回，只读安全） */
-    public int[] defaultWeights() {
-        return DEFAULT_FAMILY_WEIGHTS.clone();
-    }
-
-    /** 运行时设置五族权重（须 5 个非负值）；算法调优页应用结果时调用 */
-    public void setFamilyWeights(int[] w) {
-        if (w == null || w.length != ArtifactKind.familyCount()) {
-            throw new IllegalArgumentException("五族权重须为 " + ArtifactKind.familyCount() + " 个非负值");
-        }
-        int[] copy = w.clone();
-        for (int v : copy) {
-            if (v < 0) {
-                throw new IllegalArgumentException("五族权重须非负");
-            }
-        }
-        this.familyWeights = copy;
-    }
     /** 全幅对照图约 3.7MB/张：当前规模 82 组 3226 张产物约 5.5GB、classify 原图数百张，由 restart.cmd 的 -Xmx16g
      *  提供充足堆空间让软引用缓存全部驻留；内存吃紧时缓存条目被 JVM 自动回收，不再需要手动上调 -Xmx。 */
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -437,7 +395,7 @@ public class FrameClassifier {
      *  按不匹配占比满值计入并照常参与族均值；-1 仅产物缺失 / 比对口径不符的异常防御路径返回
      *  （产物齐全时不会出现），该图跳过不参与族均值。 */
     private double aggregateDiff(Map<String, KindScore> scores) {
-        int[] w = familyWeights;   // 每次拷贝读取，权重调优时数据一致
+        int[] w = familyWeights;   // 固定默认权重
         double sum = 0;
         int wsum = 0;
         for (int i = 0; i < ArtifactKind.familyCount(); i++) {

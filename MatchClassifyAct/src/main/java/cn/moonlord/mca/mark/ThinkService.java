@@ -239,9 +239,14 @@ public class ThinkService {
         }
     }
 
-    /** 提交到串行计算池并登记队列标签；任务结束（含异常）自动出队 */
+    /** 提交到串行计算池并登记队列标签；任务结束（含异常）自动出队（key 内部生成，仅供出队匹配） */
     private void submitPool(String label, Runnable body) {
-        Object key = new Object();
+        submitPool(label, new Object(), body);
+    }
+
+    /** 提交到串行计算池并登记队列标签；key 为队列身份（分析 / 重建任务传 Task 本身，
+     *  使 {@link #refreshQueueState(Task)} 能查到「前面还有几个任务」并向前端显示排队进度）；任务结束自动出队 */
+    private void submitPool(String label, Object key, Runnable body) {
         synchronized (thinkQueue) {
             thinkQueue.add(new ThinkQ(key, label));
         }
@@ -348,7 +353,7 @@ public class ThinkService {
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, force);
         tasks.put(id, t);
-        submitPool("批量汇总分析", () -> runAnalyze(t));
+        submitPool("批量汇总分析", t, () -> runAnalyze(t));
         return id;
     }
 
@@ -366,7 +371,7 @@ public class ThinkService {
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, true, true);
         tasks.put(id, t);
-        submitPool("重新生成全部", () -> runAnalyze(t));
+        submitPool("重新生成全部", t, () -> runAnalyze(t));
         return id;
     }
 
@@ -847,6 +852,19 @@ public class ThinkService {
      * 它不参与列表排序、不作为识别比对样本，仅供整体目检。</p>
      */
     public List<Map<String, Object>> groups() {
+        return groups(null);
+    }
+
+    /** {@link #groups()} 的带进度版本：后台任务（{@code t != null}）逐组合回报准备阶段进度，
+     *  前端右栏据此显示「正在统计待分析组合：37/95 个分类（分类标注 ｜ 动作）（已耗时 1 分 59 秒）」，不再是一句笼统的「正在准备…」 */
+    private List<Map<String, Object>> groups(Task t) {
+        if (t != null) {
+            t.stage = 0;                 // 准备阶段：还没开始生成对照图
+            t.prepAct = "统计待分析组合";
+            t.prepUnit = "个分类";
+            t.prepTotal = 0;
+            t.prepCur = "扫描已标注样本";
+        }
         List<Path> pngs = annotatedPngs();
         Map<String, List<CaptureMark>> byKey = new LinkedHashMap<>();
         Map<String, Set<String>> actionsOf = new HashMap<>();
@@ -860,7 +878,12 @@ public class ThinkService {
             actionsOf.computeIfAbsent(state, k -> new HashSet<>()).add(action);
             byKey.computeIfAbsent(state + "\u0001" + action, k -> new ArrayList<>()).add(m);
         }
+        if (t != null) {
+            t.prepTotal = byKey.size();   // 组合数确定：下面逐组合核对产物是否齐全 / 是否为旧规则产物
+            t.prepCur = "";
+        }
         List<Map<String, Object>> out = new ArrayList<>();
+        int gi = 0;
         for (Map.Entry<String, List<CaptureMark>> e : byKey.entrySet()) {
             String[] sa = e.getKey().split("\u0001", 2);
             String state = sa[0];
@@ -868,6 +891,10 @@ public class ThinkService {
             List<CaptureMark> marks = e.getValue();
             boolean multiAction = actionsOf.getOrDefault(state, Set.of()).size() > 1;
             String dir = dirNameOf(state, action, multiAction);
+            if (t != null) {
+                t.prepDone = ++gi;        // 准备阶段进度：正在核对第几个组合
+                t.prepCur = state + " ｜ " + actionLabel(action);
+            }
 
             Map<String, Object> g = new LinkedHashMap<>();
             g.put("state", state);
@@ -1098,10 +1125,10 @@ public class ThinkService {
     private void runAnalyze(Task t) {
         try {
             if (t.rebuild) {
-                wipeSummary();
+                wipeSummary(t);
                 log.info("一键重建：summary/ 已清空，开始全量重建全部对照图");
             }
-            List<Map<String, Object>> groups = groups();
+            List<Map<String, Object>> groups = groups(t);
             List<Map<String, Object>> todo = new ArrayList<>();
             for (Map<String, Object> g : groups) {
                 boolean need = Boolean.TRUE.equals(t.force)
@@ -1112,6 +1139,8 @@ public class ThinkService {
                 }
             }
             t.total = todo.size();
+            t.stage = 1;                  // 准备阶段结束：进入逐分类生成基础对照图
+            t.current = "";
             int processed = 0;
             for (Map<String, Object> g : todo) {
                 String state = String.valueOf(g.get("state"));
@@ -2557,22 +2586,40 @@ public class ThinkService {
         }
     }
 
-    /** 递归删除整个 `summary/` 产物目录（一键重建前清场；单个文件删除失败仅告警，不中断后续重建） */
-    private void wipeSummary() {
+    /** 递归删除整个 `summary/` 产物目录（一键重建前清场；单个文件删除失败仅告警，不中断后续重建）。
+     *  {@code t != null} 时逐项回报删除进度，前端右栏显示「正在清理旧产物：1200/3226 张（same100.png）（已耗时 N 分 M 秒）」 */
+    private void wipeSummary(Task t) {
         Path root = storage.summary();
         if (!Files.isDirectory(root)) {
             return;
         }
+        // 先枚举一遍拿到总数（几 GB / 几千张的删除在 Windows 上可能持续数十秒，没有计数看不出是否在推进）
+        List<Path> all = new ArrayList<>();
         try (Stream<Path> s = Files.walk(root)) {
-            s.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.deleteIfExists(p);
-                } catch (IOException e) {
-                    log.warn("清理 summary/ 时无法删除 {}（保留并随重建覆盖，不影响运行）：{}", p, e.toString());
-                }
-            });
+            s.forEach(all::add);
         } catch (IOException e) {
-            log.warn("清理 summary/ 失败：{}", e.toString());
+            log.warn("清理 summary/ 前枚举目录失败：{}", e.toString());
+        }
+        if (t != null) {
+            t.stage = 0;
+            t.prepAct = "清理旧产物";
+            t.prepUnit = "张";
+            t.prepTotal = all.size();
+            t.prepCur = "";
+        }
+        all.sort(Comparator.reverseOrder());   // 先删子项再删目录
+        int done = 0;
+        for (Path p : all) {
+            try {
+                Files.deleteIfExists(p);
+            } catch (IOException e) {
+                log.warn("清理 summary/ 时无法删除 {}（保留并随重建覆盖，不影响运行）：{}", p, e.toString());
+            }
+            if (t != null) {
+                t.prepDone = ++done;
+                Path nm = p.getFileName();
+                t.prepCur = nm == null ? "" : nm.toString();
+            }
         }
     }
 
@@ -2591,8 +2638,18 @@ public class ThinkService {
         public volatile int errors;
         /** 正在处理的分类展示文案 */
         public volatile String current = "";
-        /** 当前阶段：1 = 逐分类生成 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族）；2 = 生成各分类 15 张 -unique 独有区图 */
+        /** 当前阶段：0 = 准备（一键重建先逐张清场 summary/，再逐分类统计待分析组合）；1 = 逐分类生成 15 张基础对照图
+         *  （交集六档 + 多数/均值/去重均值/8·32 块族）；2 = 生成各分类 15 张 -unique 独有区图 */
         public volatile int stage = 1;
+        /** 准备阶段（stage=0）正在做的事：清场时的「清理旧产物」/ 统计时的「统计待分析组合」 */
+        public volatile String prepAct = "";
+        /** 准备阶段计数单位（清场 = 张、统计 = 个分类）：前端按「已完成/共几 单位」展示 */
+        public volatile String prepUnit = "";
+        /** 准备阶段已完成数量 / 总数（0 = 尚未得出总数） */
+        public volatile int prepDone;
+        public volatile int prepTotal;
+        /** 准备阶段当前对象（被删产物文件名 / 正在核对的「分类标注 ｜ 动作」） */
+        public volatile String prepCur = "";
         /** 任务提交时刻（毫秒）：前端据此显示已耗时，排队/长计算期间能判断仍在推进而非卡死 */
         public final long submittedAtMs = System.currentTimeMillis();
         /** 计算池内位置：-1 = 不在队（已结束/未知）；0 = 正在执行；>0 = 前面还有多少个任务在排队 */

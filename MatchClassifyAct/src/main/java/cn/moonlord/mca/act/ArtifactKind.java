@@ -348,20 +348,41 @@ public final class ArtifactKind {
         return d.family() == Family.INTERSECT ? "交集图" : familyName(d.family()) + "图";
     }
 
-    /** kind → 对照图卡片标题（前端 .tn 文案）：由族 + 块边长 + 交集档 + 方框形态派生；未知 kind 返回 null */
+    /** kind → 对照图卡片标题（前端 .tn 文案）：主名与特征验证列表（前端 vkInfo）一致，
+     *  括号内是该图「每个像素怎么来的」生成口径（-unique 独有区图以基础图名引用、只说明剔除口径）；
+     *  未知 kind 返回 null */
     public static String label(String kind) {
         Def d = of(kind);
         if (d == null) {
             return null;
         }
-        boolean uniq = d.uniqueOf() != null;
+        if (d.uniqueOf() != null) {
+            String base = baseName(d);
+            return base + " · 独有区（将 " + base + "，剔除掉其它分类的 " + base + " 出现过的颜色）";
+        }
         return switch (d.family()) {
-            case INTERSECT -> "交集图 " + percent(d) + "% 覆盖率"
-                    + (uniq ? "独有区" : "same100".equals(d.tier()) ? "（完全一致）" : "");
-            case MAJOR, AVG, DEDUP_AVG -> blockTitle(familyName(d.family()), d.block(), uniq);
-            case CROP -> (d.crop() == Crop.CLICK ? "点击区 " : "注意区 ") + "1/" + d.cropDiv()
-                    + " 交集图 " + percent(d) + "% 覆盖率（以" + (d.crop() == Crop.CLICK ? "点击点" : "关注点") + "为中心的方框）";
+            case INTERSECT -> baseName(d) + "（每个不透明的像素点，" + agreeDesc(d) + "）";
+            case MAJOR, AVG, DEDUP_AVG -> blockTitle(d);
+            case CROP -> baseName(d) + "（以" + (d.crop() == Crop.CLICK ? "点击点" : "关注点")
+                    + "为中心的方框内，每个不透明的像素点，" + agreeDesc(d) + "）";
         };
+    }
+
+    /** 对照图主名（不含 -unique 后缀与括号口径）：交集图 90% / 多数图 1/8 / 点击区交集 1/8 · 90% */
+    private static String baseName(Def d) {
+        return switch (d.family()) {
+            case INTERSECT -> "交集图 " + percent(d) + "%";
+            case MAJOR, AVG, DEDUP_AVG -> familyName(d.family()) + "图 1/" + d.block();
+            case CROP -> (d.crop() == Crop.CLICK ? "点击区交集 " : "注意区交集 ") + "1/" + d.cropDiv()
+                    + " · " + percent(d) + "%";
+        };
+    }
+
+    /** 交集（含方框交集）档位的一致口径：100% 档 = 全部样本同色，其余档 = 覆盖不少于该档阈值 */
+    private static String agreeDesc(Def d) {
+        return "same100".equals(d.tier())
+                ? "和全部样本颜色一致"
+                : "和不少于" + percent(d) + "%的样本颜色一致";
     }
 
     /** 交集档位的百分比数字（same90 → 90） */
@@ -378,21 +399,15 @@ public final class ArtifactKind {
         };
     }
 
-    /** 多数/均值/去重均值族的卡片标题：全幅无前缀、块族带「1/8」「1/32」，-unique 另有「独有区」说法 */
-    private static String blockTitle(String name, int block, boolean uniq) {
-        String head = block == 1 ? name + "图" : "1/" + block + " " + name + "图";
-        if (uniq) {
-            return head + "独有区";
-        }
-        String px = block == 1 ? "" : block + "x" + block + "个原始像素";
-        String src;
-        if ("多数".equals(name)) {
-            src = px + (block == 1 ? "" : "的") + "覆盖率最多的值";
-        } else if ("均值".equals(name)) {
-            src = px + (block == 1 ? "" : "的") + "RGB的均值";
-        } else {
-            src = px + "去重后的RGB的均值";
-        }
-        return head + "（每个像素取" + src + "）";
+    /** 多数 / 均值 / 去重均值族标题：主名 = 族名 + 「1/块边长」（1/1 = 全幅），括号内是逐点（或逐块）口径 */
+    private static String blockTitle(Def d) {
+        int b = d.block();
+        String scope = b == 1 ? "每个像素取" : "每个 " + b + "×" + b + " 块取块内";
+        String src = switch (d.family()) {
+            case MAJOR -> b == 1 ? "全部样本里该位置出现最多次的颜色" : "全部样本里出现最多次的颜色";
+            case AVG -> "全部样本 RGB 的均值";
+            default -> "全部样本去重后 RGB 的均值";
+        };
+        return baseName(d) + "（" + scope + src + "）";
     }
 }

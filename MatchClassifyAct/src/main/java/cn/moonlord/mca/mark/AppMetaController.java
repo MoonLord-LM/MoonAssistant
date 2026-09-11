@@ -45,6 +45,10 @@ import java.util.Map;
  *       前端都会据此在右下角提示一次清理完成
  *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片），并附实际比对量
  *       （compared = 全尺寸逐像素比对次数、minDiff = 其中最低的不一致像素点占比，-1 = 无可比对的对）。</li>
+ *   <li>{@code startupDedup}（{at, done, total, current, compared, removed, costMs, running}）：启动历史重复清理的**进行态**
+ *       快照。清理可能持续很久（历史全量逐像素比对），前端据此先提示一条「开始检查」，并在 running=true 期间
+ *       显示一条一直刷新的进度消息（已判定 / 待判定张数、当前文件、已耗时，同批量任务的「正在第 N 轮…（已耗时 X 秒）」）；
+ *       running 变 false 后撤掉进度消息，最终结果仍由 {@code startupDedupNotice} 给出。</li>
  * </ul></p>
  */
 @Slf4j
@@ -117,6 +121,21 @@ public class AppMetaController {
             d.put("compared", dedup.compared());
             d.put("minDiff", dedup.minDiff());
             m.put("startupDedupNotice", d);
+        }
+        // 启动历史重复清理进行态：running=true 期间页面显示一条一直刷新的进度消息（含已耗时）；
+        // 收尾后 running=false，页面撤掉进度消息，最终结果由上面的 startupDedupNotice 给出
+        ScreenCaptureService.StartupDedupProgress dp = screenCaptureService.getStartupDedupProgress();
+        if (dp != null) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("at", dp.at());
+            d.put("done", dp.done());
+            d.put("total", dp.total());
+            d.put("current", dp.current());
+            d.put("compared", dp.compared());
+            d.put("removed", dp.removed());
+            d.put("costMs", dp.costMs());
+            d.put("running", dp.running());
+            m.put("startupDedup", d);
         }
         return m;
     }

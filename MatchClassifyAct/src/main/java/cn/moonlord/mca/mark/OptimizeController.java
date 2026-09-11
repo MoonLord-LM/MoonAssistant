@@ -8,12 +8,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 算法调优（自动寻优匹配算法参数——五族权重）：状态 / 启动后台搜索 / 应用结果 / 恢复默认。
+ * 算法调优（把特征组合成匹配算法并验证分类准确率）：状态 / 启动一次「全部算法」验证。
  */
 @RestController
 @RequestMapping("/api/optimize")
@@ -22,50 +23,49 @@ public class OptimizeController {
 
     private final OptimizeService optimize;
 
-    /** 状态总览：任务进度 + 当前/默认权重 + 最近一次结果 + 各 kind 生效范围（供界面轮询）。 */
+    /** 状态总览：前置特征验证情况 + 算法及特征（基础分 X）+ 任务进度 + 最近结果（供界面轮询）。 */
     @GetMapping("/status")
     public Map<String, Object> status() {
         return optimize.status();
     }
 
-    /** 启动一次寻优：step = 权重粗搜步长（默认 10），seeds = 随机起点数（默认 24）。 */
+    /** 启动一次验证：weights = {算法 id: [权重 Y...]}（与算法特征顺序一一对应，缺省 1）。 */
     @PostMapping("/start")
     public Map<String, Object> start(@RequestBody(required = false) Map<String, Object> body) {
-        int step = intOf(body == null ? null : body.get("step"), 10);
-        int seeds = intOf(body == null ? null : body.get("seeds"), 24);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("started", optimize.start(step, seeds));
+        if (!optimize.ready()) {
+            out.put("started", false);
+            out.put("error", "请先在「特征验证」视图完成一次验证（算法由验证结果组合而来）");
+            return out;
+        }
+        out.put("started", optimize.start(parseWeights(body)));
         return out;
     }
 
-    /** 应用一组权重到运行时并持久化（重启后继续生效）。 */
-    @PostMapping("/apply")
-    public Map<String, Object> apply(@RequestBody(required = false) Map<String, Object> body) {
-        List<?> raw = body == null ? null
-                : body.get("weights") instanceof List<?> l ? l : null;
-        if (raw == null || raw.size() != OptimizeService.FAMILY_LABELS.size()) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("ok", false);
-            out.put("error", "weights 须为 5 个非负整数");
+    @SuppressWarnings("unchecked")
+    private static Map<String, List<Double>> parseWeights(Map<String, Object> body) {
+        Map<String, List<Double>> out = new LinkedHashMap<>();
+        if (body == null || !(body.get("weights") instanceof Map<?, ?> raw)) {
             return out;
         }
-        int[] w = new int[raw.size()];
-        for (int i = 0; i < w.length; i++) {
-            w[i] = Integer.parseInt(String.valueOf(raw.get(i)));
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            if (!(e.getValue() instanceof List<?> list)) {
+                continue;
+            }
+            List<Double> ys = new ArrayList<>(list.size());
+            for (Object o : list) {
+                if (o instanceof Number n) {
+                    ys.add(n.doubleValue());
+                } else {
+                    try {
+                        ys.add(Double.parseDouble(String.valueOf(o).trim()));
+                    } catch (NumberFormatException ex) {
+                        ys.add(1.0);
+                    }
+                }
+            }
+            out.put(String.valueOf(e.getKey()), ys);
         }
-        return optimize.apply(w);
-    }
-
-    /** 恢复默认五族权重（运行时 + 删除持久化文件）。 */
-    @PostMapping("/reset")
-    public Map<String, Object> reset() {
-        return optimize.reset();
-    }
-
-    private static int intOf(Object o, int def) {
-        if (o instanceof Number n) {
-            return n.intValue();
-        }
-        return def;
+        return out;
     }
 }

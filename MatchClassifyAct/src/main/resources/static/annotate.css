@@ -118,6 +118,8 @@
   /* 无当前图（列表空 / 全部标记完成）时右侧编辑输入与单选一并置灰 */
   .editor input[type="text"]:disabled{opacity:.5;cursor:not-allowed;background:var(--panel2)}
   .editor input[type="radio"]:disabled{opacity:.45;cursor:not-allowed}
+  .act.dis{opacity:.45;cursor:not-allowed}
+  .act.dis:hover{border-color:#39445e}
   .btn.danger{border-color:rgba(255,92,108,.4);color:var(--danger);background:transparent}
   .btn.danger:hover{background:rgba(255,92,108,.12)}
   .btn.del{border-color:rgba(255,92,108,.55);color:var(--danger);background:rgba(255,92,108,.1)}
@@ -129,10 +131,12 @@
   /* 「取消修改」（原「使用上次标记」）：白字白描边，便于在深色面板上辨认 */
   #btnLast{border-color:rgba(255,255,255,.85);color:#fff;background:rgba(255,255,255,.07)}
   #btnLast:hover{background:rgba(255,255,255,.18)}
-  /* 「重新生成全部」用绿色主按钮样式（与「特征验证 → 开始验证」同一视觉，不再白底描边） */
-  #btnRebuild{background:var(--green);border-color:var(--green);color:#fff}
-  #btnRebuild:hover{filter:brightness(1.08)}
-  #btnRebuild:disabled{opacity:.45;cursor:not-allowed}
+  /* 汇总分析右栏两个按钮：开始分析 = 主操作（绿），重新生成全部 = 次操作（蓝系描边，避免两个绿色按钮并排混淆） */
+  #btnThinkStart{background:var(--green);border-color:var(--green);color:#fff}
+  #btnThinkStart:hover{filter:brightness(1.08)}
+  #btnRebuild{border-color:rgba(79,140,255,.45);color:var(--accent);background:rgba(79,140,255,.08)}
+  #btnRebuild:hover{background:rgba(79,140,255,.18)}
+  #btnThinkStart:disabled,#btnRebuild:disabled{opacity:.45;cursor:not-allowed}
   .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
   .btn.cap.on{border-color:rgba(47,191,113,.65);color:var(--green);background:rgba(47,191,113,.12);font-weight:600}
   .btn.cap.on:hover{background:var(--green);color:#04120a}
@@ -258,7 +262,7 @@
   #adot.on{box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 0 6px rgba(47,191,113,.45)}
   #imgarea{position:relative}
   #optPane{position:absolute;inset:0;overflow:auto;height:100%;box-sizing:border-box;padding:12px}
-  /* 算法调优主图区：五族权重编辑 / 最近结果对比 / 产物生效范围表 */
+  /* 算法调优主图区：特征组合表 / 算法结果卡 / 各分类准确率明细 */
   #optPane .optWrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
   .optTop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
   .optTop .ot{font-size:18px;font-weight:700;letter-spacing:.3px}
@@ -266,31 +270,26 @@
   .optcard{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:12px 14px}
   .optcard h4{margin:0 0 6px;font-size:13px}
   .optcard .ocap{font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.6}
-  .optWRow{display:flex;align-items:center;gap:12px;padding:8px 2px;border-bottom:1px dashed rgba(38,46,64,.55)}
-  .optWRow:last-child{border-bottom:0}
-  .optWRow .wl{flex:none;width:190px;font-size:12.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .optWRow input[type=range]{flex:1;min-width:90px;accent-color:var(--accent);cursor:pointer}
-  .optWRow input[type=range]:disabled{opacity:.45;cursor:not-allowed}
-  .optWRow .wv{flex:none;width:40px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:var(--accent)}
   .optWBtnRow{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
   .optWBtnRow .btn{font-size:12px}
   .optResWrap{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
-  .optResWrap .vcard{flex:1 1 260px;min-width:230px}
-  .optWeightsChip{display:inline-flex;gap:6px;flex-wrap:wrap}
-  .owchip{font-size:11px;padding:1px 8px;border-radius:14px;border:1px solid var(--green);color:var(--green);background:var(--green-soft);font-variant-numeric:tabular-nums}
+  .optResWrap .vcard{flex:1 1 380px;min-width:300px}
   .optTblWrap{overflow:auto;max-height:46vh;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}
   .optTbl{width:100%;border-collapse:collapse;font-size:12.5px}
   .optTbl th{position:sticky;top:0;z-index:1;background:var(--panel);color:var(--muted);text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
   .optTbl td{padding:5px 10px;border-bottom:1px solid rgba(38,46,64,.5)}
   .optTbl tbody tr:hover td{background:rgba(255,255,255,.03)}
   .optTbl td.nu{font-variant-numeric:tabular-nums;white-space:nowrap}
-  .famDot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:1px;flex:none}
-  .famD0{background:#4f8cff}.famD1{background:#2fbf71}.famD2{background:#f0a83c}.famD3{background:#b07cff}.famD4{background:#ff8fa0}
-  /* 算法调优右栏：搜索参数输入 / 进度 */
-  #edOpt .optPm{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-  #edOpt .optPm input{width:58px;padding:4px 6px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:7px;font:inherit}
-  #edOpt .optPm input:focus{outline:none;border-color:var(--accent)}
-  #edOpt .optPm input:disabled{opacity:.5}
+  /* 算法调优：特征权重 Y 输入 / 结果卡 */
+  /* 默认态就要看得清边框：原来 border 用 --border（#262e40）比它所在的表底（--panel2）还暗、又和自身底色同深，
+     输入框轮廓几乎看不见；这里默认改用 --border-strong，并给出 hover / focus 两级反馈 */
+  #optPane .optTbl input[type=number]{width:66px;padding:3px 6px;border:1px solid var(--border-strong);background:var(--panel);color:var(--text);border-radius:6px;font:inherit;font-variant-numeric:tabular-nums;text-align:center;transition:border-color .15s,box-shadow .15s}
+  #optPane .optTbl input[type=number]:hover{border-color:var(--accent)}
+  #optPane .optTbl input[type=number]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  #optPane .optTbl input[type=number]:disabled{opacity:.5}
+  #optPane .optTbl input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+  #optPane .optTbl input[type=checkbox]:disabled{cursor:not-allowed}
+  #optPane summary{user-select:none}
   /* 选项 chip 内的坐标文本：红 = 鼠标点击点、绿 = 关注点（与图上红 / 绿点一致）；等宽数字不跳动 */
   .act .ptval{margin-left:2px;font-size:12.5px}
   .ptval{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -408,6 +407,7 @@
   .row .chip.vkc{flex:none}   /* 分类名再长也不压缩状态 chip（汇总分析行右侧恒可见） */
   .vdSum{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
   .vcard{flex:1 1 260px;min-width:240px;border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:10px 14px}
+  .vdSum .vcard{flex:1 1 168px;min-width:158px}   /* 五张指标卡（A/B/C/D/E）：尽量一行放下，放不下折 3+2 */
   .vcard .vcap{font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:.3px}
   .vcard .vval{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text);margin:4px 0 2px}
   .vcard .vsub{font-size:11px;color:var(--muted);line-height:1.6}
@@ -423,6 +423,25 @@
   .vtable td.nugen{white-space:normal}
   .vtable td.nu{text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
   .vtable .vdnone{text-align:center;color:var(--muted);padding:22px 12px}
+  /* D 匹配正确率 < 100% 的行：紧跟数值的「查看详细」小按钮 + 误判明细弹窗 */
+  .vtable .vkw{margin-left:7px;padding:1px 7px;font-size:11px;line-height:16px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;vertical-align:middle}
+  .vtable .vkw:hover{color:#fff;border-color:var(--border-strong);background:rgba(255,255,255,.06)}
+  #vkWrongModal{background:rgba(2,4,9,.92)}
+  #vkWrongModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:660px;width:100%;text-align:left;position:relative;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #vkWrongModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  /* 标题下的信息条：覆盖型弹窗看不到身后的右栏/表格，把「哪种算法 / 哪个分类 / 样本数 / D·E·命中」摆成一行 chip */
+  #vkWrongModal .xmeta,#kindScoreModal .xmeta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  #vkWrongModal .xmeta span,#kindScoreModal .xmeta span{display:inline-flex;align-items:baseline;gap:4px;padding:1px 10px;font-size:11.5px;color:var(--muted);background:var(--panel2);border:1px solid var(--border-strong);border-radius:20px;font-variant-numeric:tabular-nums}
+  #vkWrongModal .xmeta b,#kindScoreModal .xmeta b{color:var(--text);font-weight:600}
+  #vkWrongModal .sub{color:var(--muted);font-size:11.5px;line-height:1.9;margin:2px 0 10px}
+  #vkWrongModal .list{max-height:min(52vh,420px);overflow:auto;padding-right:4px}
+  #vkWrongModal .ghead{display:flex;align-items:baseline;gap:8px;margin:10px 0 4px;font-size:12.5px;color:var(--text)}
+  #vkWrongModal .ghead b{color:var(--accent)}
+  #vkWrongModal .ghead span{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+  #vkWrongModal .row{display:flex;align-items:center;gap:9px;padding:4px 2px;border-bottom:1px solid rgba(38,46,64,.5);font-size:12px}
+  #vkWrongModal .row img{width:58px;height:33px;object-fit:contain;background:#0b0f18;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;flex:none}
+  #vkWrongModal .row .f{flex:1;min-width:0;word-break:break-all;color:var(--muted)}
+  #vkWrongModal .row .s{flex:none;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
   /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */
   .vkwarn{color:var(--amber)}
   .vkbad{color:var(--danger)}
@@ -437,8 +456,9 @@
   .cats{display:flex;flex-wrap:wrap;gap:6px}
   #edJump{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)}
   #edJump .jbtn{width:100%}
-  /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率 */
-  #imgLightbox{position:fixed;inset:0;z-index:120;background:rgba(4,7,13,.86);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px}
+  /* 汇总分析 · 80% 视口弹窗：默认“自适应缩放”，弹窗内点图片切换 自适应缩放 ↔ 原始分辨率。
+     z-index 400：须高于内容类弹窗 .modal-ov(300)，否则从「匹配明细」/「对照图分值」等弹窗里点图时大图被压在弹窗下面 */
+  #imgLightbox{position:fixed;inset:0;z-index:400;background:rgba(4,7,13,.86);display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px}
   #imgLightbox.show{display:flex}
   #imgLightbox .lbBox{max-width:80vw;max-height:calc(80vh - 72px);overflow:auto;background:#000;border:1px solid var(--border);border-radius:8px;line-height:0}
   #imgLightbox .lbBox::-webkit-scrollbar{width:10px;height:10px}
@@ -460,6 +480,7 @@
   #exitConfirm,#lostAsk,.modal-ov{position:fixed;inset:0;z-index:300;background:rgba(8,11,18,.66);display:flex;align-items:center;justify-content:center;padding:24px}
   /* 7 图分值明细弹层：遮罩更暗更不透明，避免后排页面透出来干扰阅读 */
   #kindScoreModal{background:rgba(2,4,9,.92)}
+  #kindScoreModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
   #exitConfirm .xcard,#capStopModal .xcard,#xCloseAsk .xcard,#lostAsk .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
   #exitConfirm .xt2,#capStopModal .xt2,#xCloseAsk .xt2,#lostAsk .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
   #exitConfirm .msg,#capStopModal .msg,#xCloseAsk .msg,#lostAsk .msg{color:var(--muted);font-size:13px;line-height:1.8;margin-bottom:12px}

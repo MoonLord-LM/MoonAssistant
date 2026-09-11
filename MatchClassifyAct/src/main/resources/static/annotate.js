@@ -21,6 +21,7 @@ let px = null;         // 点击点 {x,y}（图片像素）：仅 click 分类�
 let apx = null;        // 注意点 {x,y}：注意区交集图与匹配裁剪中心；未设 = 默认屏幕中心（全部分类一致，不回退点击点）
 let pMode = "click";   // 图上编辑目标：click=红点（鼠标点击点）/ attn=绿点（关注点）；无动作分类固定编辑绿点
 let attnUse = false;   // 「注意」行单选：true=关注点（单独指定了绿点）/ false=无需额外注意（未单独指定，按屏幕中心）
+let ptTouch = { click:false, attn:false };   // 本图本轮是否被用户亲手改过红点/绿点（含「注意」行切到关注点）；防止屏幕中心兜底值被误判成“要重定义分类”
 let loading = null;    // 当前图片名，用于防异步竞态
 let lastMark = null;   // 上次输入/保存的标记草稿 {state,action,left,top,attnLeft,attnTop}，切到未标注图时自动带入
 let baseMark = null;   // 当前图进入编辑区时的基准（文件已保存值 / 自动带入草稿）：「取消修改」按它还原
@@ -75,6 +76,25 @@ async function fetchDefs(){
 }
 /* 某分类是否已有统一定义（动作 click 时的点击点、无动作时的注意点是否可直接采用） */
 function defOf(state){ return DEF[state] || null; }
+/* 两点是否相同（null / 缺省视为同一“未设”，即按屏幕中心） */
+function samePt(al, at, bl, bt){
+  return (al ?? null) === (bl ?? null) && (at ?? null) === (bt ?? null);
+}
+/* 提交内容与中心表已有定义是否逐项一致（动作 + 鼠标点击点 + 关注点） */
+function sameDef(def, b){
+  if(!def) return false;
+  if(((def.action) || "none") !== ((b && b.action) || "none")) return false;
+  return samePt(def.left, def.top, b.left, b.top) && samePt(def.attnLeft, def.attnTop, b.attnLeft, b.attnTop);
+}
+/* 定义/提交内容的中文描述，供重定义确认框展示 */
+function defDesc(m){
+  const act = (m && m.action) || "none";
+  const cl = (m && m.left != null && m.top != null) ? m.left + "," + m.top : null;
+  const at = (m && m.attnLeft != null && m.attnTop != null) ? m.attnLeft + "," + m.attnTop : null;
+  return act === "click"
+    ? "鼠标点击点(" + (cl || "中心") + ") · 关注点" + (at ? "(" + at + ")" : "默认屏幕中心")
+    : "关注点(" + (at || "屏幕中心") + ")";
+}
 
 /* ---------------- 提示 ---------------- */
 /* 历史日志：右下角出现过的消息全量保存到内存 LOG（弹窗回溯查看，与淡出展示互不影响）。
@@ -233,7 +253,8 @@ function showShotTip(msg, kind){
    任务的开始 / 完成 / 失败仍由 toast() 正常入库记录 */
 let taskTipTimer = 0;
 let lastTaskTipLog = "";        // 上一次已写入历史日志的任务提示文本
-function taskTip(msg, kind, noLog){
+/* holdMs：本条驻留时长（默认 1600ms，够到下一次 2 秒轮询；由 1 秒 ticker 反复刷新的常驻进度传更大值，避免两次刷新之间闪掉） */
+function taskTip(msg, kind, noLog, holdMs){
   const box = $("toasts");
   let el = box.querySelector(".toast.task");
   if(msg == null){
@@ -264,7 +285,23 @@ function taskTip(msg, kind, noLog){
     el.style.transition = "opacity .25s";
     el.style.opacity = "0";
     setTimeout(()=> el.remove(), 280);
-  }, 1600);
+  }, holdMs > 0 ? holdMs : 1600);
+}
+
+/* 启动历史重复清理进行态：与批量任务同款「一直刷新的进度消息」（含逐秒走动的已耗时）。
+   后端在清理线程里逐张更新快照、meta 每 2 秒取一份；这里再挂 1 秒 ticker 复现，
+   既避免两次轮询之间消息闪掉，也让「已耗时 N 秒」逐秒走动。进度文本变化频繁故 noLog
+   （开始 / 结束各一条消息由 showShotTip 入库）。 */
+function dedupProgText(p){
+  const t = Number(p.total) || 0, n = Number(p.done) || 0;
+  const age = Math.max(0, Math.round((Date.now() - (Number(p.at) || Date.now())) / 1000));
+  const cmp = Number(p.compared) > 0 ? "已比对 " + Number(p.compared) + " 次" : "";
+  if(!t && !n) return progLine("枚举历史截图", 0, 0, "", "", durTxt(age), cmp);   // 还没算出总数
+  return progLine("检查重复图片", n, t, "张", p.current, durTxt(age), cmp);
+}
+function dedupProgTick(){
+  if(!dedupProg) return;
+  taskTip(dedupProgText(dedupProg), "", true, 3000);   // noLog：进度只显示不入库（避免每张一条刷屏）
 }
 
 /* ---------------- 列表加载 / 渲染 ---------------- */
@@ -409,6 +446,7 @@ function adoptCategory(state){
     if(!sameA){ apx = awant; changed = true; }
   }
   attnUse = !!apx;   // 跟随带入的草稿：有注意点 = 关注点，未设 = 无需额外注意
+  ptTouch = { click:false, attn:false };   // 带入基准值 = 沿用，不算用户亲手改点
   renderDot();
   updateTagActive();
   updateHints();
@@ -505,20 +543,15 @@ function stateUsage(state, excludeName){
   }
   return u;
 }
-/* 返回冲突原因（null = 可以保存）。仅“该分类名下仍有已标注样本”时才受唯一动作约束；
-   中心表可能残留自历史样本的定义（样本删光后仍保留）——空分类可被本次首次标注覆盖 */
-function actionConflict(state, act, excludeName, redefine){
-  if(!state || redefine) return null;
-  const def = defOf(state);
+/* 返回冲突原因（null = 可以保存）。中心表已有该分类定义时一律放行——本次提交与定义不一致
+   由 saveCurrent 走「重定义确认」（确认后按本次提交覆盖定义，全组样本同步）；
+   仅“中心表无定义、但历史样本动作不统一”（定义表未加载 / 历史脏数据）时才兜底拦一下 */
+function actionConflict(state, act, excludeName){
+  if(!state) return null;
   const u = stateUsage(state, excludeName);
-  if(def && def.action !== act && u.count > 0){
-    return "「" + state + "」已定义「" + actLabel(def.action) + "」"
-      + (def.left != null ? "，关注点 " + def.left + "," + def.top : "")
-      + "；同一分类标注只对应一种动作/关注点坐标，请改动作或换分类标注（如需重定义，请打开一张已标注该分类的图修改并保存）。";
-  }
   if(u.count > 0 && !u.actions.has(act)){
     return "「" + state + "」已被 " + u.count + " 张图使用，匹配动作统一为「"
-      + [...u.actions].map(actLabel).join(" / ") + "」；同一分类标注只对应一种匹配动作，请改动作或换分类标注。";
+      + [...u.actions].map(actLabel).join(" / ") + "」；请改用该动作，或打开其中一张图改动作保存以重定义该分类。";
   }
   return null;
 }
@@ -538,8 +571,8 @@ function updateHints(){
         cls = "show info";
         msg = "本图属于「" + state + "」，把动作改为「" + actLabel(actionSel) + "」并保存会重定义该分类（动作/关注点全组同步，保存前会再次确认）。";
       } else if(def.action !== actionSel && !vacant){
-        cls = "show bad";
-        msg = "冲突：「" + state + "」分类定义动作是「" + actLabel(def.action) + "」，同一分类只对应一种动作/坐标；请改动作或换分类标注（如需重定义，请打开一张已标注该分类的图修改并保存）。";
+        cls = "show info";
+        msg = "「" + state + "」分类定义动作是「" + actLabel(def.action) + "」；本次保存会把它重定义为「" + actLabel(actionSel) + "」（动作/坐标对全组样本同步，保存前会再确认）。";
       } else if(def.action !== actionSel){
         cls = "show info";
         msg = "「" + state + "」旧定义是「" + actLabel(def.action) + "」但当前已无样本图，本次保存将把它重新定义为「" + actLabel(actionSel) + "」（需确定关注点坐标：未点选时默认屏幕中心）。";
@@ -548,7 +581,7 @@ function updateHints(){
         msg = "「" + state + "」定义沿用于「" + actLabel(def.action) + "」，本次保存补入本图样本。";
       } else {
         cls = "show ok";
-        msg = "「" + state + "」已定义「" + actLabel(def.action) + "」，关注点坐标沿用分类定义（默认屏幕中心，图上点按可改）。";
+        msg = "「" + state + "」已定义「" + actLabel(def.action) + "」，坐标沿用分类定义；在图上点按红/绿点后保存，会按你点的位置重定义该分类（全组样本同步，保存前会再确认）。";
       }
     } else if(u.count === 0){
       cls = "show info";
@@ -578,7 +611,7 @@ function setSegState(){
   for(const i of ALL){
     if(i.marked && i.state) keys.add(i.state + "\u0000" + (i.action || "none"));   // 与服务端 groups() 同口径：(state, action) 去重
   }
-  const cnt = { all:nAll, unmarked:nUn, marked:nAll - nUn, think:keys.size, verify:vkCnt, opt:null };
+  const cnt = { all:nAll, unmarked:nUn, marked:nAll - nUn, think:keys.size, verify:vkCnt, opt:optCnt };
   const names = { all:"全部", unmarked:"未标注", marked:"已标注", think:"汇总分析", verify:"特征验证", opt:"算法调优" };
   for(const b of $("filterSeg").querySelectorAll("button")){
     b.classList.toggle("on", b.dataset.f === FILTER);
@@ -701,7 +734,7 @@ async function applyFilter(f){
   if(dirty && !confirm("当前标注尚未保存，确定切换？")) return;
   if(f === "think"){ if(FILTER === "verify") exitVerify(); else if(FILTER === "opt") exitOpt(); enterThink(); return; }   // 汇总分析入口自带 refreshThink 全量刷新
   if(f === "verify"){ if(FILTER === "think") exitThink(); else if(FILTER === "opt") exitOpt(); enterVerify(); return; }    // 特征验证：左栏算法列表 + 主区 A/B 分值明细
-  if(f === "opt"){ if(FILTER === "think") exitThink(); else if(FILTER === "verify") exitVerify(); enterOpt(); return; }     // 算法调优：五族权重寻优工作台
+  if(f === "opt"){ if(FILTER === "think") exitThink(); else if(FILTER === "verify") exitVerify(); enterOpt(); return; }     // 算法调优：特征组合成匹配算法并验证分类准确率
   if(FILTER === "think"){ exitThink(); curName = null; }
   else if(FILTER === "verify"){ exitVerify(); curName = null; }
   else if(FILTER === "opt"){ exitOpt(); curName = null; }
@@ -791,7 +824,9 @@ function showEmpty(msg){
         : "当前视图下暂无可显示的截图。")
     : "没有图片。截图任务开启后，新截图会自动出现并同步到本列表。");
   $("fname").textContent = ""; $("fsub").textContent = ""; $("imgDims").textContent = "";
-  $("stateInput").value = ""; setAction("none"); px=null; apx=null; attnUse=false; renderDot();
+  $("stateInput").value = ""; setAction("none"); px=null; apx=null; attnUse=false;
+  ptTouch = { click:false, attn:false };
+  renderDot();
   baseMark = null;            // 无当前图：取消修改无可还原基准
   updateTagActive();
   updateNavButtons();
@@ -1062,7 +1097,7 @@ function setAttnUse(on, markDirty){
     apx = null;   // 未单独指定 = 产物与渲染都按屏幕中心解析
   }
   renderDot();
-  if(markDirty && changed){ setDirty(); }
+  if(markDirty && changed){ ptTouch.attn = true; setDirty(); }   // 亲手切「注意」行 = 明确要改关注点（on=点绿点 / off=按屏幕中心）
 }
 
 /* 两行单选的选中态与 body[data-pt]（十字辅助线配色、当前编辑点外环高亮）同步：
@@ -1099,6 +1134,7 @@ function applyBodyToEditor(b, markDirty){
   if(b && typeof b.attnLeft === "number" && typeof b.attnTop === "number"){ apx = { x:b.attnLeft, y:b.attnTop }; }
   else { apx = null; }
   attnUse = !!apx;   // 「注意」行跟随载入值：有注意点 = 关注点，未设 = 无需额外注意
+  ptTouch = { click:false, attn:false };   // 填入编辑区 = 新基准，用户触点从头计
   renderDot();
   updateTagActive();
   if(markDirty){ setDirty(); }
@@ -1172,8 +1208,10 @@ $("mainImg").addEventListener("click", (e)=>{
     if(edPoint() === "attn"){
       apx = { x:nx, y:ny };
       attnUse = true;   // 图上手动点绿点 = 明确指定关注点（「注意」行随之切到「关注点」）
+      ptTouch.attn = true;
     } else {
       px = { x:nx, y:ny };
+      ptTouch.click = true;
     }
     renderDot();
     setDirty();
@@ -1214,12 +1252,15 @@ function collect(){
 
 function setDirty(){ dirty = true; }
 
-/* 标注编辑面板可用性：列表为空 / 全部标记完成 → 右侧按钮与输入置灰，避免空操作 */
+/* 标注编辑面板可用性：列表为空 / 全部标记完成 → 右侧按钮、输入与两行单选（动作 + 注意）连 chip 一并置灰，避免空操作 */
 function setEditorEnabled(on){
   ["btnSaveNext","btnLast","btnClear","btnDelete","stateInput"].forEach(id => {
     const el = $(id); if(el) el.disabled = !on;
   });
-  document.querySelectorAll('#edNorm input[name="action"]').forEach(r => { r.disabled = !on; });
+  // 动作 + 注意两行单选都置灰（此前只禁了动作行，注意行仍可点，与置灰状态不一致）
+  document.querySelectorAll('#coordBox input[type="radio"]').forEach(r => { r.disabled = !on; });
+  // radio 置灰只影响圆点，chip 边框/文字/悬停要一并失效
+  document.querySelectorAll('#coordBox .act').forEach(el => el.classList.toggle("dis", !on));
 }
 
 /* 保存后取当前列表视觉顺序的下一张（全部 / 已标注 = 最新在上；未标注 = 最旧在上）。
@@ -1248,41 +1289,38 @@ function advanceAfterSave(item){
 async function saveCurrent(goNext){
   const item = cur(); if(!item) return;
   const body = collect(); if(!body) return;
-  // 在“已标注该分类的图”上修改自己的动作/关注点 → 视为重定义该分类（动作与关注点全组同步，保存前确认）；
-  // 其余情况走唯一性校验（以中心表定义为准）。
-  const redefine = !!(item.marked && item.state && item.state === body.state);
+  // 该分类在中心表的已有定义 → 本次提交与它不一致 = 重定义该分类（动作/坐标对全组样本同步，保存前确认）。
+  //   · 本图已属该分类：动作或任一点有变即重定义（原口径）；
+  //   · 本图未标注 / 换了分类名：只有动了动作、或亲手点过红/绿点且与定义不同才算重定义——
+  //     否则“只输入分类名、坐标由屏幕中心兜底”会被误判成重定义，把定义改成中心。
+  const def = defOf(body.state);
+  const sameState = !!(item.marked && item.state && item.state === body.state);
+  const actDiff = !!def && ((def.action || "none") !== (body.action || "none"));
+  const ptDiff = !!def && (
+    (ptTouch.click && !samePt(def.left, def.top, body.left, body.top)) ||
+    (ptTouch.attn && !samePt(def.attnLeft, def.attnTop, body.attnLeft, body.attnTop)));
+  let redefine = sameState || actDiff || ptDiff;
   if(redefine){
-    const def = defOf(body.state);
-    const oldAct = (def && def.action) || item.action || "none";
-    const oldClick = (oldAct === "click")
-      ? (def && def.left != null && def.top != null) ? def.left + "," + def.top
-        : (item.left != null ? item.left + "," + item.top : null)
-      : null;
-    const oldAttn = (def && def.attnLeft != null && def.attnTop != null)
-      ? def.attnLeft + "," + def.attnTop : null;
-    const sameAct = oldAct === body.action;
-    const sameClick = oldClick === (body.action === "click" && body.left != null ? body.left + "," + body.top : null);
-    const sameAttn = oldAttn === (body.attnLeft != null ? body.attnLeft + "," + body.attnTop : null);
-    const desc = (a, click, attn) => a === "click"
-      ? "鼠标点击点(" + (click || "中心") + ") · 关注点" + (attn ? "(" + attn + ")" : "默认屏幕中心")
-      : "关注点(" + (attn || "屏幕中心") + ")";
-    if(!sameAct || !sameClick || !sameAttn){
-      const dOld = desc(oldAct, oldClick, oldAttn);
-      const dNew = desc(body.action,
-        body.action === "click" && body.left != null ? body.left + "," + body.top : null,
-        body.attnLeft != null ? body.attnLeft + "," + body.attnTop : null);
-      if(!confirm("「" + body.state + "」的分类定义当前为「" + dOld + "」。\n本次保存将把它重新定义为「" + dNew + "」，并作为该分类全部样本的统一动作/鼠标点击点/关注点。\n\n继续？")) return;
+    if(sameDef(def, body)){
+      if(item.marked){   // 已标注图原样重存：动作与两点都没变，无需写盘
+        toast("「" + body.state + "」未做改动，无需保存", "info");
+        return;
+      }
+      redefine = false;  // 未标注图：坐标与已有定义一致，只登记分类归属（沿用定义）
     }else{
-      // 已标注图原样重存（动作与两点都没变）→ 不触发“无坐标重定义”，也无需写盘
-      toast("「" + body.state + "」未做改动，无需保存", "info");
-      return;
+      const extra = item.marked ? "" : "\n本图尚未标注，保存后会归入「" + body.state + "」并转入「已标注」。";
+      if(!confirm("「" + body.state + "」的分类定义当前为「" + defDesc(def || item) + "」。\n"
+        + "本次保存将把它重新定义为「" + defDesc(body) + "」，并作为该分类全部样本的统一动作/鼠标点击点/关注点。"
+        + extra + "\n\n继续？")) return;
+      redefine = true;
     }
   }else{
-    const conflict = actionConflict(body.state, body.action, item.name, false);
+    const conflict = actionConflict(body.state, body.action, item.name);
     if(conflict){ toast(conflict, "err"); updateHints(); return; }
   }
   try{
-    const resp = await fetch(markUrl(item.name), {
+    // redefine=true 显式告知后端：本次已确认重定义，按提交内容覆盖该分类定义（未标注图/换分类名也可）
+    const resp = await fetch(markUrl(item.name) + (redefine ? "?redefine=true" : ""), {
       method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)
     });
     if(!resp.ok){ toast("保存失败：" + (await resp.text() || resp.status), "err"); return; }
@@ -1325,7 +1363,9 @@ async function clearCurrent(){
     item.marked = false; item.state=null; item.action=null; item.left=null; item.top=null;
     item.attnLeft=null; item.attnTop=null;
     dirty = false;
-    $("stateInput").value=""; setAction("none", false); px=null; apx=null; renderDot();
+    $("stateInput").value=""; setAction("none", false); px=null; apx=null;
+    ptTouch = { click:false, attn:false };
+    renderDot();
     baseMark = editorDraft();   // 标记已清空：之后「取消修改」应还原为“无标注”而非清除前旧值
     rebuildStates();            // 同步 chip 计数（该标签使用数 -1）
     toast("已清除标记", "ok");
@@ -1356,6 +1396,7 @@ async function deleteCurrent(){
   }catch(e){ toast("删除失败：" + e.message, "err"); return; }
   const ai = ALL.indexOf(item); if(ai >= 0) ALL.splice(ai, 1);
   dirty = false; px = null; apx = null; attnUse = false;
+  ptTouch = { click:false, attn:false };
   $("stateInput").value = ""; setAction("none", false); renderDot();
   rebuildStates();
   const L = listNow();
@@ -1425,6 +1466,8 @@ let capIntervalMs = null;            // 后端真实截图间隔（毫秒），�
 let capDiffThreshold = null;         // 后端像素去重阈值（%），0 = 关闭去重
 let lastStopReasonShown = null;   // 已弹窗提示过的自动暂停原因（去重，避免每 5s 轮询重复弹窗）
 let lastDedupNoticeAt = -1;       // 已提示过的「启动重复清理结果」时间戳（去重：一条结果只在首次轮询到的那一刻右下角提示，每 2s 轮询不重复打扰）
+let lastDedupProgAt = -1;         // 已提示过「开始检查」的那次启动清理（= 后端进行态快照的 at；换一次启动即换一个 at，重新提示）
+let dedupProg = null;             // 启动重复清理的最近一份进行态快照；非空 = 正在扫描（由 1 秒 ticker 复现进度消息，让「已耗时」逐秒走动）
 
 /* 毫秒间隔 → 人类可读文案（整千显示整秒，否则保留一位小数秒） */
 function fmtCapInterval(ms){
@@ -1863,16 +1906,27 @@ function thinkBusyDock(text){
   b.innerHTML = '<span class="tb-title">汇总分析</span><span>' + escHtml(text) + '</span>';
   syncDockNow();
 }
-/* 右栏任务进度统计行（#thinkTaskStat）：轮次 / 计数总览，与「特征验证」的 vkStat 同一层次 */
-function thinkTaskStat(text){
-  const el = $("thinkTaskStat"); if(el) el.textContent = text || "";
+/* 右栏顶部统计行（#tkStat）：常驻展示样本库规模与对照图生成进度总览——与「特征验证」的 vkStat 同一层次。
+   口径同列表 chip：可分析 = 已标注样本 ≥1 张；已生成 = 产物齐全且样本未变动；需重算 = 样本或产物已变动；
+   待生成 = 可分析但尚无对照图（三者相加 = 可分析分组数）。固定第一条「全部」是汇总组、不算分类。 */
+function thinkStatLine(){
+  const el = $("tkStat"); if(!el) return;
+  const cs = GROUPS.filter(g => !g.all);
+  if(!cs.length){ el.textContent = "样本库：暂无已标注分类（先在「未标注 / 已标注」里打标）。"; return; }
+  const samples = cs.reduce((n, g) => n + (Number(g.sampleCount) || 0), 0);
+  const can = cs.filter(g => g.canAnalyze);
+  const stale = can.filter(g => g.stale === true).length;
+  const done = can.filter(g => g.analyzed && g.stale !== true).length;
+  const wait = Math.max(0, can.length - done - stale);      // 待生成（后端未给字段，按总量差额推得）
+  let s = "样本库：" + samples + " 张原图 · " + cs.length + " 个分类\n已生成 " + done + "/" + can.length + " 组";
+  if(wait || stale) s += "（待生成 " + wait + " · 需重算 " + stale + "）";
+  el.textContent = s;
 }
-/* 右栏任务进度条（#thinkTask，样式同特征验证的 vtBar/vtFill）：text=null 隐藏并复位；否则填充 pct 宽度 + 当前行文案 */
+/* 右栏进度条（#thinkTask，样式同「特征验证」的 verifyTask）：text=null 隐藏并复位；否则填充 pct 宽度 + 进度行文案 */
 function thinkTaskUi(text, pct){
   const box = $("thinkTask");
   if(text == null){
     box.style.display = "none";
-    thinkTaskStat("");
     const f = $("thinkFill"); if(f) f.style.width = "0%";
     return;
   }
@@ -1880,16 +1934,24 @@ function thinkTaskUi(text, pct){
   const f = $("thinkFill"); if(f) f.style.width = Math.max(0, Math.min(100, Math.round(pct || 0))) + "%";
   const el = $("thinkTaskTxt"); if(el){ el.style.color = ""; el.textContent = text; }
 }
-/* 任务收尾结果行（同「特征验证」完成态）：进度条拉满 + 统计行标记结果、结果行上色（成功绿 / 失败红）保留在右栏 */
+/* 任务收尾结果行（同「特征验证」完成态）：进度条拉满 + 结果文案上色（成功绿 / 失败红）保留在右栏 */
 function thinkTaskFinal(label, t){
   if(!t){ thinkTaskUi(null); return; }
   const ok = t.status !== "error";
   const box = $("thinkTask");
   box.style.display = "block";
   const f = $("thinkFill"); if(f) f.style.width = "100%";
-  thinkTaskStat((label || "任务") + (ok ? " · 已完成" : " · 失败"));
   const el = $("thinkTaskTxt");
-  if(el){ el.style.color = ok ? "var(--green)" : "var(--danger)"; el.textContent = t.message || (ok ? "任务完成" : "任务失败"); }
+  if(el){
+    el.style.color = ok ? "var(--green)" : "var(--danger)";
+    el.textContent = (label || "分析") + (ok ? "已完成" : "失败") + "：" + (t.message || (ok ? "任务完成" : "任务失败"));
+  }
+}
+/* 任务期间两个按钮一并置灰（开始分析 / 重新生成全部） */
+function thinkButtonsBusy(on){
+  const s = $("btnThinkStart"), r = $("btnRebuild");
+  if(s) s.disabled = !!on;
+  if(r) r.disabled = !!on;
 }
 /* 批量任务收尾：复位 busy 标志与进行态文案 → 重新拉取组合总览，让列表 / 主图 / dock 回到最新状态；
    t/label = pollAnalyze 返回的最终状态，供 thinkTaskFinal 在右栏留下绿色/红色结果行 */
@@ -1897,7 +1959,7 @@ async function thinkTaskDone(t, label){
   thinkBusy = false;
   thinkRun = null;                                      // 任务结束：列表 chip 回到服务端组合状态口径
   thinkTaskMsg = "";
-  const rb = $("btnRebuild"); if(rb) rb.disabled = false;   // 任务结束恢复「重新生成全部」可用
+  thinkButtonsBusy(false);                              // 任务结束恢复「开始分析 / 重新生成全部」可用
   if(FILTER !== "think"){ $("thinkBar").hidden = true; syncDockNow(); thinkTaskUi(null); return; }
   await refreshThink(false, false);
   renderThinkList();
@@ -1935,15 +1997,6 @@ let ALL_META = [];         // 后端下发的固定「全部」组 12 张专用�
 let kindMetaLoaded = false;
 const THINK_CARDS = [];    // [{m, card, img, tcs}]，与 KIND_META 等长：渲染 / 清理直接遍历它
 const ALL_CARDS = [];      // [{m, card, img, tcs}]，与 ALL_META 等长：「全部」组专用卡片，与 THINK_CARDS 互斥展示
-
-/* 分值弹层短名（原 54 项 zh 映射）：由族 + 块边长 + 交集档 + 方框形态派生 */
-function kindShort(m){
-  const pct = m.tier ? m.tier.slice("same".length) : "";
-  if(m.family === "CROP") return (m.crop === "CLICK" ? "点击区" : "注意区") + "交集 1/" + m.div + " · " + pct + "%";
-  if(m.family === "INTERSECT") return (m.unique ? "独有交集图 " : "交集图 ") + pct + "%";
-  const name = m.family === "MAJOR" ? "多数" : m.family === "AVG" ? "均值" : "去重均值";
-  return (m.unique ? "独有" : "") + (m.block === 1 ? name + "图" : name + "块 " + m.block + "×" + m.block);
-}
 
 /* 卡片 tooltip（原 54 条手写文案）：同样按族 / 档位 / 方框形态套模板派生 */
 const TIP_OP = "单击打开弹窗；弹窗内单击图片在「自适应缩放 ↔ 原始分辨率」间切换，点空白 / Esc 关闭";
@@ -2100,6 +2153,14 @@ function onThinkImgError(el){
   }, 400 * st.tries);
 }
 
+/* 顶栏（.stagebar）视图标题：#fname = 视图名、#fsub = 补充说明（无则留空）、#imgDims = 分辨率。
+   「特征验证 / 算法调优」这类没有单张图片的视图进入时必须显式写一遍，否则会残留上一个视图的分类名 + 原始截图口径 */
+function setStageTitle(name, sub){
+  $("fname").textContent = name || "";
+  $("fsub").textContent = sub || "";
+  $("imgDims").textContent = "";
+}
+
 /* 进入汇总分析工作台 */
 function enterThink(){
   FILTER = "think";
@@ -2234,6 +2295,7 @@ async function refreshThink(autoAnalyze, silent){
   if(FILTER !== "think") return;   // 加载期间已切走：丢弃本次结果，防止把已退出的汇总分析主区重新点亮
   const prevKey = selKey;
   GROUPS = arr;
+  thinkStatLine();               // 右栏顶部统计行（样本库规模 + 已生成 / 待生成 / 需重算总览）
   const sig = thinkSig();
   const changed = sig !== lastThinkSig;
   lastThinkSig = sig;
@@ -2508,15 +2570,16 @@ function openGroup(g){
   $("tkInfo").innerHTML = info;
 }
 
-/* 自动分析所有「可分析但尚未生成对照图」的组合 */
-async function startAnalyzeIfNeeded(){
+/* 分析所有「可分析但尚未生成对照图 / 样本已变动」的组合；label = 任务名（进入视图自动跑 = 自动分析，右栏「开始分析」= 分析） */
+async function startAnalyzeIfNeeded(label){
+  const taskName = label || "自动分析";
   if(thinkBusy) return;
   const need = GROUPS.filter(g => g.canAnalyze && (!g.analyzed || g.stale === true));
   if(!need.length){ renderThinkList(); return; }
   thinkRun = { keys: need.map(gkey), stage: 1, processed: 0 };   // 记录本轮待算队列（顺序同后端），供列表 chip 推进
   thinkBusy = true; renderThinkList();
-  const rb0 = $("btnRebuild"); if(rb0) rb0.disabled = true;   // 任务期间「重新生成全部」置灰
-  thinkBusyDock("正在后台分析，为「自动分析中」的组合合成对照图…");
+  thinkButtonsBusy(true);   // 任务期间「开始分析 / 重新生成全部」置灰
+  thinkBusyDock("正在后台" + taskName + "，为「待生成 / 需重算」的组合合成对照图…");
   toast("发现 " + need.length + " 个分组待生成对照图，开始后台分析…", "");
   try{
     const r = await fetch("/api/annotate/think/analyze", {
@@ -2524,12 +2587,23 @@ async function startAnalyzeIfNeeded(){
     });
     if(!r.ok){ let m="HTTP "+r.status; try{ const j=await r.json(); if(j&&j.error)m=j.error; }catch(_){} throw new Error(m); }
     const j = await r.json();
-    const t = await pollAnalyze(j.taskId, "自动分析");
-    await thinkTaskDone(t, "自动分析");
+    const t = await pollAnalyze(j.taskId, taskName);
+    await thinkTaskDone(t, taskName);
   }catch(e){
     toast("启动分析失败：" + e.message, "err");
-    await thinkTaskDone(null, "自动分析");
+    await thinkTaskDone(null, taskName);
   }
+}
+
+/* 长任务进度文案统一模板（所有「正在进行中的后台任务」共用，与右下角那条
+   「正在检查重复图片：87/848 张（IMG_xxx.png）（已耗时 2 分 50 秒 · 已比对 3655 次）」同款）：
+   「正在<动作>：<已完成>/<总数> <单位>（<当前对象>）（已耗时 N 秒[ · <附加计数>]）」
+   计数为 0 时省略计数段、cur 为空时省略对象括号、已耗时与附加计数都为空时省略末段括号 */
+function progLine(act, done, total, unit, cur, ageTxt, extra){
+  const d = Math.max(0, Number(done) || 0), n = Math.max(0, Number(total) || 0);
+  const cnt = n > 0 ? d + "/" + n + " " + unit : (d > 0 ? "已完成 " + d + " " + unit : "");
+  const tail = (ageTxt ? "已耗时 " + ageTxt : "") + (extra ? (ageTxt ? " · " : "") + extra : "");
+  return "正在" + act + (cnt ? "：" + cnt : "") + (cur ? "（" + cur + "）" : "") + (tail ? "（" + tail + "）" : "");
 }
 
 /* 已耗时文案（秒 → 「N 秒 / N 分 M 秒」）：轮询展示中逐秒走动，让排队与长计算可分辨是否仍在推进 */
@@ -2553,50 +2627,43 @@ async function pollAnalyze(id, label){
     }catch(_){ continue; }     // 服务短暂中断则等下一轮
     if(t.status === "running"){
       // 后台为单线程串行计算池（手动批量分析 / 自动重算共用，执行序 = 提交序）：
-      // 任务刚提交可能还在排队（queuePos>0，total 未统计、得等前面跑完），也可能已进场正做清场/统计
-      // （queuePos=0 但 total 仍为 0）。统计行常驻“已耗时”时钟逐秒走动：任何看着没动都能分辨是
-      // 排队 / 长计算仍在推进，而非卡死。total 确定后即显示真实进度 processed/N。
-      // 任务分 2 轮：第 1 轮逐分类生成 15 张基础对照图（交集六档 + 多数/均值/去重均值/8·32 块族；processed/total 计数），
-      // 第 2 轮生成各分类 15 张 -unique 独有区图（跨分类按 kind 推进，current 指示当前图种）。
-      // 进行中：进度画在汇总分析右栏 vtBar 同款进度条上（第 1 轮按分类数占比、第 2 轮按 current 内 i/15 占比），
+      // 任务刚提交可能还在排队（queuePos>0，得等前面的任务跑完），也可能已进场做准备工作。
+      // 进度文案统一走 progLine()（与右下角「正在检查重复图片：87/848 张（文件名）（已耗时 2 分 50 秒 · 已比对 3655 次）」
+      // 同一模板）：「正在<做什么>：<第几项>/<共几项> <单位>（<当前对象>）（已耗时 N 秒）」，已耗时逐秒走动 →
+      // 排队等待 / 长计算都能一眼看出仍在推进，而不是一句看不出在干什么、也不知道进度到哪的「正在准备…」。
+      // 任务分 3 个阶段：0 = 准备（一键重建先逐张清场 summary/，再逐分类统计待分析组合，prepAct/prepDone/prepTotal/prepCur 计数）、
+      // 1 = 逐分类生成 15 张基础对照图（processed/total 计数）、2 = 生成各分类 15 张 -unique 独有区图（current 带 i/15）。
+      // 进行中：进度画在汇总分析右栏 vtBar 同款进度条上（准备 / 基础轮按占比、第 2 轮按图种内 i/15 占比），
       // 中间过程不逐步写历史日志（任务开始 / 结束由 toast 各入库一条）；
       // 退出汇总分析视图后无右栏可挂载，回退为 taskTip 单条闪现兜底（noLog，只显示不写日志）
       const sub = Number(t.submittedAtMs) || 0;
-      const age = sub ? "（已耗时 " + durTxt((Date.now() - sub) / 1000) + "）" : "";
+      const ageTxt = sub ? durTxt((Date.now() - sub) / 1000) : "";
       const qp = Number(t.queuePos);
       const queued = qp > 0;                       // 还在排队：计算池正被更早提交的任务占用
       const hasN = t.total > 0;
-      const stage = t.stage === 2 ? 2 : 1;
-      const round = stage === 2 ? "第 2 轮 · 独有区图" : "第 1 轮 · 基础对照图";
-      const prog = stage === 2
-        ? (t.current ? " · " + t.current : "")
-        : (hasN ? " " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "") : "");
-      const msg = "正在" + label + (queued
-        ? " · 排队第 " + qp + " 位（计算池正忙：" + (t.queueActiveLabel || "分析任务") + "）"
-        : " · " + round + prog) + (age ? " " + age : "");
+      const stage = Number(t.stage) || 0;
+      const curOf = s => String(s || "").replace(/（\s*\d+\s*\/\s*\d+\s*）\s*$/, "");   // 去掉后端附带的计数后缀
       const mk = /（\s*(\d+)\s*\/\s*(\d+)\s*）/.exec(t.current || "");
-      const pct = stage === 1 ? (hasN ? t.processed / t.total * 100 : 0)
-        : (mk ? (+mk[1]) / (+mk[2]) * 100 : 0);
-      thinkBusyDock(msg);
-      if(FILTER === "think"){
-        // 右栏分段式进度（同特征验证）：统计行 = 轮次与计数总览（附已耗时时钟），进度行 = 当前正在处理的项
-        thinkTaskStat((stage === 2
-          ? "第 2 轮 · 正在按图种刷新全部分类的 -unique 独有区图"
-          : (hasN
-              ? "第 1 轮 · 分类标注 " + t.processed + "/" + t.total + (t.current ? "（" + t.current + "）" : "")
-              : (queued
-                  ? "第 1 轮 · 排队中：计算池正忙，前面还有 " + qp + " 个任务（正在" + (t.queueActiveLabel || "分析") + "）"
-                  : "第 1 轮 · 任务已提交，正在准备（清场 / 统计待分析组合）…"))) + age);
-        thinkTaskUi(stage === 2
-          ? (t.current ? "正在刷新「" + t.current + "」…" : "正在准备…")
-          : (queued
-              ? "等待前面的任务完成…"
-              : (hasN
-                  ? (t.current ? "正在合成「" + t.current + "」的对照图…" : "正在准备…")
-                  : "正在统计待分析组合…")), pct);
-      }else taskTip(queued
-        ? "排队中：前面还有 " + qp + " 个任务（正在" + (t.queueActiveLabel || "分析") + "）" + (age ? " " + age : "")
-        : "正在" + round + prog + (age ? " " + age : ""), null, true);   // 无右栏场景兜底：仅展示，不入历史日志
+      const prepTotal = Number(t.prepTotal) || 0, prepDone = Number(t.prepDone) || 0;
+      let line = "", pct = 0;
+      if(queued){
+        line = "正在排队：第 " + qp + " 位（计算池正忙：" + (t.queueActiveLabel || label) + "）"
+          + (ageTxt ? "（已耗时 " + ageTxt + "）" : "");
+      }else if(stage < 1){
+        // 准备阶段：清场逐张删 / 统计逐分类核对产物，都是真实计数
+        line = progLine(t.prepAct || "准备分析", prepDone, prepTotal, t.prepUnit || "项", t.prepCur, ageTxt);
+        pct = prepTotal > 0 ? prepDone / prepTotal * 100 : 0;
+      }else if(stage === 2){
+        line = progLine("刷新独有区图", mk ? mk[1] : 0, mk ? mk[2] : 0, "个图种", curOf(t.current) || "准备中", ageTxt);
+        pct = mk ? (+mk[1]) / (+mk[2]) * 100 : 0;
+      }else{
+        line = progLine("分析对照图", hasN ? Math.min(t.processed + 1, t.total) : 0, hasN ? t.total : 0, "个分类",
+          curOf(t.current) || "准备中", ageTxt);
+        pct = hasN ? t.processed / t.total * 100 : 0;
+      }
+      thinkBusyDock(line);
+      if(FILTER === "think") thinkTaskUi(line, pct);   // 右栏进度行（同特征验证的 vtText），样本库总览常驻上方的 #tkStat
+      else taskTip(line, null, true);                  // 无右栏场景兜底：仅展示，不入历史日志
       // 与右侧任务进度条同节奏刷新组合列表 chip：正在合成的组合标「计算中…」、已算完的标「已计算」
       if(thinkRun){
         thinkRun.stage = t.stage === 2 ? 2 : 1;
@@ -2615,6 +2682,15 @@ async function pollAnalyze(id, label){
   return null;
 }
 
+/* 「开始分析」：为「可分析但尚无对照图 / 样本已变动」的分类标注后台分析（进入本视图时也会自动跑同一入口）。
+   与「重新生成全部」的区别：这是增量分析——产物齐全且样本未变动的分类直接跳过，不清空、不重算已有产物 */
+async function thinkStart(){
+  if(thinkBusy){ toast("已有分析任务进行中，请稍候", "warn"); return; }
+  const need = GROUPS.filter(g => g.canAnalyze && (!g.analyzed || g.stale === true));
+  if(!need.length){ toast("全部分类的对照图都已生成且样本未变动，无需分析。", ""); return; }
+  await startAnalyzeIfNeeded("分析");   // 与自动路径同入口：后端按提交序增量生成，进度显示在右栏进度条
+}
+
 /* 「重新生成全部对照图」：先清空 summary/ 全部产物，再全量重建。删除在后台计算线程内串行执行，
    不会与自动重算/其它分析互踩；产物由 classify/ 已标注样本派生，删除不影响原始截图与标注 */
 async function rebuildThink(){
@@ -2622,7 +2698,7 @@ async function rebuildThink(){
   if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类适用的对照图（15 张基础合成图：交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图，各带 1 张独有区图共 15 张；每个分类另含 12 张注意区交集图（以关注点为中心，未设 = 屏幕中心），鼠标点击分类再加 12 张点击区交集图（以点击点为中心），全部参与识别）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
   thinkRun = { keys: GROUPS.filter(g => g.canAnalyze).map(gkey), stage: 1, processed: 0 };  // 全量重建：所有有样本的组合都在本轮队列
   thinkBusy = true; renderThinkList();
-  const rb1 = $("btnRebuild"); if(rb1) rb1.disabled = true;   // 任务期间「重新生成全部」置灰
+  thinkButtonsBusy(true);   // 任务期间「开始分析 / 重新生成全部」置灰
   thinkBusyDock("正在全量重建全部对照图…（将先清空 summary/ 旧产物）");
   try{
     const r = await fetch("/api/annotate/think/rebuild", { method:"POST" });
@@ -2871,6 +2947,7 @@ $("capManualBtn").addEventListener("click", capManualShot);   // 「未标注」
 $("btnLog").addEventListener("click", openLogPanel);
 $("btnExit").addEventListener("click", requestExit);
 $("btnRebuild").addEventListener("click", rebuildThink);
+$("btnThinkStart").addEventListener("click", thinkStart);
 $("btnSaveNext").addEventListener("click", ()=> saveCurrent(true));
 $("btnLast").addEventListener("click", cancelCurrentMod);
 $("btnClear").addEventListener("click", clearCurrent);
@@ -2937,13 +3014,12 @@ let VK_DTL = null;           // 当前选中算法的分类级明细
 let VK_SEQ = "";             // 列表渲染签名（避免无变化时每 1 秒强制重建 DOM）
 let VK_TMR = null;           // 特征验证视图下的专用轮询定时器
 let vkBusy = false;          // 请求去重（防止上一轮未返回时下一轮叠发）
-let vkFil = null;            // 特征验证左栏过滤：null=全部；gen100/c100/c90=只看该条（互斥单选，再点取消）
+let vkFil = null;            // 特征验证左栏过滤：null=全部；gen100/c80=只看该条（互斥单选，再点取消）
 
 /* 特征验证过滤判据：k.b = 生成成功率(%)、k.c = 匹配正确率(%)；未验证（null）一律不入选 */
 const VK_FIL = {
-  gen100: { label: "生成成功率100%",    hit: k => k.b != null && k.b >= 100 },
-  c100:   { label: "匹配正确率100.00%", hit: k => k.c != null && k.c >= 100 },
-  c90:    { label: "匹配正确率90.00+%", hit: k => k.c != null && k.c > 90 }
+  gen100: { label: "生成成功率100%", hit: k => k.b != null && k.b >= 100 },
+  c80:    { label: "匹配正确率80+%", hit: k => k.c != null && k.c >= 80 }
 };
 const vkShown = ks => (vkFil && VK_FIL[vkFil]) ? ks.filter(VK_FIL[vkFil].hit) : ks;
 function toggleVkFil(v){
@@ -2954,7 +3030,8 @@ function toggleVkFil(v){
 }
 
 /* 汇总图算法短名与维度说明：同样由后端 kind 元数据（族 / 块边长 / 交集档 / 方框形态）派生，
-   元数据未就绪时退化为 kind 本身 */
+   元数据未就绪时退化为 kind 本身。name = 全站唯一权威短名（特征验证列表 / 右栏标题 / 验证进度 /
+   调优视图列表 / 对照图分值弹层全部取它），新增展示位一律用 vkInfo(...).name，勿另写映射 */
 function vkInfo(kind){
   const m = KIND_META.find(x => x.kind === kind);
   if(!m) return { name:kind, dim:"" };
@@ -2968,9 +3045,9 @@ function vkInfo(kind){
   if(m.family === "INTERSECT"){
     return { name: "交集图 " + pct + uniq, dim: "全图交集" + (m.unique ? uniq : " · 覆盖率档") };
   }
-  const nm = m.family === "DEDUP_AVG" ? "去重均值" : m.family === "MAJOR" ? "多数图" : "均值图";
-  return { name: nm + " " + (m.block === 1 ? "全幅" : "1/" + m.block) + uniq,
-           dim: (m.family === "DEDUP_AVG" ? "去重均值图" : nm) + uniq };
+  const nm = m.family === "MAJOR" ? "多数图" : m.family === "AVG" ? "均值图" : "去重均值图";
+  return { name: nm + " " + "1/" + m.block + uniq,
+           dim: nm + uniq };
 }
 function fmtV(x){
   if(x == null || isNaN(x)) return "—";
@@ -2980,6 +3057,11 @@ function fmtV(x){
 function vkBC(b){
   if(b == null || isNaN(b)) return "";
   return b < 50 ? "vkbad" : b < 90 ? "vkwarn" : "";
+}
+// E 无法区分告警配色：越高越差 → ≥50 红、≥20 黄、其余默认色
+function vkE(e){
+  if(e == null || isNaN(e)) return "";
+  return e >= 50 ? "vkbad" : e >= 20 ? "vkwarn" : "";
 }
 function vkTime(ms){
   const d = new Date(ms);
@@ -2995,7 +3077,7 @@ function vkSig(j){
   const t = j.task;
   const runTag = (t && (j.running || t.finished)) ? (j.running ? "run@" + (t.cur || "") : "fin") : "idle";
   return j.samples + "|" + j.groups + "|" + runTag + "\n" +
-    (j.kinds || []).map(k => k.kind + "|" + k.state + "|" + k.a + "|" + k.b + "|" + k.c + "|" + k.samples).join("\n");
+    (j.kinds || []).map(k => k.kind + "|" + k.state + "|" + k.a + "|" + k.b + "|" + k.c + "|" + k.e + "|" + k.samples).join("\n");
 }
 
 /* 进入特征验证工作台（左栏 = 汇总图算法列表；主图区 = 选中算法的 A/B/C 分值明细；右栏 = 说明与开始验证） */
@@ -3016,6 +3098,7 @@ function enterVerify(){
   syncSugDock();
   $("lstTitle").textContent = "汇总图算法列表（特征验证）";
   $("listCount").textContent = "";
+  setStageTitle("特征验证");   // 顶栏只写本视图标题：样本库 / 已算口径由右栏 #vkStat 承担（同理清掉上一个视图残留）
   $("thinkFil").hidden = true;
   vkFil = null;                // 过滤复位：进入即为「全部」，按钮高亮由 renderVerifyList → syncFilRows 刷新
   $("thinkEmpty").style.display = "none";
@@ -3074,9 +3157,10 @@ function renderVerifyList(){
     if(j.running && t && !t.finished && t.cur === k.kind){ chip = "计算中…"; chipCls = "vr"; }
     else if(k.state === "done"){ chip = "已计算"; chipCls = "vd"; }   // 与汇总分析组合行同一口径（thinkChipFor）
     else if(k.state === "stale"){ chip = "需重算"; chipCls = "vs"; }
-    // 左栏只给一个数：C 匹配正确率（区分度）——A / 是否生成成功 / 样本数都进明细区，列表保持清爽
+    // 左栏只给一个数：匹配正确率（区分度）——生成成功率 / 自分类平均 / 其它分类平均 / 样本数都进明细区，列表保持清爽
     const meta = k.c != null
       ? '匹配正确率 <span class="' + vkBC(k.c) + '">' + fmtV(k.c) + '</span>'
+        + (k.e != null ? ' · 无法区分 <span class="' + vkE(k.e) + '">' + fmtV(k.e) + '</span>' : '')
       : (k.a != null ? '匹配正确率 ——' : escHtml(info.dim || info.name));
     li.innerHTML =
       '<div class="r1"><span class="t">' + escHtml(info.name) + '</span>' +
@@ -3178,47 +3262,159 @@ function renderVerifyDetail(){
   $("vdStamp").textContent = "完成 " + vkTime(d.doneMs) + " · 耗时 " + vkCost(d.costMs) + " · kind " + d.kind;
   const genTxt = (d.genOk != null && d.genTotal != null)
     ? '（' + d.genOk + ' / ' + d.genTotal + ' 个分类能生成有效图）' : '';
-  const cTxt = (d.c != null && d.cSamples != null) ? '（可匹配样本 ' + d.cSamples + ' 张）' : '';
+  // D 的分母 = 能给出结果的样本（可匹配样本里排除「最高分被 ≥2 个分类并列」的）；E 的分母 = 全部可匹配样本
+  const decided = (d.cSamples != null && d.tie != null) ? d.cSamples - d.tie : null;
+  const cTxt = (decided != null) ? '（可匹配样本 ' + d.cSamples + ' 张，其中能给出结果 ' + decided + ' 张）' : '';
+  const eTxt = (d.tie != null && d.cSamples != null) ? '（无法区分 ' + d.tie + ' / ' + d.cSamples + ' 张）' : '';
   $("vdSum").innerHTML =
-    '<div class="vcard"><div class="vcap">A · 自分类平均匹配值</div>' +
-    '<div class="vval">' + fmtV(d.a) + '</div>' +
-    '<div class="vsub">每张原图与「自己分类的该算法生成图」比对的匹配占比均值（= 100 − 不匹配占比），越高样本越集中；无法生成有效图的样本按 0 计入</div></div>' +
-    '<div class="vcard"><div class="vcap">B · 生成成功率</div>' +
+    '<div class="vcard"><div class="vcap">A · 生成成功率</div>' +
     '<div class="vval">' + fmtV(d.b) + '</div>' +
-    '<div class="vsub">能生成有效合成图（产物存在且非全透明）的分类占比 ' + genTxt + '，越高该算法适用的分类越多</div></div>' +
-    '<div class="vcard"><div class="vcap">C · 匹配正确率</div>' +
+    '<div class="vsub">能生成有效合成图（产物存在且非全透明）的分类占比 ' + genTxt + '，越高越好</div></div>' +
+    '<div class="vcard"><div class="vcap">B · 自分类平均匹配值</div>' +
+    '<div class="vval">' + fmtV(d.a) + '</div>' +
+    '<div class="vsub">分类包含的每张原图与「该分类的该算法生成图」比对的匹配占比均值（= 100 − 不匹配占比），越高越好；无法生成有效图的不参与统计</div></div>' +
+    '<div class="vcard"><div class="vcap">C · 其它分类平均匹配值</div>' +
+    '<div class="vval">' + fmtV(d.other) + '</div>' +
+    '<div class="vsub">其它分类的每张原图与「该分类的该算法生成图」比对的匹配占比均值（= 100 − 不匹配占比），越低越好；无法生成有效图的不参与统计</div></div>' +
+    '<div class="vcard"><div class="vcap">D · 匹配正确率</div>' +
     '<div class="vval ' + vkBC(d.c) + '">' + fmtV(d.c) + '</div>' +
-    '<div class="vsub">在能生成有效图的分类里，原图与「所有分类的该算法生成图」匹配、最高分恰是自己分类的占比 ' + cTxt + '，越高区分度越好；生成不出有效图的分类不进此分母</div></div>' +
+    '<div class="vsub">在能生成有效图的分类里，原图与「所有分类的该算法生成图」匹配、最高分<b>唯一最高</b>且恰是自己分类的占比 ' + cTxt + '，越高越好；无法生成有效图的不参与统计，<b>无法给出最高值的结果</b>（最高分被 ≥2 个分类并列，分值一样、分不出该选哪一类）的也不参与统计（这些样本只计入 E）</div></div>' +
+    '<div class="vcard"><div class="vcap">E · 无法区分率</div>' +
+    '<div class="vval ' + vkE(d.e) + '">' + fmtV(d.e) + '</div>' +
+    '<div class="vsub">全部可匹配样本里，与全部分类的该算法生成图比对后<b>无法给出最高值的结果</b>（最高分被 ≥2 个分类并列，分值一样、分不出该选哪一类）的占比 ' + eTxt + '，越低越好；分母 = 全部可匹配样本（命中 + 无法区分 + 误判 = 可匹配样本数），与 D 的分母不同（D 只算能给出结果的）</div></div>' +
     '<div class="vmeta">样本 ' + d.samples + ' 张 · 参与分类 ' + d.groups + ' 个</div>';
   const tb = $("vdRows"); tb.innerHTML = "";
+  // D 列「查看详细」小按钮：表格每次重渲染都是新节点，用事件委托只绑一次（弹窗内容现从 VK_DTL 取）
+  tb.onclick = e => {
+    const b = e.target.closest(".vkw");
+    if(!b) return;
+    const row = (VK_DTL && VK_DTL.rows || [])[Number(b.getAttribute("data-i"))];
+    if(row) openVkWrong(row);
+  };
   if(!d.rows || !d.rows.length || d.samples === 0){
     const tr = document.createElement("tr");
-    tr.innerHTML = '<td colspan="6" class="vdnone">该算法当前没有可验证的分类或样本（对应汇总图产物不存在，或没有任何原图能与之比对）。</td>';
+    tr.innerHTML = '<td colspan="8" class="vdnone">该算法当前没有可验证的分类或样本（对应汇总图产物不存在，或没有任何原图能与之比对）。</td>';
     tb.appendChild(tr);
     return;
   }
-  for(const r of d.rows){
+  for(const [ri, r] of d.rows.entries()){
     const tr = document.createElement("tr");
     const act = (ACT_LABEL[r.action] || r.action || "无动作")
       + (r.clickLeft != null && r.clickTop != null ? "（" + r.clickLeft + "," + r.clickTop + "）" : "");
-    // 生成不出有效合成图的分类（无产物 / 全透明空图）：它的 A 与命中必然为 0（不是真的匹配差），
-    // 属「无判别点」→ 数值列显示 —— 而不是 0%，也不进 C 的分母
+    // 生成不出有效合成图的分类（无产物 / 全透明空图）：属「无判别点」，其样本不进任何指标统计
+    // → 数值列显示 —— 而不是 0%
     const ok = r.valid !== false;
     const dash = "——";
-    // B 列 = 是否生成成功：是 / 否 + 原因（原因随本列给出，动作列只留动作本身）
+    // 是否生成成功：是 / 否 + 原因（原因随本列给出，动作列只留动作本身）
     const gen = ok ? "是" : '<span class="vmiss">否，'
       + (r.missing ? "未生成对应产物" : "生成结果为全透明图") + '</span>';
+    // 确有误判或无法区分样本 → 正确率后跟一个「查看详细」小按钮（弹窗逐图列出两类明细）；
+    // 不再限定 D < 100%：D 的分母已排除无法区分样本，可能出现「D = 100% 但仍有无法区分样本」
+    const wrongN = Array.isArray(r.wrong) ? r.wrong.length : 0;
+    const tiedN = Array.isArray(r.tied) ? r.tied.length : 0;
+    const canVkw = ok && (wrongN + tiedN) > 0;
+    // D 的分母（能给出结果 = 命中 + 误判）；E 的分母 = 本分类全部可匹配样本
+    const decidedN = ok && r.decided != null ? r.decided : null;
     tr.innerHTML =
       '<td class="st">' + escHtml(r.state) + '</td>' +
       '<td class="ac">' + escHtml(act) + '</td>' +
       '<td class="nu">' + (ok ? fmtV(r.a) : dash) + '</td>' +
       '<td class="nu nugen">' + gen + '</td>' +
-      '<td class="nu ' + (ok ? vkBC(r.c) : "") + '">' + (ok ? fmtV(r.c) : dash) + '</td>' +
-      '<td class="nu">' + (ok && r.hit != null ? r.hit + " / " + r.samples : dash) + '</td>';
-    tr.title = "样本 " + r.samples + " 张：A " + fmtV(r.a) + "，C " + fmtV(r.c)
-      + (ok ? "" : "；该分类未生成有效产物，A/C 与命中数不计（显示 ——）");
+      // D：匹配正确率（分母 = 命中 + 误判，不含无法区分）
+      '<td class="nu ' + (ok ? vkBC(r.c) : "") + '">' + (ok ? fmtV(r.c) : dash)
+        + (canVkw ? '<button type="button" class="vkw" data-i="' + ri + '"'
+            + ' title="逐图列出本分类的明细：' + wrongN + ' 张「最高分唯一但不是本分类」的误判，'
+            + tiedN + ' 张「最高分被 ≥2 个分类并列」的无法区分">查看详细</button>' : '')
+        + '</td>' +
+      // 匹配正确分类的个数 = 命中 / 能给出结果（D 的分母）
+      '<td class="nu">' + (ok && r.hit != null ? r.hit + " / " + (decidedN != null ? decidedN : "—") : dash) + '</td>' +
+      // E：无法区分率（最高分被 ≥2 个分类并列 → 分不出该选哪一类），越低越好；分母 = 全部可匹配样本
+      '<td class="nu ' + (ok ? vkE(r.e) : "") + '">' + (ok && r.e != null ? fmtV(r.e) : dash) + '</td>' +
+      // 无法区分的个数 = 无法区分 / 全部可匹配样本（E 的分母）
+      '<td class="nu">' + (ok && r.tie != null ? r.tie + " / " + r.samples : dash) + '</td>';
+    tr.title = "样本 " + r.samples + " 张：自分类平均 " + fmtV(r.a) + "，匹配正确率 " + fmtV(r.c)
+      + "（命中 " + (r.hit || 0) + " / 能给出结果 " + (decidedN != null ? decidedN : "—") + " 张）"
+      + "，无法区分率 " + fmtV(r.e) + "（无法区分 " + (r.tie || 0) + " / " + r.samples + " 张）"
+      + (ok ? "" : "；该分类未生成有效产物，其上指标与个数不参与统计（显示 ——）");
     tb.appendChild(tr);
   }
+}
+
+/* 分类行「查看详细」弹窗（该分类有误判 / 无法区分样本时出现，不再要求 D < 100%）。两段：① 误判——与
+   全部分类的该算法生成图比对后最高分「唯一但不是自家」的原图，按被误判到的分类分组，便于看出本分类被
+   哪个分类抢走；② 无法区分——最高分被 ≥2 个分类并列的原图，列出并列到的分类（E 的明细，这些样本既不算
+   命中也不算判错，只进 E 的分母、不进 D 的分母）。
+   缩略图单击可看原图大图。 */
+function openVkWrong(r){
+  const wrong = (r && Array.isArray(r.wrong)) ? r.wrong : [];
+  const tied = (r && Array.isArray(r.tied)) ? r.tied : [];
+  if(!wrong.length && !tied.length) return;
+  const kind = (VK_DTL && VK_DTL.kind) || "";
+  const info = kind ? vkInfo(kind) : { name:"—" };
+  const act = ACT_LABEL[r.action] || r.action || "无动作";
+  if($("vkWrongModal")) $("vkWrongModal").remove();
+  const groups = [];
+  for(const w of wrong){
+    let g = groups.find(x => x.state === w.hitState);
+    if(!g){ g = { state:w.hitState, action:w.hitAction, items:[] }; groups.push(g); }
+    g.items.push(w);
+  }
+  groups.sort((a, b) => (b.items.length - a.items.length)
+    || (a.state < b.state ? -1 : a.state > b.state ? 1 : 0));
+  const wrongBody = groups.map(g => {
+    const gact = ACT_LABEL[g.action] || g.action || "无动作";
+    const head = '<div class="ghead">误判为 <b>' + escHtml(g.state) + '</b>'
+      + '<span>' + escHtml(gact) + ' · ' + g.items.length + ' 张</span></div>';
+    const items = g.items.map(w =>
+      '<div class="row">' +
+        '<img loading="lazy" src="' + escHtml(imgUrl(w.file)) + '" alt="' + escHtml(w.file) + '">' +
+        '<span class="f">' + escHtml(w.file) + '</span>' +
+        '<span class="s" title="该原图与「误判分类的生成图」的匹配占比 / 与「自家生成图」的匹配占比">'
+          + '命中 ' + fmtV(w.hitScore) + ' · 自家 ' + fmtV(w.selfScore) + '</span>' +
+      '</div>').join("");
+    return head + items;
+  }).join("");
+  const tieBody = tied.length
+    ? '<div class="ghead">无法区分 <b>' + tied.length + ' 张</b>'
+        + '<span>最高分被 ≥2 个分类并列（分值一样、分不出该选哪一类）</span></div>'
+      + tied.map(w =>
+        '<div class="row">' +
+          '<img loading="lazy" src="' + escHtml(imgUrl(w.file)) + '" alt="' + escHtml(w.file) + '">' +
+          '<span class="f">' + escHtml(w.file) + '</span>' +
+          '<span class="s" title="最高匹配占比与被并列到的分类 / 与自家生成图的匹配占比">'
+            + '并列 ' + escHtml(w.tiedWith || "—") + ' · 最高 ' + fmtV(w.hitScore)
+            + ' · 自家 ' + fmtV(w.selfScore) + '</span>' +
+        '</div>').join("")
+    : "";
+  const ov = document.createElement("div");
+  ov.id = "vkWrongModal";
+  ov.className = "modal-ov";
+  ov.innerHTML =
+    '<div class="xcard">' +
+      // 标题带上「这是哪个分类（标注 ｜ 动作）的明细」；本弹窗覆盖整页、看不到身后的右栏与表格，
+      // 故紧随其后再用一行信息条把「哪种汇总图算法 / 几个样本 / D·E·命中」一并摆出来，不用关掉弹窗去回看
+      '<div class="xt2">匹配明细 - ' + escHtml(r.state) + ' ｜ ' + escHtml(act) + '</div>' +
+      '<div class="xmeta">' +
+        '<span>汇总图算法<b>' + escHtml(info.name) + '</b></span>' +
+        '<span>样本<b>' + r.samples + ' 张</b></span>' +
+        '<span>匹配正确率<b class="' + vkBC(r.c) + '">' + fmtV(r.c) + '</b></span>' +
+        '<span>命中<b>' + (r.hit != null ? r.hit + " / " + (r.decided != null ? r.decided : "—") : "—") + '</b></span>' +
+        '<span>无法区分率<b class="' + vkE(r.e) + '">' + fmtV(r.e) + '</b></span>' +
+        '<span>无法区分<b>' + (r.tie != null ? r.tie + " / " + r.samples : "—") + '</b></span>' +
+      '</div>' +
+      '<div class="sub">' + r.samples + ' 张原图里 ' + wrong.length + ' 张最佳命中「唯一但不是自家分类」'
+        + '（误判）、' + tied.length + ' 张最高分被 ≥2 个分类「并列」（无法区分）。误判段按被误判到的'
+        + '分类分组，每行「命中 x% · 自家 y%」= 该原图与「误判分类的生成图」／与「自家生成图」的匹配占比；'
+        + '无法区分段每行「并列 A、B · 最高 x% · 自家 y%」= 并列到的分类及两边的匹配占比（越高越像）；'
+        + '单击缩略图看原图大图。</div>' +
+      '<div class="list">' + wrongBody + tieBody + '</div>' +
+      '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="vkwOk">知道了</button></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.addEventListener("click", e => { if(e.target === ov) close(); });
+  const ok = $("vkwOk"); if(ok) ok.addEventListener("click", close);
+  ov.querySelectorAll("img").forEach(im => im.addEventListener("click", () => openLightbox(im.src, im.alt)));
 }
 
 function vkTaskUi(j){
@@ -3278,19 +3474,34 @@ async function vkStart(){
 
 $("btnVerifyStart").addEventListener("click", vkStart);
 
-/* ---------------- 算法调优：五族权重自动寻优（/api/optimize/status|start|apply|reset） ---------------- */
-let OPT = null;              // /api/optimize/status 最近一次快照
-let OPT_TMR = null;          // 算法调优视图专用轮询定时器（1 秒，仅停留该视图时存在）
-let optBusy = false;         // 请求去重（上一轮未返回时不叠发）
-let optMounted = false;      // 主图区权重编辑骨架是否已搭好（轮询不重建滑块，避免打断拖拽）
-let optCur = [];             // 权重编辑器当前值（草稿，点「应用权重」才写后端）
-let optSync = "";            // 已与后端同步的权重签名（值变化才回填滑块）
-let optEffSig = "";          // 产物生效范围表签名（无变化不重建表格）
-const OPT_FAM = ["A 全图交集图","B 多数族","C 均值族","D 去重均值族","E 方框交集图"];   // 状态未取回时的兜底族名
+/* ---------------- 算法调优：特征组合成匹配算法 + 验证分类准确率（/api/optimize/status|start） ---------------- */
+let OPT = null;        // /api/optimize/status 最近一次快照
+let OPT_TMR = null;    // 本视图专用轮询定时器（1 秒，仅停留该视图时存在）
+let optBusy = false;   // 请求去重（上一轮未返回时不叠发）
+let optSig = "";       // 主图区算法结构签名（算法 + 特征 + 基础分 X），变化才重建（避免轮询打断 Y 输入）
+let optResSig = "";    // 结果区签名（值变化才重建）
+let optY = {};         // 权重草稿 { 算法id: { sig, en:[bool], vals:[num] } }，默认全启用 + Y = 1
+let optCnt = null;     // 算法个数（顶栏「算法调优(N)」用：启动即预取一次、进本视图轮询刷新，与 vkCnt 同一套做法）
+let optCntBusy = false;// 预取去重（上一轮未返回时不叠发）
 
-function optCurSig(){ return optCur.join(","); }
+/* 算法特征顺序签名：特征集合变了才把该算法的权重草稿重置为默认 */
+function optFeatSig(a){ return ((a && a.features) || []).map(f => f.kind).join(","); }
+function optAlgo(id){ return ((OPT && OPT.algos) || []).find(a => a.id === id) || null; }
+function optXof(id, i){ const a = optAlgo(id); return a && a.features[i] ? a.features[i].x : 0; }
+/* 取（或初始化）某算法的权重草稿：特征集合未变则沿用用户已改的 Y / 启用状态 */
+function optYof(a){
+  const sig = optFeatSig(a);
+  let d = optY[a.id];
+  if(!d || d.sig !== sig || d.en.length !== a.features.length){
+    d = { sig:sig, en:a.features.map(()=>true), vals:a.features.map(()=>1) };
+    optY[a.id] = d;
+  }
+  return d;
+}
+function fmtX(v){ if(v == null || isNaN(v)) return "—"; return (Math.round(v * 100) / 100).toFixed(2); }
+function fmtY(v){ if(v == null || isNaN(v)) return "1"; return String(Math.round(v * 100) / 100); }
 
-/* 进入算法调优工作台（左栏 = 五族当前权重；主图区 = 权重编辑 + 结果对比 + 生效范围表；右栏 = 参数与进度） */
+/* 进入算法调优工作台（左栏 = 算法列表；主图区 = 算法特征与权重 Y + 结果；右栏 = 进度与结论） */
 function enterOpt(){
   FILTER = "opt";
   dirty = false;
@@ -3306,18 +3517,18 @@ function enterOpt(){
   resetZoom();
   hideSmartTip();
   syncSugDock();
-  $("lstTitle").textContent = "五族权重（点击可滚动定位）";
+  $("lstTitle").textContent = "算法列表（点击可滚动定位）";
   $("listCount").textContent = "";
+  setStageTitle("算法调优");   // 顶栏只写本视图标题：样本 / 分类 / 算法口径由主图区表头（#optMeta）承担
   $("thinkFil").hidden = true;
   $("thinkEmpty").style.display = "none";
   $("thinkEmpty").className = "";
   $("thinkPane").style.display = "none";
   $("verifyPane").style.display = "none";
   $("thinkBar").hidden = true;
-  optMounted = false;
-  optCur = [];
-  optSync = "";
-  optEffSig = "";
+  optSig = "";
+  optResSig = "";
+  optY = {};
   $("optPane").style.display = "block";
   renderOptList();
   optPoll();
@@ -3332,13 +3543,12 @@ function exitOpt(){
   $("thinkBar").hidden = true;
   syncDockNow();
   OPT = null;
-  optMounted = false;
-  optCur = [];
-  optSync = "";
-  optEffSig = "";
+  optSig = "";
+  optResSig = "";
+  optY = {};
 }
 
-/* 左栏：五族当前权重（点一行滚到主图区对应滑块） */
+/* 左栏：算法列表（点一行滚到主图区对应卡片；chip = 最近一次验证的匹配正确率） */
 function renderOptList(){
   syncFilRows();   // 过滤行：算法调优视图两个过滤行都隐藏
   setSegState();
@@ -3347,215 +3557,290 @@ function renderOptList(){
   if(!j){
     $("listCount").textContent = "";
     const d = document.createElement("li"); d.className = "empty";
-    d.textContent = "正在读取权重状态…";
+    d.textContent = "正在读取状态…";
     ul.appendChild(d);
     return;
   }
-  const fam = (Array.isArray(j.families) && j.families.length) ? j.families : OPT_FAM;
-  $("listCount").textContent = fam.length + " 族";
-  for(let i = 0; i < fam.length; i++){
-    const cv = j.current && j.current[i] != null ? j.current[i] : "—";
-    const dv = j.defW && j.defW[i] != null ? j.defW[i] : "—";
+  const algos = Array.isArray(j.algos) ? j.algos : [];
+  const byId = {};
+  if(j.result && Array.isArray(j.result.algos)) for(const r of j.result.algos) byId[r.id] = r;
+  if(!algos.length){
+    $("listCount").textContent = "";
+    const d = document.createElement("li"); d.className = "empty";
+    d.textContent = (j.verify && j.verify.running) ? "特征验证运行中…" : "请先在「特征验证」视图完成验证";
+    ul.appendChild(d);
+    return;
+  }
+  $("listCount").textContent = algos.length + " 个算法" + (j.ready ? "" : "（未计算）");
+  for(const a of algos){
+    const r = j.ready ? byId[a.id] : null;      // 特征验证未就绪时不沿用旧结果
+    const acc = r && r.accuracy != null ? r.accuracy : null;
+    // chip 配色与特征验证 / 汇总分析同一口径：未计算 / 无可判定样本 = 灰 vn（未处理态），有数值才按 vkBC 上色
+    const chipCls = (r && acc != null) ? vkBC(acc) : "vn";
     const li = document.createElement("li");
     li.className = "row";
     li.innerHTML =
-      '<div class="r1"><span class="famDot famD' + (i % 5) + '"></span><span class="t">' + escHtml(fam[i]) + '</span>' +
-      '<span class="chip vkc vd">' + cv + '</span></div>' +
-      '<div class="r2">默认 ' + dv + ' · 权重越大该族影响越强（0=不参与）</div>';
-    li.addEventListener("click", ()=>{ const el = $("optEd" + i); if(el) el.scrollIntoView({ behavior:"smooth", block:"center" }); });
+      '<div class="r1"><span class="t">' + escHtml(a.name) + '</span>' +
+      '<span class="chip vkc ' + chipCls + '">' + (r ? (acc == null ? "—" : fmtV(acc)) : "未计算") + '</span></div>' +
+      '<div class="r2">' + (r ? a.features.length + ' 个特征' +
+        (a.note ? ' · <span style="color:var(--amber)">' + escHtml(a.note) + '</span>'
+                : (acc != null ? ' · 命中 ' + r.hit + '/' + r.samples
+                    + (r.tie ? ' · 无法区分 ' + r.tie + '（' + fmtV(r.tieRate) + '）' : '') : ''))
+        : '未计算 · ' + ((j.verify && j.verify.running) ? '特征验证运行中…' : '先完成「特征验证」，算法与特征会自动组合')) + '</div>';
+    li.addEventListener("click", ()=>{ const el = $("optA" + a.id); if(el) el.scrollIntoView({ behavior:"smooth", block:"center" }); });
     ul.appendChild(li);
   }
 }
 
-/* 主图区骨架（只搭一次；之后轮询仅刷新数值，不重建滑块） */
+/* 主图区骨架（只在算法结构 / 基础分变化时重建；轮询仅刷新数值与结果，不打断 Y 输入） */
 function optEnsureMain(){
   const p = $("optPane");
-  if(!p || optMounted) return;
+  if(!p) return;
   const j = OPT || {};
-  const fam = (Array.isArray(j.families) && j.families.length) ? j.families : OPT_FAM;
-  if(Array.isArray(j.current) && j.current.length === fam.length) optCur = j.current.slice();
-  else if(Array.isArray(j.defW) && j.defW.length === fam.length) optCur = j.defW.slice();
-  else optCur = [50, 15, 10, 10, 15];
-  optSync = optCurSig();
-  optMounted = true;
-  let rows = "";
-  for(let i = 0; i < fam.length; i++){
-    rows +=
-      '<div class="optWRow" id="optEd' + i + '">' +
-        '<div class="wl"><span class="famDot famD' + (i % 5) + '"></span>' + escHtml(fam[i]) + '</div>' +
-        '<input type="range" id="optE' + i + '" min="0" max="120" step="5" value="' + optCur[i] + '" title="拖动调整第 ' + (i + 1) + ' 族权重（0=整族不参与），点「应用权重」生效">' +
-        '<b class="wv" id="optEv' + i + '">' + optCur[i] + '</b>' +
+  const algos = Array.isArray(j.algos) ? j.algos : [];
+  const ready = !!j.ready && algos.length > 0;      // 算法已由最新特征验证结果组合
+  const sig = algos.length
+    ? (ready ? "R|" : "P|") + algos.map(a => a.id + ":" + optFeatSig(a) + ":" + a.features.map(f => f.x).join("/") + ":" + (a.note || "")).join(";")
+    : "none";
+  if(sig === optSig) return;
+  optSig = sig;
+  // 特征验证未就绪时后端同样下发全部算法骨架（特征为空、结果显示「未计算」），这里补一张提示卡
+  const tip = (algos.length && !ready)
+    ? '<div class="optcard"><h4>需要先完成「特征验证」</h4>' +
+        '<div class="ocap">算法由特征验证结果自动组合（用生成成功率 / 匹配正确率挑特征，再算基础分 X）。' +
+        '下面是 ' + algos.length + ' 个算法的空位：先到「特征验证」视图跑一次，特征与基础分 X 会自动填上，再回来点右上角「验证所有算法」。</div>' +
+        '<div class="optWBtnRow"><button type="button" class="btn green" id="optToVerify">去特征验证</button></div>' +
+      '</div>'
+    : "";
+  let cards = "";
+  for(const a of algos){
+    const d = optYof(a);
+    let rows = "";
+    if(!a.features.length){
+      rows = '<tr><td colspan="5" style="color:var(--muted)">未计算：先完成「特征验证」，这里会自动列出参与的特征与基础分 X</td></tr>';
+    }
+    for(let i = 0; i < a.features.length; i++){
+      const f = a.features[i];
+      const eff = d.en[i] ? f.x * d.vals[i] : 0;
+      rows +=
+        '<tr>' +
+          '<td><input type="checkbox" class="optYen" data-a="' + a.id + '" data-i="' + i + '"' + (d.en[i] ? " checked" : "") +
+            ' title="取消勾选 = 该特征不参与本算法（等价于权重 0）"></td>' +
+          '<td><span class="t">' + escHtml(vkInfo(f.kind).name) + '</span>' +
+            '<div class="ocap" style="margin:0">' + escHtml(f.why || "") +
+            '　A ' + fmtV(f.b) + ' · B ' + fmtV(f.a) + ' · C ' + fmtV(f.other) + ' · D ' + fmtV(f.c) + '</div></td>' +
+          '<td class="nu">' + fmtX(f.x) + '</td>' +
+          '<td><input type="number" class="optYin" data-a="' + a.id + '" data-i="' + i + '" min="0" max="1" step="0.01" value="' + d.vals[i] +
+            '" title="该特征在本算法里的权重 Y（0~1，默认 1，步进 0.01）；点右上角「验证所有算法」生效"></td>' +
+          '<td class="nu" id="optEff-' + a.id + '-' + i + '">' + fmtX(eff) + '</td>' +
+        '</tr>';
+    }
+    cards +=
+      '<div class="optcard" id="optA' + a.id + '">' +
+        '<h4>' + escHtml(a.name) + '</h4>' +
+        '<div class="ocap">' + escHtml(a.desc) +
+          (a.note ? '<br><b style="color:var(--amber)">' + escHtml(a.note) + '</b>' : '') + '</div>' +
+        '<div class="optTblWrap" style="max-height:none"><table class="optTbl"><thead><tr>' +
+          '<th>启用</th><th>特征（A 生成成功率 / B 自分类 / C 其它 / D 正确率）</th><th>基础分 X = B − C</th><th>权重 Y</th><th>生效 X × Y</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        '<div class="optResWrap" id="optRes-' + a.id + '" style="margin-top:10px"></div>' +
       '</div>';
   }
-  p.innerHTML =
-    '<div class="optWrap">' +
-      '<div class="optTop"><span class="ot">五族权重调优</span><span class="otSub" id="optMeta">—</span></div>' +
-      '<div class="optcard">' +
-        '<h4>权重（当前识别差异度用）</h4>' +
-        '<div class="ocap">差异度 = (A·w0 + B·w1 + C·w2 + D·w3 + E·w4) ÷ 参与族权重和；w 越大该族影响越强，0 = 整族不参与。</div>' +
-        '<div id="optWEd">' + rows + '</div>' +
-        '<div class="optWBtnRow">' +
-          '<button type="button" class="btn ghost" id="optResetW" title="恢复默认权重 50/15/10/10/15（写运行时并删除持久化文件）">恢复默认权重</button>' +
-          '<button type="button" class="btn green" id="optApplyW" title="把上方滑块值写为当前识别权重（写运行时并持久化，重启后仍生效）；调优任务运行中不可用">应用权重</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="optcard" id="optResCard" style="display:none">' +
-        '<h4>最近一次调优结果</h4>' +
-        '<div class="optResWrap" id="optResBox"></div>' +
-        '<div class="optWBtnRow" style="margin-top:12px">' +
-          '<button type="button" class="btn primary" id="optApplyBest" title="把这次寻优找到的最优权重写为当前识别权重（写运行时并持久化）">应用最优结果</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="optcard">' +
-        '<h4>产物生效范围表（info.json eff：该 kind 在全部分类的有效像素覆盖）</h4>' +
-        '<div class="optTblWrap"><table class="optTbl"><thead><tr>' +
-          '<th>族</th><th>算法</th><th>产物文件</th><th>有效像素分类 / 全部分类</th><th>平均覆盖率</th>' +
-        '</tr></thead><tbody id="optEffRows"></tbody></table></div>' +
-      '</div>' +
-    '</div>';
-  for(let i = 0; i < fam.length; i++){
-    const r = $("optE" + i);
-    if(!r) continue;
-    r.addEventListener("input", ()=>{
-      optCur[i] = Math.max(0, Math.min(120, Math.round(Number(r.value) || 0)));
-      r.value = optCur[i];
-      const v = $("optEv" + i);
-      if(v) v.textContent = optCur[i];
+  p.innerHTML = '<div class="optWrap">' +
+    '<div class="optTop"><span class="ot">特征组合算法</span><span class="otSub" id="optMeta">—</span></div>' + tip + cards +
+  '</div>';
+  const vb = $("optToVerify");
+  if(vb) vb.addEventListener("click", ()=> applyFilter("verify"));
+  p.querySelectorAll(".optYin").forEach(inp => {
+    inp.addEventListener("input", ()=>{
+      const d = optY[inp.dataset.a];
+      if(!d) return;
+      const i = Number(inp.dataset.i);
+      const v = Number(inp.value);
+      // 夹到 [0,1] 并对齐输入框步进（step=0.01）取两位小数：手输 0.333 也统一成 0.33
+      d.vals[i] = isNaN(v) ? 1 : Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
+      const cell = $("optEff-" + inp.dataset.a + "-" + i);
+      if(cell) cell.textContent = fmtX(d.en[i] ? d.vals[i] * optXof(inp.dataset.a, i) : 0);
+      optSyncRunBtn();
     });
+    inp.addEventListener("change", ()=>{      // 失焦 / 回车后把截断后的值写回输入框
+      const d = optY[inp.dataset.a];
+      if(d) inp.value = d.vals[Number(inp.dataset.i)];
+    });
+  });
+  p.querySelectorAll(".optYen").forEach(cb => {
+    cb.addEventListener("change", ()=>{
+      const d = optY[cb.dataset.a];
+      if(!d) return;
+      const i = Number(cb.dataset.i);
+      d.en[i] = cb.checked;
+      const cell = $("optEff-" + cb.dataset.a + "-" + i);
+      if(cell) cell.textContent = fmtX(d.en[i] ? d.vals[i] * optXof(cb.dataset.a, i) : 0);
+      optSyncRunBtn();
+    });
+  });
+}
+
+/* 单个算法的结果卡（大数字 = 匹配正确率 + 无法区分率 + 各分类明细，details 折叠） */
+function optResCard(r){
+  const rows = Array.isArray(r.rows) ? r.rows : [];
+  const miss = x => (x.miss == null ? (x.samples - x.hit - (x.tie || 0)) : x.miss);
+  let trs = "";
+  for(const x of rows){
+    trs += '<tr><td>' + escHtml(x.state) + '</td>' +
+      '<td style="color:var(--muted)">' + escHtml(x.action || "") + '</td>' +
+      '<td class="nu">' + x.samples + '</td><td class="nu">' + x.hit + '</td>' +
+      '<td class="nu ' + (x.tieRate == null ? "" : vkE(x.tieRate)) + '">' + (x.tie || 0) + '</td>' +
+      '<td class="nu ' + (x.acc == null ? "" : vkBC(x.acc)) + '">' + fmtV(x.acc) + '</td>' +
+      '<td class="nu ' + (x.tieRate == null ? "" : vkE(x.tieRate)) + '">' + fmtV(x.tieRate) + '</td></tr>';
   }
-  $("optApplyW").addEventListener("click", async ()=>{
-    if(OPT && OPT.running){ toast("调优任务运行中，请结束后再应用权重。", "err"); return; }
-    await optPostWeights(optCur.slice(), "已应用权重");
-  });
-  $("optResetW").addEventListener("click", async ()=>{
-    if(OPT && OPT.running){ toast("调优任务运行中，请结束后再恢复默认。", "err"); return; }
-    try{
-      const r = await fetchT("/api/optimize/reset", { method:"POST" }, 8000);
-      const j = r && r.ok ? await r.json().catch(()=>null) : null;
-      if(j && j.ok){
-        if(Array.isArray(j.weights)) optCur = j.weights.slice();
-        toast("已恢复默认权重 50/15/10/10/15（已删除持久化文件）。", "ok");
-      }else toast("恢复默认失败：" + ((j && j.error) || "请求失败"), "err");
-    }catch(e){ toast("恢复默认失败：请求异常", "err"); }
-    optPoll();
-  });
-  $("optApplyBest").addEventListener("click", async ()=>{
-    if(!OPT || !OPT.result || !OPT.result.finished || !Array.isArray(OPT.result.bestWeights)) return;
-    if(OPT.running){ toast("调优任务运行中，请稍候。", "err"); return; }
-    await optPostWeights(OPT.result.bestWeights.slice(), "已应用最优权重");
-  });
+  const w = Array.isArray(r.weights) ? r.weights : [];
+  const eCls = r.tieRate == null ? "" : vkE(r.tieRate);
+  return '<div class="vcard">' +
+    '<div class="vcap">匹配正确率</div>' +
+    '<div class="vval' + (r.accuracy == null ? "" : " " + vkBC(r.accuracy)) + '">' + fmtV(r.accuracy) + '</div>' +
+    // 口径与「特征验证」的匹配正确率（D）一致：命中 = 自家匹配度唯一最高；打平不再算命中，改单列「无法区分」
+    '<div class="vsub" title="命中 = 该样本的自家匹配度是全场唯一最高（并列不算命中）。无法区分 = 放弃分不开的特征后，' +
+      '最高匹配度仍被 ≥2 个分类并列（或本样本可用特征被全部放弃），既不算命中也不算判错。' +
+      '跳过 = 归属分类在本算法参与的特征上都没有有效产物，计入不了对错。">' +
+      '命中 ' + r.hit + ' / ' + r.samples + ' · 判错 ' + miss(r) +
+      (r.skipped ? ' · 跳过 ' + r.skipped + ' 张（归属分类无有效产物）' : '') + ' · 耗时 ' + vkCost(r.costMs) + '</div>' +
+    '<div class="vcap" style="margin-top:8px">无法区分率</div>' +
+    '<div class="vval' + (eCls ? " " + eCls : "") + '">' + fmtV(r.tieRate) + '</div>' +
+    '<div class="vsub">最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类）的样本占比：' +
+      (r.tie || 0) + ' / ' + r.samples + ' 张。逐张样本先放弃「分不开」的特征再重新加权，仍并列才算无法区分，' +
+      '与特征验证的 E 同口径</div>' +
+    (w.length ? '<div class="vsub">权重 Y：' + w.map(fmtY).join(" / ") + '</div>' : '') +
+    '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看各分类准确率与无法区分率</summary>' +
+      '<div class="optTblWrap" style="max-height:32vh;margin-top:6px"><table class="optTbl"><thead><tr>' +
+        '<th>分类</th><th>动作</th><th>样本</th><th>命中</th><th>无法区分</th><th>准确率</th><th>无法区分率</th>' +
+      '</tr></thead><tbody>' + (trs || '<tr><td colspan="7" style="color:var(--muted)">无数据</td></tr>') + '</tbody></table></div>' +
+    '</details>' +
+  '</div>';
 }
 
-/* 结果对比卡（复用 vcard 视觉：大数字 = 命中自家分类样本占比） */
-function optMetricCard(title, m){
-  if(!m) return '<div class="vcard"><div class="vcap">' + escHtml(title) + '</div><div class="vval">—</div></div>';
-  const hit = m.samples ? (m.hit + " / " + m.samples) : "—";
-  return '<div class="vcard"><div class="vcap">' + escHtml(title) + '</div>' +
-    '<div class="vval">' + fmtV(m.acc1) + '</div>' +
-    '<div class="vsub">命中 ' + hit + ' · 自家平均差异 ' + fmtV(m.avgSelf) + '<br>最近异类 ' + fmtV(m.nearestOther) + ' · 安全边际 ' + fmtV(m.margin) + '</div></div>';
+/* 右栏结论：按匹配正确率给算法排序；结果仍分不出唯一一类时给出「无法区分」的最终结论 */
+function optVerdict(res){
+  const all = Array.isArray(res.algos) ? res.algos : [];
+  const list = all.filter(r => r.accuracy != null).sort((a, b) => b.accuracy - a.accuracy);
+  if(!list.length) return "";
+  const top = list[0];
+  const miss = r => (r.miss == null ? (r.samples - r.hit - (r.tie || 0)) : r.miss);
+  // 最终结论 = 无法区分：最高正确率的算法下，全部可判定样本都分不出唯一一类
+  if(top.tieRate != null && top.tieRate >= 100 && top.tie > 0){
+    return '<div class="optcard"><h4>结论</h4><div class="ocap">' +
+      '<b style="color:var(--text)">无法区分</b>：' + escHtml(top.name) + ' 下 ' + top.tie + ' / ' + top.samples +
+      ' 张样本全部无法区分——最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类），没有任何一张能判出唯一一类。' +
+      '<br>说明这些特征分不开彼此（常见于交集图命中的只是一小块「样本间完全一致的静态区域」，别的分类截图也能整块复现）。' +
+      '建议改用在生成成功率 100% 的特征里挑 <b style="color:var(--text)">独有区（-unique）</b> 或 <b style="color:var(--text)">去重均值</b> 那几档，' +
+      '或把区分度低的特征权重 Y 调低后重跑。' +
+      (res.stale ? '<br><b style="color:var(--amber)">样本 / 产物已变动，以上结果可能过期，建议重新验证。</b>' : '') +
+      '</div></div>';
+  }
+  const tie = list.length > 1 && list[1].accuracy === top.accuracy;
+  return '<div class="optcard"><h4>结论</h4><div class="ocap">' +
+    (tie ? '各算法匹配正确率并列最高：' + fmtV(top.accuracy) + '。'
+         : '匹配正确率最高：<b style="color:var(--text)">' + escHtml(top.name) + '</b> ' + fmtV(top.accuracy) +
+           '（命中 ' + top.hit + ' / ' + top.samples + ' · 判错 ' + miss(top) + '）。') +
+    (top.tie ? '<br>另有 <b style="color:var(--text)">' + fmtV(top.tieRate) + '</b> 的样本<b style="color:var(--text)">无法区分</b>（'
+      + top.tie + ' / ' + top.samples + ' 张）：放弃有问题的特征后最高匹配度仍被 ≥2 个分类并列，既不算命中也不算判错。'
+      + (top.tieRate >= 20 ? '<br><b style="color:var(--amber)">无法区分率偏高（≥20%）：建议改用独有区（-unique）或去重均值特征，或把区分度低的特征权重 Y 调低后重跑。</b>' : '')
+      : '') +
+    '<br>排序：' + list.map(r => escHtml(r.name) + ' ' + fmtV(r.accuracy) + '（无法区分 ' + fmtV(r.tieRate) + '）').join('　＞　') +
+    (res.stale ? '<br><b style="color:var(--amber)">样本 / 产物已变动，以上结果可能过期，建议重新验证。</b>' : '') +
+  '</div></div>';
 }
 
-/* 主图区/右栏刷新（每轮轮询都调；仅数值与状态文本变化，不重建滑块） */
+/* 每轮轮询刷新：meta / 禁用态 / 右栏进度与结论 / 各算法结果（不重建输入） */
 function optRender(){
   const j = OPT;
   if(!j) return;
-  const fam = (Array.isArray(j.families) && j.families.length) ? j.families : OPT_FAM;
-  const curW = (Array.isArray(j.current) && j.current.length) ? j.current : optCur;
-  const curS = curW.join(",");
-  if(curS !== optSync){    // 应用/恢复后（或首轮）才回填滑块，避免轮询打断拖拽
-    optCur = curW.slice();
-    optSync = curS;
-    for(let i = 0; i < optCur.length; i++){
-      const r = $("optE" + i), v = $("optEv" + i);
-      if(r) r.value = optCur[i];
-      if(v) v.textContent = optCur[i];
-    }
-  }
+  const algos = Array.isArray(j.algos) ? j.algos : [];
   const run = !!j.running;
-  const t = j.task;
-  const res = (j.result && j.result.finished) ? j.result : null;
-  const groups = res && res.groups != null ? res.groups
-    : (Array.isArray(j.eff) && j.eff.length ? (j.eff[0].total || 0) : 0);
+  const t = j.task || null;
+  const res = (j.ready && j.result && j.result.finished && !j.result.error) ? j.result : null;
+  const fatal = (j.result && j.result.error) ? j.result.error : null;
+
   const meta = $("optMeta");
-  if(meta) meta.textContent = "样本 " + j.samples + " 张 · 分类 " + groups + " 个 · " + (run ? "调优运行中" : "空闲");
-  const applyBtn = $("optApplyW"), resetBtn = $("optResetW"), startBtn = $("optStartBtn");
-  if(applyBtn) applyBtn.disabled = run;
-  if(resetBtn) resetBtn.disabled = run;
-  if(startBtn) startBtn.disabled = run;
-  for(let i = 0; i < fam.length; i++){ const r = $("optE" + i); if(r) r.disabled = run; }
-  // 右栏：任务进度与状态
+  if(meta) meta.textContent = "样本 " + j.samples + " 张 · 分类 " + j.groups + " 个 · " +
+    (run ? "验证运行中" : ("算法 " + algos.length + " 个" + (j.ready ? "" : "（未计算：缺少特征验证结果）")));
+  document.querySelectorAll("#optPane .optYin, #optPane .optYen").forEach(el => el.disabled = run);
+
   const taskBox = $("optTask"), fill = $("optFill"), tStat = $("optTaskStat"), tTxt = $("optTaskTxt"), stat = $("optStat");
-  const err = (t && t.error) || (res && res.error);
+  const err = (t && t.error) || fatal;
   if(run && t && !t.finished){
     taskBox.style.display = "block";
+    // 精确到张：外层（特征 / 算法）跑到第几项 + 本项内已比对张数 + 最近一张文件名 + 已耗时（后端按张回报）
+    const sn = Math.max(0, Number(t.totalSamples) || 0);
+    const isMat = t.stage === "逐特征比对矩阵";
     let st = "阶段：" + (t.stage || "准备中");
-    if(t.stage === "逐 kind 比对矩阵") st += "　" + Math.min(t.done || 0, t.total || 0) + "/" + (t.total || 0) + "　当前 " + (t.cur ? vkInfo(t.cur).name : "—");
-    else if(t.processed != null) st += "　已评估 " + t.processed + " 组";
+    if(t.total) st += "　" + Math.min(t.done || 0, t.total) + "/" + t.total + " 个" + (isMat ? "特征" : "算法");
+    if(t.cur) st += "（" + (isMat ? vkInfo(t.cur).name : t.cur) + "）";
+    if(sn) st += "　第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张";
     tStat.textContent = st;
-    fill.style.width = ((t.stage === "逐 kind 比对矩阵" && t.total) ? Math.round(t.done / t.total * 100) : 0) + "%";
-    tTxt.textContent = (t.bestAcc != null ? "迄今最优命中 " + fmtV(t.bestAcc) + (t.bestDesc ? "　权重 " + t.bestDesc : "") : "")
-      + (t.processed ? "　·　已评估 " + t.processed + " 组" : "");
-    if(stat) stat.textContent = "正在后台调优…（" + (t.cur ? vkInfo(t.cur).name : (t.stage || "准备中")) + "）\n先停掉特征验证 / 执行模式自动识别，避免与清空像素缓存互相干扰。";
+    // 进度条走「合计张数」（跨特征 / 跨算法连续、每张都推进，不再等整张矩阵跑完才跳一格）；拿不到张数时退回外层项占比
+    const pct = t.allTotal
+      ? Math.min(t.allDone || 0, t.allTotal) / t.allTotal * 100
+      : (t.total ? Math.min(t.done || 0, t.total) / t.total * 100 : 0);
+    fill.style.width = Math.round(pct) + "%";
+    const sec = Math.max(0, Math.round((Number(t.elapsedMs) || 0) / 1000));
+    tTxt.textContent = (t.sample ? "正在比对 " + t.sample : "正在准备（扫描样本 / 分类产物）…")
+      + (sec ? " · 已耗时 " + durTxt(sec) : "");
+    if(stat) stat.textContent = "正在后台验证全部算法的分类准确率…（" + (t.stage || "准备中")
+      + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "") + "）\n"
+      + "先停掉特征验证 / 执行模式自动识别，避免与清空像素缓存互相干扰。";
   }else{
     taskBox.style.display = "none";
     fill.style.width = "0%";
-    if(stat) stat.textContent = err
-      ? "最近一次调优失败：" + err
-      : res
-        ? "上次完成" + fmtCostSuffix(Number(res.costMs)) + "：基准命中 " + (res.base ? res.base.hit + "/" + res.base.samples + "（" + fmtV(res.base.acc1) + "）" : "—")
-            + "；最优 " + (res.best ? res.best.hit + "/" + res.best.samples + "（" + fmtV(res.best.acc1) + "）" : "—")
-            + "\n当前权重 " + (curS || "—") + "　默认 " + ((j.defW || []).join("/") || "—")
-        : "尚未调优：当前权重 " + (curS || "—") + "　默认 " + ((j.defW || []).join("/") || "—") + "。点「开始调优」自动搜索，或在主图区手动调整。";
-  }
-  const ver = $("optVerdict");
-  if(ver){
-    if(res && res.best && res.base){
-      const d = res.best.acc1 - res.base.acc1;
-      ver.innerHTML = d > 0.0001
-        ? '<span style="font-size:12px;color:var(--green)">最优命中率高于基准 +' + fmtV(d) + '，可点主图区「应用最优结果」。</span>'
-        : '<span style="font-size:12px;color:var(--muted)">未找到优于默认权重的方案（寻优收敛到默认附近）。</span>';
-    }else ver.innerHTML = "";
-  }
-  // 最近结果对比卡（最优权重条随卡片一起重建）
-  const rc = $("optResCard"), rb = $("optResBox");
-  if(rc){
-    if(res && res.best){
-      rc.style.display = "";
-      rb.innerHTML = optMetricCard("默认权重（基准）", res.base) + optMetricCard("寻优结果" + (res.step ? "（步长 " + res.step + "）" : ""), res.best);
-      const bw = Array.isArray(res.bestWeights) ? res.bestWeights : null;
-      const wline = document.createElement("div");
-      wline.style.marginTop = "8px";
-      wline.innerHTML = '<span style="font-size:12px;color:var(--muted)">最优权重：</span>'
-        + (bw && bw.length ? '<span class="optWeightsChip">' + bw.map(v=>'<span class="owchip">' + v + '</span>').join("") + '</span>' : "—");
-      rb.appendChild(wline);
-    }else rc.style.display = "none";
-  }
-  // 产物生效范围表：仅在数据变化时重建
-  const rows = Array.isArray(j.eff) ? j.eff : [];
-  const sig = rows.map(x=>[x.kind, x.family, x.total, x.withData, x.avgEff].join("|")).join("\n");
-  const tb = $("optEffRows");
-  if(tb && sig !== optEffSig){
-    optEffSig = sig;
-    tb.innerHTML = "";
-    if(!rows.length){
-      const tr = document.createElement("tr");
-      tr.innerHTML = '<td colspan="5" style="color:var(--muted)">尚无分类 / 产物数据</td>';
-      tb.appendChild(tr);
-    }else{
-      for(const x of rows){
-        const f = typeof x.family === "number" ? x.family : -1;
-        const tr = document.createElement("tr");
-        tr.innerHTML =
-          '<td><span class="famDot famD' + (f >= 0 ? f % 5 : 0) + '"></span>' + escHtml(f >= 0 ? (fam[f] || ("族 " + f)) : "—") + '</td>' +
-          '<td>' + escHtml(vkInfo(String(x.kind)).name) + '</td>' +
-          '<td style="color:var(--muted)">' + escHtml(x.file || String(x.kind)) + '</td>' +
-          '<td class="nu">' + x.withData + ' / ' + x.total + '</td>' +
-          '<td class="nu">' + fmtV(x.avgEff) + '</td>';
-        tr.title = x.kind + "　产物 " + (x.file || "") + "　有效像素分类 " + x.withData + "/" + x.total + "　平均覆盖率 " + fmtV(x.avgEff);
-        tb.appendChild(tr);
-      }
+    if(stat){
+      if(err) stat.textContent = "最近一次验证失败：" + err;
+      else if(!j.ready) stat.textContent = (j.verify && j.verify.running)
+        ? "特征验证正在运行，请等它结束后再回到本视图。"
+        : "算法由特征验证结果组合而来：请先到「特征验证」视图完成一次验证。\n（当前已验证 " + ((j.verify && j.verify.fresh) || 0) + " / " + ((j.verify && j.verify.total) || 0) + " 个特征）";
+      else if(res && Array.isArray(res.algos) && res.algos.length){
+        const best = res.algos.filter(r => r.accuracy != null).sort((a, b) => b.accuracy - a.accuracy)[0];
+        stat.textContent = "上次验证完成" + fmtCostSuffix(Number(res.costMs)) + "：样本 " + res.samples + " 张 · 分类 " + res.groups + " 个" +
+          (best ? "\n最高匹配正确率：" + best.name + " " + fmtV(best.accuracy) + "（命中 " + best.hit + "/" + best.samples
+            + " · 判错 " + (best.miss == null ? (best.samples - best.hit - (best.tie || 0)) : best.miss)
+            + (best.tie ? " · 无法区分 " + best.tie + "（" + fmtV(best.tieRate) + "）" : "") + "）" : "") +
+          (res.stale ? "\n注意：样本 / 产物已变动，结果可能过期，建议重新验证。" : "");
+      }else stat.textContent = "已组合 " + algos.length + " 个算法，点右上角「验证所有算法」开始。";
     }
   }
+
+  const resSig = (j.ready ? "R|" : "P|") + (res
+    ? res.algos.map(r => [r.id, r.accuracy, r.tieRate, r.hit, r.tie, r.miss, r.samples, r.skipped, r.costMs, (r.weights || []).join(",")].join("|")).join(";") + (res.stale ? "|stale" : "")
+    : "none");
+  if(resSig !== optResSig){
+    optResSig = resSig;
+    for(const a of algos){
+      const box = $("optRes-" + a.id);
+      if(!box) continue;
+      const r = res ? (res.algos || []).find(x => x.id === a.id) : null;
+      box.innerHTML = r ? optResCard(r)
+        : '<div class="ocap" style="margin:0">未计算' + (j.ready
+            ? '（点右上角「验证所有算法」）。如需调整特征权重 Y，改完再点验证。'
+            : '：先到「特征验证」视图完成一次验证，算法、特征与基础分 X 会自动组合。') + '</div>';
+    }
+  }
+  const ver = $("optVerdict");
+  if(ver) ver.innerHTML = res ? optVerdict(res) : "";
+}
+
+/* 启动即预取算法个数（顶栏「算法调优(N)」不依赖先进本视图）：特征验证未就绪时后端同样下发全部算法骨架，
+   所以未验证时也有数字；只在个数变化时写按钮 */
+async function optPrefetch(){
+  if(appMode !== "mark" || optCntBusy) return;
+  optCntBusy = true;
+  try{
+    const r = await fetch("/api/optimize/status", { cache:"no-store" });
+    if(r.ok){
+      const j = await r.json();
+      const n = j && Array.isArray(j.algos) ? j.algos.length : null;
+      if(n != null && optCnt !== n){ optCnt = n; setSegState(); }
+    }
+  }catch(_){}
+  optCntBusy = false;
 }
 
 async function optPoll(){
@@ -3572,45 +3857,56 @@ async function optPoll(){
   if(FILTER !== "opt") return;
   const prevRun = OPT ? !!OPT.running : false;
   OPT = j;
+  const nAlgo = Array.isArray(j.algos) ? j.algos.length : null;
+  if(nAlgo != null) optCnt = nAlgo;    // 顶栏「算法调优(N)」：下面的 renderOptList → setSegState 会写进按钮
   optEnsureMain();
   optRender();
   renderOptList();
+  optSyncRunBtn();
   if(prevRun && !j.running){
-    const err = j.task ? j.task.error : null;
-    if(err) toast("算法调优中断：" + err, "err");
-    else toast("算法调优已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "，可在主图区查看并应用结果。", "ok");
+    const err = j.task ? j.task.error : (j.result ? j.result.error : null);
+    if(err) toast("算法验证中断：" + err, "err");
+    else toast("算法验证已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "，可在主图区查看各算法分类准确率。", "ok");
   }
 }
 
-async function optPostWeights(w, label){
-  try{
-    const r = await fetchT("/api/optimize/apply", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights:w }) }, 8000);
-    const j = r && r.ok ? await r.json().catch(()=>null) : null;
-    if(j && j.ok){
-      toast(label + "：" + (Array.isArray(j.weights) ? j.weights.join("/") : w.join("/")), "ok");
-      optPoll();
-      return true;
-    }
-    toast("应用失败：" + ((j && j.error) || "请求失败"), "err");
-  }catch(e){ toast("应用失败：请求异常", "err"); }
-  return false;
+/* 收集界面上的权重草稿 Y（未启用 / 无特征 → 0）：{ 算法id: [Y...] } */
+function optCollect(){
+  const out = {};
+  for(const a of ((OPT && OPT.algos) || [])){
+    const d = optY[a.id] || optYof(a);
+    out[a.id] = a.features.map((f, i) => d.en[i] ? d.vals[i] : 0);
+  }
+  return out;
+}
+
+/* 运行按钮可用性：未就绪 / 运行中 / 某算法一个特征都没启用时禁用 */
+function optSyncRunBtn(){
+  const b = $("optRunBtn");
+  if(!b) return;
+  const algos = (OPT && Array.isArray(OPT.algos)) ? OPT.algos : [];
+  const run = !!(OPT && OPT.running);
+  const ready = !!(OPT && OPT.ready) && algos.length > 0;
+  let any = false;
+  for(const a of algos){ const d = optY[a.id]; if(d && d.en.some(Boolean)) any = true; }
+  b.disabled = run || !ready || !any;
+  b.title = !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
+    : !any ? "每个算法至少要启用一个特征"
+    : "按当前特征组合与权重 Y 验证全部算法的分类准确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动";
 }
 
 async function optStartRun(){
   if(OPT && OPT.running) return;
-  const step = Math.max(1, Math.min(100, parseInt($("optStep").value, 10) || 10));
-  const seeds = Math.max(4, Math.min(128, parseInt($("optSeeds").value, 10) || 24));
-  $("optStep").value = step; $("optSeeds").value = seeds;
+  if(!OPT || !OPT.ready){ toast("请先在「特征验证」视图完成验证。", "err"); return; }
   try{
-    const r = await fetchT("/api/optimize/start", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ step:step, seeds:seeds }) }, 9000);
+    const r = await fetchT("/api/optimize/start", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights: optCollect() }) }, 9000);
     const j = r && r.ok ? await r.json().catch(()=>null) : null;
-    if(j && j.started) toast("开始算法调优（步长 " + step + " · 随机起点 " + seeds + "）…", "ok");
-    else if(OPT && OPT.running) toast("已有调优任务在跑，请稍候。", "");
-    else toast("启动调优失败：" + ((j && j.error) || "请求失败"), "err");
-  }catch(e){ toast("启动调优失败：请求异常", "err"); }
+    if(j && j.started) toast("开始验证全部算法的分类准确率…", "ok");
+    else toast("启动失败：" + ((j && j.error) || "请求失败"), "err");
+  }catch(e){ toast("启动失败：请求异常", "err"); }
   optPoll();
 }
-$("optStartBtn").addEventListener("click", optStartRun);
+$("optRunBtn").addEventListener("click", optStartRun);
 
 /* ---------------- 自动刷新 ---------------- */
 const POLL_MS = 10000;   // 后台每 10 秒悄悄同步一次列表
@@ -3618,7 +3914,7 @@ function listSig(arr){ return arr.map(i => [i.name,i.marked,i.state,i.action,i.l
 async function refreshSilent(){
   let arr;
   try{ arr = await fetchAllSafe(); }catch(e){ return false; }
-  if(FILTER === "think" || FILTER === "verify") return true;   // 等待期间已切去分析视图：让对应视图自行刷新，不抢着重绘普通列表
+  if(FILTER === "think" || FILTER === "verify" || FILTER === "opt") return true;   // 等待期间已切去分析视图：让对应视图自行刷新，不抢着重绘普通列表
   if(listSig(ALL) === listSig(arr)) return true;   // 无实质变化则不重绘，避免打扰
   ALL = arr;
   try{ DEF = await fetchDefs(); }catch(_){}
@@ -3645,8 +3941,9 @@ async function updateCountsOnly(){
 async function pollTick(){
   if(appMode !== "mark") return;                // 执行模式：暂停后台列表静默同步
   if(FILTER === "verify"){ vkPoll(); return; }  // 特征验证：轮询 A/B 状态与验证任务进度
-  if(FILTER === "opt"){ optPoll(); return; }    // 算法调优：轮询五族权重寻优任务进度
+  if(FILTER === "opt"){ optPoll(); return; }    // 算法调优：轮询特征组合算法与验证进度
   if(vkCnt == null) vkPrefetch();               // 启动预取失败兜底：计数补上后自然不再发
+  if(optCnt == null) optPrefetch();             // 同理，「算法调优(N)」的算法个数
   if(FILTER === "think"){                       // 汇总分析模式：先同步计数，再静默刷新组合状态
     if(!thinkBusy && !dirty){
       await updateCountsOnly();                 // 新截图 / 新标注 → 「全部 / 未标注 / 已标注」计数自动更新
@@ -3735,6 +4032,26 @@ async function checkAppVersion(){
     // 启动历史重复清理结果：后端每次启动按两个启用阈值中较低者（默认 min(5, 0.5) = 0.5%）逐像素比对重扫
     // capture/ + classify/ 全部截图，不一致像素占比 ≤ 阈值即删（近似但不重复的画面一律保留）。
     // 不论是否删除了图片都右下角提示一次清理完成
+    // 启动历史重复清理进行态（startupDedup）：开始 → 一条「开始检查」消息；进行中 → 一条一直刷新的进度消息
+    // （已判定 / 待判定张数 + 当前文件 + 逐秒走动的已耗时，同批量任务的「正在第 1 轮…（已耗时 29 秒）」）；
+    // 结束 → running=false 撤掉进度消息，结果提示由下面的 startupDedupNotice 给出
+    const dp = j && j.startupDedup;
+    if(dp && dp.at){
+      const dpAt = Number(dp.at) || 0;
+      if(dp.running){
+        if(dpAt !== lastDedupProgAt){                 // 首次见到本次启动的清理：先提示一条「开始检查」
+          lastDedupProgAt = dpAt;
+          showShotTip("启动重复清理：开始检查 capture/ + classify/ 的历史截图重复"
+            + "（逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除）…", "");
+        }
+        dedupProg = { at:dpAt, done:Number(dp.done)||0, total:Number(dp.total)||0,
+                      current:dp.current || "", compared:Number(dp.compared)||0 };
+        dedupProgTick();                              // 立即刷一次（不必等下一个 1 秒 tick）
+      }else if(dedupProg){
+        dedupProg = null;                             // 扫描结束：撤掉进度消息（结果由 startupDedupNotice 提示）
+        taskTip(null);
+      }
+    }
     const dedup = j && j.startupDedupNotice;
     if(dedup && dedup.at && Number(dedup.at) !== lastDedupNoticeAt){
       lastDedupNoticeAt = Number(dedup.at);
@@ -4163,7 +4480,7 @@ function openKindScores(it){
   const metaOf = kind => KIND_META.find(m => m.kind === kind) || null;
   const rows = it.kinds.map(ks => {
     const m = metaOf(ks.kind);
-    const nm = m ? kindShort(m) : ks.kind;
+    const nm = m ? vkInfo(ks.kind).name : ks.kind;   // 短名与特征验证列表同一来源（vkInfo），全站统一
     const isBlock = !!(m && m.block > 1);
     const grid = (typeof ks.w === "number" && ks.w > 0 && typeof ks.h === "number" && ks.h > 0)
         ? (isBlock ? "块网格 " : "产物尺寸 ") + ks.w + "×" + ks.h : "—";
@@ -4178,11 +4495,16 @@ function openKindScores(it){
   const ov = document.createElement("div");
   ov.id = "kindScoreModal";
   ov.className = "modal-ov";
+  const itDiff = (typeof it.diffPercent === "number" && it.diffPercent >= 0) ? it.diffPercent.toFixed(2) + "%" : "—";
   ov.innerHTML =
     '<div class="xcard" style="max-width:580px;width:100%;text-align:left;position:relative">' +
-      '<div class="xt2">对照图分值</div>' +
+      // 与「匹配明细」同规：覆盖型弹窗看不到身后页面，标题先点明是哪个分类，再用一行 chip 摆出本帧关键数字
+      '<div class="xt2">对照图分值 - ' + escHtml(it.state || "—") + '</div>' +
+      '<div class="xmeta">' +
+        '<span>本帧差异度<b>' + itDiff + '</b></span>' +
+        '<span>对照图来源<b>' + escHtml(it.matchedFile || "—") + '</b></span>' +
+      '</div>' +
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
-        "标注分类：" + escHtml(it.state || "—") + "<br>" +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
         "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图、注意区与点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。注意区交集图是各分类以关注点（未设 = 屏幕中心）为心的 1/8、1/32 方框 × 各交集档的交集图（每个分类都有）；点击区交集图是鼠标点击分类以点击点为心的同规格交集图。分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 方框交集区（注意区 12 + 点击区 12）24 张权 15；每族先把族内各图不匹配点占比等权平均，再除以 W（参与分类产物齐全、恒为 100）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与族均值</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
@@ -4545,7 +4867,9 @@ async function execAutoLoop(){
 loadList(null);
 syncCapStatus();
 vkPrefetch();                     // 顶栏「特征验证(N)」计数启动即取，不依赖先进验证视图
+optPrefetch();                    // 顶栏「算法调优(N)」计数同理（算法个数，未验证时后端也下发 2 个骨架）
 loadKindMeta();                   // 取 kind 元数据并建好全部对照图卡片（进汇总分析前就绪）
 setInterval(pollTick, POLL_MS);
 checkAppVersion();                    // 立即取一次基线
 setInterval(checkAppVersion, META_MS);
+setInterval(dedupProgTick, 1000);     // 启动重复清理进行中：「已耗时」逐秒走动（无进行态时直接返回）

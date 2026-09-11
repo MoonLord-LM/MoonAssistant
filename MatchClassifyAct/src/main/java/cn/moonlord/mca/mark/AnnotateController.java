@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
@@ -181,12 +182,17 @@ public class AnnotateController {
      *   <li>该分类<b>尚无定义</b> → 以本次提交的 action/left/top 建立定义（首次固定，成为该分类唯一动作）；</li>
      *   <li>该分类<b>已有定义且仍存在样本</b> → 本图只登记归属，动作坐标一律以定义为准（提交的动作/坐标会被定义覆盖）；</li>
      *   <li>该分类<b>仅残留空定义（历史样本已删光）</b> → 界面上已无该分类的图，等同全新分类，允许按本次提交重新定义；</li>
-     *   <li>对<b>已标注图</b>改自己的分类的动作/坐标（state 不变）→ 视为<b>重定义该分类</b>，同步到全组样本。</li>
+     *   <li>对<b>已标注图</b>改自己的分类的动作/坐标（state 不变）→ 视为<b>重定义该分类</b>，同步到全组样本；</li>
+     *   <li>带 {@code ?redefine=true}（前端已弹确认）→ 未标注图 / 换了分类名时也按本次提交覆盖该分类定义。</li>
      * </ul>
      * 若截图还在 capture/（未标注），写入成功后整体移到 classify/（进入“已标注”数据集）。
+     *
+     * @param redefine 前端确认过的“重定义该分类”授权：true 时按提交内容覆盖已有定义
+     *                 （未标注图 / 换分类名同样生效，动作与坐标对全组样本同步）
      */
     @PutMapping("/mark/{name:.+}")
-    public ResponseEntity<?> putMark(@PathVariable String name, @RequestBody CaptureMark mark) {
+    public ResponseEntity<?> putMark(@PathVariable String name, @RequestBody CaptureMark mark,
+        @RequestParam(name = "redefine", defaultValue = "false") boolean redefine) {
         Path png = safePng(name);
         if (png == null) {
             return ResponseEntity.notFound().build();
@@ -215,12 +221,14 @@ public class AnnotateController {
         }
         boolean redef = alreadyClassified && oldState != null && !oldState.isEmpty()
             && oldState.equals(state);
+        // 前端已确认的重定义：未标注图 / 换分类名时也允许按本次提交覆盖该分类定义（全组同步）
+        boolean overwrite = redef || redefine;
         CaptureMark existingDef = classifyStore.definitionOf(state);
         // 中心表定义可能残留自历史样本（样本删光后定义仍保留）；无样本的空分类等同全新，允许重新定义
         boolean vacantDef = existingDef != null && classifyStore.sampleCount(state) == 0;
 
         CaptureMark adopted;
-        if (existingDef == null || redef || vacantDef) {
+        if (existingDef == null || overwrite || vacantDef) {
             // 首次定义 / 原分类内重定义 / 空定义覆盖：以本次提交内容作为该分类的唯一动作。
             // 点击点（left/top）与注意点（attnLeft/attnTop）互相独立：
             //  click 分类必须给出鼠标点击点（默认屏幕中心）；无动作分类无点击点、必须给出注意点
@@ -264,7 +272,7 @@ public class AnnotateController {
                     .body("写分类定义表失败: " + e.getMessage());
             }
         } else {
-            // 已有统一定义：样本归属即保存，动作坐标一律以定义为准（保持同分类动作坐标唯一）
+            // 已有统一定义且前端未确认重定义：样本归属即保存，动作坐标一律以定义为准（保持同分类动作坐标唯一）
             adopted = existingDef;
             log.debug("分类「{}」已有统一定义，采纳定义保存样本 {}", state, name);
         }

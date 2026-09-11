@@ -41,8 +41,7 @@
     </div>
     <div class="thinkfil" id="vkFil" hidden title="按验证结果过滤算法列表（仅统计已算出结果、且生成成功的算法）：点击切换，再点已选中的按钮恢复全部">
       <button type="button" data-v="gen100">生成成功率100%</button>
-      <button type="button" data-v="c100">匹配正确率100.00%</button>
-      <button type="button" data-v="c90">匹配正确率90.00+%</button>
+      <button type="button" data-v="c80">匹配正确率80+%</button>
     </div>
     <ul id="imgList"></ul>
   </aside>
@@ -80,7 +79,7 @@
         <div id="verifyEmpty" class="vempty">
           <div class="vt">汇总图算法 · 自回归验证</div>
           <div class="vs">左侧列表 = 每一种「汇总图算法」（全图交集六档（100% = 样本完全一致，另有 90/80/70/60/50%）、多数 / 均值 / 去重均值三族及 8×8·32×32 块图、各档独有区图、各分类的注意区交集图（以关注点为中心，未设 = 屏幕中心）与鼠标点击分类的点击区交集图（以点击点为中心），与识别参与比对的是同一套产物）。
-            验证方式：把每个分类的原图，按该算法生成的汇总图逐张与【全部分类】的同一算法汇总图逐点比对（口径与识别一致），统计三个评价指标——<b>A</b> = 每个原图与「自己分类的该算法生成图」比对的匹配像素占比（= 100 − 不匹配占比），取全部原图的平均值（越高越好，表明样本比较集中）；<b>B</b> = 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例（越高说明该算法适用的分类越多）；<b>C</b> = 匹配正确率：只在「能生成有效图的分类」的样本里，与全部分类的该算法生成图比对、匹配度最高的刚好是自己分类的占比（越高说明算法区分度较好）。</div>
+            验证方式：把每个分类的原图，按该算法生成的汇总图逐张与【全部分类】的同一算法汇总图逐点比对（口径与识别一致），统计五个评价指标——<b>A</b> = 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例；<b>B</b> = 自分类平均匹配值：分类包含的每张原图与「该分类的该算法生成图」比对的匹配占比均值（越高越好，表明样本比较集中）；<b>C</b> = 其它分类平均匹配值：其它分类的每张原图与「该分类的该算法生成图」比对的匹配占比均值（越低越好，表明该分类的产物不易被别的分类原图匹配）；<b>D</b> = 匹配正确率：在能生成有效图的分类里，原图与「所有分类的该算法生成图」匹配、最高分<b>唯一最高</b>且恰是自己分类的占比，越高越好；无法生成有效图的不参与统计，无法给出最高值的结果的也不参与统计（这些样本只计入 E，故 D 的分母 = 可匹配样本数 − 无法区分数）；<b>E</b> = 无法区分率：全部可匹配样本里，无法给出最高值的结果（最高匹配度被 ≥2 个分类并列，分值一样、分不出该选哪一类）的占比（越低越好；分母 = 全部可匹配样本，与 D 的分母不同）。</div>
           <div class="vhint">先从左侧选中一个算法查看它的评分与分类明细；或点右栏「开始验证」对全部算法顺序计算（样本较多时耗时较长，完成后结果自动缓存）。</div>
         </div>
         <div id="verifyDetail" style="display:none">
@@ -92,7 +91,7 @@
           <div class="vdSum" id="vdSum"></div>
           <div class="vtableWrap">
             <table class="vtable">
-              <thead><tr><th>分类标注</th><th>匹配动作</th><th>A · 自分类平均匹配值（越高越像）</th><th>B · 是否生成成功</th><th>C · 匹配正确率（越高区分度越好）</th><th>匹配正确分类的个数</th></tr></thead>
+              <thead><tr><th>分类标注</th><th>匹配动作</th><th>自分类平均匹配值（越高越像）</th><th>是否生成成功</th><th>匹配正确率（越高区分度越好）</th><th>匹配正确分类的个数</th><th>无法区分率（越低越好）</th><th>无法区分的个数</th></tr></thead>
               <tbody id="vdRows"></tbody>
             </table>
           </div>
@@ -167,22 +166,24 @@
   <div id="edThink" style="display:none">
     <div class="edHead">
       <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
-      <button type="button" class="btn green" id="btnRebuild" style="margin-left:auto;font-size:12px"
+      <button type="button" class="btn" id="btnRebuild" style="margin-left:auto;font-size:12px"
         title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类适用的对照图（15 张基础合成图含交集 100/90/80/70/60/50 六档（100% = 样本完全一致）与多数/均值/去重均值/8·32 块图 + 15 张独有区图 + 12 张注意区交集图，共 42 张，全部参与识别比对；注意区图以各分类关注点为中心（未设 = 屏幕中心，每个分类都生成）；鼠标点击分类另加 12 张以点击点为中心的点击区交集图，共 54 张）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
+      <button type="button" class="btn green" id="btnThinkStart" style="font-size:12px"
+        title="为「已标注样本 ≥1 张、但尚无对照图或样本已变动」的分类标注后台分析（每个分类 42 张：15 张基础合成图（交集六档 + 多数/均值/去重均值/8·32 块图）+ 15 张独有区图 + 12 张注意区交集图，鼠标点击分类另含 12 张点击区交集图 = 54 张，与识别比对的是同一套产物）；产物齐全且样本未变动的分类自动跳过。">开始分析</button>
     </div>
-    <div class="tkstat" id="tkInfo" style="margin-top:10px;font-size:12px;line-height:1.8">左侧选择分类标注查看对照图。</div>
+    <div class="tkstat" id="tkStat" style="margin-top:10px;font-size:12px;line-height:1.8">正在读取分析状态…</div>
     <div id="thinkTask" style="display:none;margin-top:10px">
-      <div id="thinkTaskStat" style="font-size:12px;line-height:1.7"></div>
       <div class="vtBar"><div class="vtFill" id="thinkFill" style="width:0%"></div></div>
       <div class="vtText" id="thinkTaskTxt" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
     </div>
+    <div class="tkstat" id="tkInfo" style="margin-top:14px;font-size:12px;line-height:1.8">左侧选择分类标注查看对照图。</div>
   </div>
 
   <div id="edVerify" style="display:none">
     <div class="edHead">
       <h3 style="margin:0;font-size:14px">特征验证</h3>
       <button type="button" class="btn green" id="btnVerifyStart" style="margin-left:auto;font-size:12px"
-        title="对左侧全部汇总图算法顺序做一次自回归验证：把 classify/ 每张原图逐张与全部分类同 kind 汇总图按识别口径逐点比对，统计 A/B 并缓存结果（样本或产物有变动时需重新验证）">开始验证</button>
+        title="对左侧全部汇总图算法顺序做一次自回归验证：把 classify/ 每张原图逐张与全部分类同 kind 汇总图按识别口径逐点比对，统计 A/B/C/D/E 五个指标并缓存结果（样本或产物有变动时需重新验证）">开始验证</button>
     </div>
     <div class="tkstat" id="vkStat" style="margin-top:10px;font-size:12px;line-height:1.8">尚未验证。</div>
     <div id="verifyTask" style="display:none;margin-top:10px">
@@ -191,28 +192,22 @@
     </div>
     <div id="vkVerdict" style="margin-top:12px"></div>
     <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
-      <div><b style="color:var(--text)">A</b> 自分类平均匹配值：每个原图与「自己分类的该算法生成图」比对的匹配像素占比（= 100 − 不匹配占比），取全部原图的平均值（越高越好，表明样本比较集中）。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">B</b> 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例（越高说明该算法适用的分类越多）；明细表里逐分类显示为「是否生成成功」＝ <b style="color:var(--text)">是</b> / <b style="color:var(--text)">否</b>（否时附原因：未生成对应产物、或生成结果为全透明图）。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">C</b> 匹配正确率：只在「能生成有效图的分类」的样本里，与全部分类的该算法生成图比对、匹配度最高的刚好是自己分类的占比（越高越好，表明算法区分度较好）。</div>
-      <div style="margin-top:6px">每种 kind 都对全部原图与全部分类比对，不按动作收窄；某分类没有该 kind 产物（如历史旧产物缺点击区图）＝无判别点，与 0 像素空图同口径：判无法匹配、A 按匹配占比 0 计入、照常参与 A；但它不进 C 的分母，明细行的 A/C 显示「——」而不是 0%。</div>
+      <div><b style="color:var(--text)">A</b> 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例（越高越好）；明细表里逐分类显示为「是否生成成功」＝ <b style="color:var(--text)">是</b> / <b style="color:var(--text)">否</b>（否时附原因：未生成对应产物、或生成结果为全透明图）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">B</b> 自分类平均匹配值：分类包含的每张原图与「该分类的该算法生成图」比对的匹配占比均值（= 100 − 不匹配占比），越高越好（表明样本比较集中）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">C</b> 其它分类平均匹配值：其它分类的每张原图与「该分类的该算法生成图」比对的匹配占比均值（= 100 − 不匹配占比），越低越好（表明该分类的产物不易被别的分类原图匹配、区分度越好）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">D</b> 匹配正确率：在能生成有效图的分类里，与全部分类的该算法生成图比对、最高分<b style="color:var(--text)">唯一最高</b>且刚好是自己分类的占比（越高越好，表明算法区分度较好）。无法生成有效图的不参与统计，无法给出最高值的结果（最高分被 ≥2 个分类并列、分不出该选哪一类）的也不参与统计（只计入 E），故分母 = 可匹配样本数 − 无法区分数；明细表里的「匹配正确分类的个数」＝ 命中数 / 该分母。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">E</b> 无法区分率：全部可匹配样本里，与全部分类的该算法生成图比对后无法给出最高值的结果（最高分被 ≥2 个分类并列、分值一样、分不出该选哪一类）的占比（越低越好）。分母 = 全部可匹配样本（命中 + 无法区分 + 误判 = 可匹配样本数），与 D 的分母不同，故 D + E 不一定等于 100%；明细表里的「无法区分的个数」＝ 无法区分数 / 该分母。</div>
+      <div style="margin-top:6px">每种 kind 都对全部原图与全部分类比对，不按动作收窄；无法生成有效合成图（无该 kind 产物 / 全透明空图）的分类＝无判别点，它与其样本不参与任何指标的统计，明细行的对应数值显示「——」而不是 0%。</div>
     </div>
   </div>
 
   <div id="edOpt" style="display:none">
     <div class="edHead">
       <h3 style="margin:0;font-size:14px">算法调优</h3>
-      <button type="button" class="btn green" id="optStartBtn" style="margin-left:auto;font-size:12px"
-        title="启动一次五族权重自动寻优：后端先把 classify/ 全部已标注原图与所有分类产物逐 kind 比对建差异矩阵，再在 0~120 内从默认/均分/随机起点爬山找「命中自家分类样本占比」最高的权重；运行中不可再次启动">开始调优</button>
+      <button type="button" class="btn green" id="optRunBtn" style="margin-left:auto;font-size:12px"
+        title="按当前特征组合与权重 Y 验证全部算法的分类准确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动">验证所有算法</button>
     </div>
     <div id="optStat" style="margin-top:10px;font-size:12px;line-height:1.8;white-space:pre-line;color:var(--text)">正在读取状态…</div>
-    <div class="optPm" style="margin-top:10px">
-      <label style="color:var(--muted);font-size:12px">步长</label>
-      <input id="optStep" type="number" min="1" max="100" step="1" value="10"
-        title="权重搜索步长（0~120 按此步进枚举，默认 10；越小越细但越慢）">
-      <label style="color:var(--muted);font-size:12px">随机起点</label>
-      <input id="optSeeds" type="number" min="4" max="128" step="1" value="24"
-        title="随机起始权重组数（默认 24；越多越不容易陷局部最优，但越慢）">
-    </div>
     <div id="optTask" style="display:none;margin-top:10px">
       <div style="font-size:12px;line-height:1.7" id="optTaskStat"></div>
       <div class="vtBar"><div class="vtFill" id="optFill" style="width:0%"></div></div>
@@ -220,10 +215,12 @@
     </div>
     <div id="optVerdict" style="margin-top:12px"></div>
     <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
-      <div>调优目标 = 已标注样本五族加权命中自家分类占比（并列取安全边际更大者）。五族权重只作用于<b style="color:var(--text)">识别差异度</b>：
-        差异度 = (A·w0 + B·w1 + C·w2 + D·w3 + E·w4) ÷ 参与族权重和；权重 0 = 整族不参与，数值越大该族影响越强。</div>
-      <div style="margin-top:6px">主图区可拖动权重族滑块后点「应用权重」即时看识别效果；「应用最优」把最近一次寻优的最优权重写入运行时并持久化（重启仍生效），「恢复默认」还原 50/15/10/10/15 并删除持久化文件。</div>
-      <div style="margin-top:6px;color:var(--amber)">调优与特征验证 / 执行模式自动识别不要并行（调优会清空像素缓存，识别期间每帧需重解码）。</div>
+      <div>算法调优建立在<b style="color:var(--text)">特征验证</b>结果之上：先「汇总分析」生成各分类产物，再到「特征验证」算出每个特征的 A/B/C/D/E，本视图据此自动组合算法。</div>
+      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,1]</b> 默认 1 可改。</div>
+      <div style="margin-top:6px">某分类匹配度 = Σ「(100 − 不匹配占比) × X × Y」÷ Σ「X × Y」（加权平均，只累加该分类有有效产物的特征），匹配度<b style="color:var(--text)">唯一最高</b>的分类即判定结果，与样本归属分类一致即命中。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">打平（并列）处理</b>：逐张样本先看每个特征——某特征的最高匹配值被 <b style="color:var(--text)">≥2 个分类并列</b>（分值一样、分不出该选哪一类）即视为该特征有问题，这张样本的加权平均里<b style="color:var(--text)">整张放弃该特征</b>；放弃后重新加权，若最高匹配度<b style="color:var(--text)">仍然并列</b>（或本张样本的可用特征被全部放弃、无从判定），则给出<b style="color:var(--text)">无法区分</b>的最终结论：既不算命中也不算判错，单独计入「无法区分率」（与特征验证的 E 同口径）。</div>
+      <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 3 个：单一最佳匹配特征 / 所有正确率100%特征 / 所有正确率80%-99%特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
+      <div style="margin-top:6px;color:var(--amber)">验证期间请先停掉「特征验证」与执行模式自动识别（会清空像素缓存，识别每帧需重解码）。</div>
     </div>
   </div>
 
