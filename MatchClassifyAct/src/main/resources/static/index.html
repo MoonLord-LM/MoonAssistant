@@ -200,6 +200,7 @@
       <div style="margin-top:6px">每种 kind 都对全部原图与全部分类比对，不按动作收窄；无法生成有效合成图（无该 kind 产物 / 全透明空图）的分类＝无判别点，它与其样本不参与任何指标的统计，明细行的对应数值显示「——」而不是 0%。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">查看详细</b>：明细表里 <b style="color:var(--text)">D 列（匹配正确率）</b>与 <b style="color:var(--text)">E 列（无法区分率）</b>各自紧跟数值给出一个按钮，分别只看<b style="color:var(--text)">匹配错误</b>样本（最高分唯一但不是自家分类；按被误判到的分类分组，每行「命中 x% · 自家 y%」＝ 该原图与「误判分类生成图」／与「自家生成图」的匹配占比）与<b style="color:var(--text)">无法区分</b>样本（最高分被 ≥2 个分类并列；每行「并列 A、B · 最高 x% · 自家 y%」＝ 并列到的分类及两边的匹配占比）。两个弹窗同一套版式：标题写明主体（匹配错误明细 / 无法区分明细 − 分类 ｜ 动作）、标题下一行 chip 交代汇总图算法与样本口径、说明段讲清读法，单击缩略图看原图大图。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/verify.json</b>（五种指标 + 逐分类明细 + 「查看详细」用的逐图明细），下次打开本页自动恢复上次结果 ——「已标注（classify/ 原图与标注）与汇总分析（summary/ 产物）的数据一个字都没变」就直接显示「已计算」，不必重算；只要这两处有任何变动（增删改原图 / 标注 / 分类定义，或产物与 info.json 有变化），指纹随之变化 → 结果立即标记为「需重算」（左栏 chip 变琥珀、右栏统计行给出提示、并提示一次重新验证，明细页状态显示「已过期 · 需重算」），点「开始验证」重算即覆盖缓存。缓存文件可随时手删（删了回到「未验证」），「重新生成全部」清空 summary/ 时也会一并删除。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">逐图比对结果缓存</b>：每个特征「每张原图 × 每个分类同类产物」的不匹配占比另存一份到 <b style="color:var(--text)">summary/verify-matrix.json</b>，按<b style="color:var(--text)">原图与产物各自的大小 + 修改时间</b>记账（外加尺寸、注意点 / 点击点与 info.json 的修改时间）：全部对得上就整表照用、连 PNG 都不解码，只有真正变过的那部分重算 —— 所以即使指纹变了（例如刚重算过某些分类的产物）也不必从头跑一遍；「算法调优」用的也是同一份矩阵（特征验证刚跑完就在内存里命中，一张都不重比）。同样可随时手删。</div>
     </div>
   </div>
 
@@ -227,6 +228,7 @@
       <div style="margin-top:6px">单一特征算法只有一个特征，权重 Y 在 Σ「X × Y」里被约掉、改它对加权平均没有任何影响，因此<b style="color:var(--text)">权重固定 1、不可编辑、也不参与「自动调整参数」</b>（勾选框同样锁上，后端也不把它写进权重文件）。</div>
       <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 4 个：单一最佳匹配特征 / 单一最佳+100%正确率特征 / 单一最佳+90+%正确率特征 / 单一最佳+80+%正确率特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/opt-result.json</b>（各算法结果 + 逐分类明细 + 最近一次「自动调整参数」摘要），下次打开本页自动恢复上次结果 ——「<b style="color:var(--text)">已标注（classify/）、汇总分析（summary/ 产物）、特征验证（各特征的五种指标）</b>三处数据都没变」就直接用上次的，不必重算；只要其中任何一处有变动（含特征验证被重算后特征口径变了），结果立即标记过期：右栏统计行给出提示、并提示一次重新计算，结论卡 / 权重卡里也会标黄说明。另外<b style="color:var(--text)">特征选择 + 权重数值每次跑完都会覆写一份最新的快照</b>到 <b style="color:var(--text)">summary/opt-weights.json</b>（每个算法：特征 kind 清单 + 基础分 X + 权重 Y + 当时指标），方便后续功能 / 开发验证直接读取，不必解析界面状态。</div>
+      <div style="margin-top:6px">本视图的比对矩阵与特征验证<b style="color:var(--text)">共用同一份缓存</b>（<b style="color:var(--text)">summary/verify-matrix.json</b>）：特征验证刚跑完就直接在内存里命中 —— 换一组权重、再来一次「验证所有算法」或「自动调整参数」都不必重新逐图比对；跨重启也按每张图的大小与修改时间复用没变过的部分，右栏统计行会给出复用规模。</div>
       <div style="margin-top:6px;color:var(--amber)">验证期间建议先停掉「特征验证」与执行模式自动识别（两者都会长时间占用 CPU 与磁盘 IO）。</div>
     </div>
   </div>

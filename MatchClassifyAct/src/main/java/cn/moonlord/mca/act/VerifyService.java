@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -53,7 +54,10 @@ import java.util.stream.Stream;
  * 跳过这些分类及其原图的枚举。
  * 按算法逐 kind 独立计算、完成后按「当前样本/产物指纹」缓存结果并标记是否过期（样本或产物有
  * 改动后需重新验证）。独立后台任务线程跑，一次完整跑完后把全部 kind 的结果（五种指标 + 分类级明细
- * + 逐图明细）<b>完整落盘到 summary/verify.json</b>；进程启动后首次访问本服务时若该文件还在且
+ * + 逐图明细）<b>完整落盘到 summary/verify.json</b>；另外把每个 kind 逐图比对的原始分值
+ * （「哪张原图 × 哪个分类的产物」的不匹配占比）按各图自己的大小 / 修改时间记进
+ * <b>summary/verify-matrix.json</b>（见 {@link VerifyMatrixCache}）：没变过的图下次验证与算法调优
+ * 直接取用、不必重比。进程启动后首次访问本服务时若缓存文件还在且
  * 「classify/ 已标注 + summary/ 产物」的指纹与缓存里记录的一致，则直接恢复上次结果（界面显示「已计算」，
  * 无需重算）；指纹变了则恢复出来的结果一律标记为过期（界面「需重算」并提示重新验证）。
  */
@@ -65,6 +69,7 @@ public class VerifyService {
     private final StoragePaths storage;
     private final ClassifyStore classifyStore;
     private final FrameClassifier classifier;
+    private final VerifyMatrixCache matrix;
 
     /** 单线程后台执行器（任务内部的逐样本比对用并行流加速）。 */
     private final ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
@@ -86,9 +91,10 @@ public class VerifyService {
     /** 结果缓存文件名（放 summary/ 根，与产物目录并列：可手删、随 *.json 一并被 git 忽略）。 */
     private static final String CACHE_FILE = "verify.json";
 
-    /** 指纹不统计的非产物数据文件（本服务缓存 + 其它模块的缓存 / 权重 / 去重数据）：写这些文件不能反过来把自己判成过期。 */
+    /** 指纹不统计的非产物数据文件（本服务缓存 + 逐图比对缓存 + 其它模块的缓存 / 权重 / 去重数据）：
+     *  写这些文件不能反过来把自己判成过期。 */
     private static final Set<String> NON_ARTIFACT =
-            Set.of(CACHE_FILE, "opt-result.json", "opt-weights.json", "dedup-cache.json");
+            Set.of(CACHE_FILE, VerifyMatrixCache.CACHE_FILE, "opt-result.json", "opt-weights.json", "dedup-cache.json");
 
     /** 是否是非产物数据文件（落盘用的 {@code *.tmp} 临时名同样排除，避免写盘瞬间把指纹带跑偏）。 */
     private static boolean isDataFile(String name) {
@@ -165,6 +171,9 @@ public class VerifyService {
         public volatile String cur;
         public volatile int processed;
         public volatile int totalSamples;
+        /** 本轮直接复用逐图比对结果的样本张数（界面提示省下了多少重算）与整表复用的特征数。 */
+        public volatile int reuseRows;
+        public volatile int reuseKinds;
         public final long startedMs;
         public volatile long endedMs;   // 结束时刻（finished 置位时记录；0 = 尚未结束）
 
@@ -181,21 +190,29 @@ public class VerifyService {
                        Integer actLeft, Integer actTop) {
     }
 
-    /** classify/ 下的一张已标注原图（归属某分类目录）。 */
-    private record Smp(Path png, Ctx own) {
+    /** classify/ 下的一张已标注原图（归属某分类目录）；mtime / size = 原图文件自身的大小与修改时间
+     *  （逐图比对结果的缓存键：图被换掉就能识别出来，没换过的那一行直接复用）。 */
+    private record Smp(Path png, Ctx own, long mtime, long size) {
     }
 
-    /** 某 kind 计算时的参与目录（产物已成功解码）。 */
+    /** 某 kind 计算时的参与目录（产物已成功解码，或整表复用时用上次记下的标记）。 */
     private static final class Cand {
         final Ctx ctx;
         final FrameClassifier.CachedPx art;
+        /** 该分类此特征的产物解出来了（文件在且解得开）：复用缓存时不解码，用上次记下的标记。 */
+        final boolean decoded;
         /** 该分类用此特征是否生成了有效合成图：产物存在且至少有一个不透明像素（非全透明空图）。 */
         final boolean valid;
 
         Cand(Ctx ctx, FrameClassifier.CachedPx art) {
+            this(ctx, art, art != null, hasPixels(art));
+        }
+
+        Cand(Ctx ctx, FrameClassifier.CachedPx art, boolean decoded, boolean valid) {
             this.ctx = ctx;
             this.art = art;
-            this.valid = hasPixels(art);
+            this.decoded = decoded;
+            this.valid = valid;
         }
     }
 
@@ -285,9 +302,11 @@ public class VerifyService {
             }
             r.done = i + 1;
         }
-        // 一轮完整跑完（无中断）→ 把全部 kind 的结果完整落盘：下次启动只要指纹没变就直接复用
+        // 一轮完整跑完（无中断）→ 结果完整落盘 + 逐图比对结果一起落盘：下次启动只要指纹没变就直接复用，
+        // 指纹变了也能按「每张图的大小 / 修改时间」把没变过的部分接着复用（算法调优同样直接取用）
         if (r.error == null) {
             saveCache(fp, samples.size(), groups.size());
+            matrix.save(fp);
         }
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
@@ -305,6 +324,8 @@ public class VerifyService {
         // 结果从缓存文件恢复（本进程）与缓存文件名：界面据此提示「已加载上次结果 / 结果落在哪」
         out.put("cached", cacheRestored);
         out.put("cacheFile", CACHE_FILE);
+        // 逐图比对结果缓存（summary/verify-matrix.json）：界面提示「省掉了多少重算」与缓存规模
+        out.putAll(matrix.status());
         int staleCount = 0;
         List<Map<String, Object>> kinds = new ArrayList<>();
         for (String kind : classifier.verifyOrder()) {
@@ -352,6 +373,8 @@ public class VerifyService {
             task.put("cur", r.cur);
             task.put("processed", r.processed);
             task.put("totalSamples", r.totalSamples);
+            task.put("reuseRows", r.reuseRows);     // 本轮直接复用逐图比对结果的样本张数
+            task.put("reuseKinds", r.reuseKinds);   // 本轮整表复用的特征数
             out.put("task", task);
         }
         return out;
@@ -610,14 +633,27 @@ public class VerifyService {
             String st = m.getState() == null ? "" : m.getState().trim();
             Ctx own = st.isEmpty() ? null : byState.get(st);
             if (own != null) {
-                out.add(new Smp(png, own));
+                long[] at = stat(png);
+                out.add(new Smp(png, own, at[0], at[1]));
             }
         }
         return out;
     }
 
+    /** 文件的大小 / 修改时间（-1 = 读不到）；逐图比对结果的缓存键用它，故每次扫描只 stat 一遍。 */
+    private static long[] stat(Path p) {
+        try {
+            BasicFileAttributes at = Files.readAttributes(p, BasicFileAttributes.class);
+            return new long[]{at.lastModifiedTime().toMillis(), at.size()};
+        } catch (IOException e) {
+            return new long[]{-1, 0};
+        }
+    }
+
     /** 算一个 kind 的四个指标（A 生成成功率 / B 自分类平均匹配值 / C 其它分类平均匹配值 / D 匹配正确率）与分类级明细。
-     *  works = 本验证轮共享的每样本画面块压缩缓存（键 = 原图路径）。 */
+     *  works = 本验证轮共享的每样本画面块压缩缓存（键 = 原图路径）。
+     *  逐图比对结果按「原图 + 产物各自的名称/大小/修改时间」记账（{@link VerifyMatrixCache}）：没变过的
+     *  整表 / 整行直接复用，连产物与原图都不解码。 */
     private KindStat computeKind(String kind, String fp, List<Ctx> groups, List<Smp> samples,
                                  Map<String, FrameClassifier.FrameWork> works) {
         long t0 = System.currentTimeMillis();
@@ -627,15 +663,46 @@ public class VerifyService {
         // click 分类另有 12 张点击区图 = 54 张；缺该 kind 产物只发生在旧目录尚未重算补齐时）。
         // 没有本 kind 产物的分类＝无判别点，与「0 像素空图」同口径：判完全不匹配（内部按不匹配占比 100 算）、
         // 不进任何指标统计（只用于让该分类行显示「——」）；解码失败同视为无产物。
+        // 列键 = 各分类该 kind 的产物 + info.json 的大小/修改时间（+ 尺寸与裁剪框心）：全对得上说明产物像素
+        // 与裁剪都没变，整表（含「该分类有没有有效产物」）直接复用、一个 PNG 都不解码；对不上才整表重算
+        List<VerifyMatrixCache.ColKey> cols = new ArrayList<>(groups.size());
+        for (Ctx c : groups) {
+            Path dir = Path.of(c.dir());
+            cols.add(VerifyMatrixCache.colKey(c.state(), c.w(), c.h(), c.attnLeft(), c.attnTop(),
+                    c.actLeft(), c.actTop(), dir.resolve(file), dir.resolve(ArtifactKind.FILE_INFO)));
+        }
+        VerifyMatrixCache.Table cachedTab = matrix.table(kind, cols);
         List<Cand> cands = new ArrayList<>();
         int real = 0;
-        for (Ctx c : groups) {
-            Path f = Path.of(c.dir(), file);
-            FrameClassifier.CachedPx art = Files.isRegularFile(f) ? classifier.verifyArtifact(f, kind) : null;
-            if (art != null) {
-                real++;
+        final VerifyMatrixCache.Table tab;   // 列对得上 = 整表照用，对不上 = 现算一张新表
+        if (cachedTab != null) {
+            tab = cachedTab;
+            for (int j = 0; j < groups.size(); j++) {
+                boolean dec = tab.decoded(j);
+                cands.add(new Cand(groups.get(j), null, dec, tab.valid(j)));
+                if (dec) {
+                    real++;
+                }
             }
-            cands.add(new Cand(c, art));
+            Run rr = run;
+            if (rr != null) {
+                rr.reuseKinds++;
+            }
+        } else {
+            boolean[] dec = new boolean[groups.size()];
+            boolean[] val = new boolean[groups.size()];
+            for (int j = 0; j < groups.size(); j++) {
+                Ctx c = groups.get(j);
+                Path f = Path.of(c.dir(), file);
+                FrameClassifier.CachedPx art = Files.isRegularFile(f) ? classifier.verifyArtifact(f, kind) : null;
+                dec[j] = art != null;
+                val[j] = hasPixels(art);
+                if (art != null) {
+                    real++;
+                }
+                cands.add(new Cand(c, art, dec[j], val[j]));
+            }
+            tab = matrix.begin(kind, cols, dec, val);
         }
         if (real == 0) {
             return new KindStat(kind, fp, System.currentTimeMillis(), (int) (System.currentTimeMillis() - t0),
@@ -680,52 +747,85 @@ public class VerifyService {
             r.processed = 0;
             r.totalSamples = n;
         }
-        // 逐样本并行：与全部分类同 kind 汇总图逐点比对（识别同口径）
+        // 逐样本并行：与全部分类同 kind 汇总图逐点比对（识别同口径）。
+        // 逐图比对结果缓存：这张原图（文件名 + 大小 + 修改时间 + 所属分类尺寸）算过的整行直接取用，
+        // 连原图都不解码；对不上（新图 / 图被换过）才真比一遍，并把新算的行记回缓存
+        AtomicInteger step = new AtomicInteger();
+        AtomicInteger reuse = new AtomicInteger();
+        // 整表复用路径的产物按需解码槽（列号 → 产物图；解不开的不缓存，下次再看）：
+        // 只有「没命中缓存行」的样本才会真的比对，故多数情况下一张产物都不解
+        ConcurrentHashMap<Integer, FrameClassifier.CachedPx> lazyArts = new ConcurrentHashMap<>();
         Stream.iterate(0, i -> i + 1).limit(n).parallel().forEach(i -> {
             Smp smp = pop.get(i);
             Ctx own = smp.own();
-            String wkey = smp.png().toString();
-            FrameClassifier.FrameWork work = works.get(wkey);
-            if (work == null) {
-                FrameClassifier.CachedPx raw = classifier.verifySample(smp.png(), own.w(), own.h());
-                if (raw == null) {
-                    return;
-                }
-                FrameClassifier.FrameWork built = new FrameClassifier.FrameWork(raw.px, raw.w, raw.h);
-                FrameClassifier.FrameWork prev = works.putIfAbsent(wkey, built);
-                work = prev == null ? built : prev;
+            Run pr = run;
+            if (pr != null) {
+                pr.processed = step.incrementAndGet();   // 并行流按「已开始处理」计，收尾正好到 n
             }
             int vs = cands.size();
-            double[] sv = new double[vs];   // 本样本与每个分类同类产物的不匹配占比；<0 = 比不了（分辨率等异常）
+            int ownPos = selfOf[i];
+            boolean ownOk = cands.get(ownPos).valid;   // 自己的分类生成了有效图才算「可匹配样本」（B / D / E 分母）
+            String name = smp.png().getFileName().toString();
+            double[] sv = tab.row(name, smp.mtime(), smp.size(), own.w(), own.h());
+            if (sv != null && sv.length == vs) {
+                reuse.incrementAndGet();
+            } else {
+                String wkey = smp.png().toString();
+                FrameClassifier.FrameWork work = works.get(wkey);
+                if (work == null) {
+                    FrameClassifier.CachedPx raw = classifier.verifySample(smp.png(), own.w(), own.h());
+                    if (raw == null) {
+                        return;
+                    }
+                    FrameClassifier.FrameWork built = new FrameClassifier.FrameWork(raw.px, raw.w, raw.h);
+                    FrameClassifier.FrameWork prev = works.putIfAbsent(wkey, built);
+                    work = prev == null ? built : prev;
+                }
+                sv = new double[vs];   // 本样本与每个分类同类产物的不匹配占比；<0 = 比不了（分辨率等异常）
+                for (int j = 0; j < vs; j++) {
+                    Cand cd = cands.get(j);
+                    // 整表复用路径没预先解码产物：上次记着「没有产物 / 解不开」的列算 100，
+                    // 其余按需解码一次（同一列解出来的图全行共用，只有真没命中缓存的行才会走到）
+                    FrameClassifier.CachedPx art = null;
+                    if (cd.decoded) {
+                        art = cd.art != null ? cd.art : lazyArts.computeIfAbsent(j, k -> {
+                            Path fa = Path.of(groups.get(k).dir(), file);
+                            return Files.isRegularFile(fa) ? classifier.verifyArtifact(fa, kind) : null;
+                        });
+                    }
+                    double s;
+                    if (art == null) {
+                        // 该分类没有本 kind 产物（如旧目录尚未重算、缺方框图）＝无判别点：同 0 像素空图判完全不匹配
+                        // （不匹配占比 100）；该分类及其样本不进任何指标统计，只在明细行显示「——」
+                        s = 100.0;
+                    } else {
+                        // 点击区图按鼠标点击点裁框、注意区图按注意点裁框；缺点击点的分类由识别端回退注意点
+                        s = classifier.verifyKindScore(work, art, kind, new FrameClassifier.Centers(
+                                cd.ctx.actLeft() == null ? -1 : cd.ctx.actLeft(),
+                                cd.ctx.actTop() == null ? -1 : cd.ctx.actTop(),
+                                cd.ctx.attnLeft() == null ? 0 : cd.ctx.attnLeft(),
+                                cd.ctx.attnTop() == null ? 0 : cd.ctx.attnTop()));
+                        if (s < 0) {
+                            sv[j] = -1;
+                            continue;
+                        }
+                    }
+                    sv[j] = s;
+                }
+                tab.fill(name, smp.mtime(), smp.size(), own.w(), own.h(), sv);
+            }
+            // 以下统计只读 sv：复用与重算共用同一套口径，谁都不在这里加分值
             double self = -1;
             double omSum = 0;   // 本样本与「其它分类的该类产物」的不匹配占比之和（C 的分子）
             int omCnt = 0;
-            int ownPos = selfOf[i];
-            boolean ownOk = cands.get(ownPos).valid;   // 自己的分类生成了有效图才算「可匹配样本」（B / D / E 分母）
             for (int j = 0; j < vs; j++) {
-                Cand cd = cands.get(j);
-                double s;
-                if (cd.art == null) {
-                    // 该分类没有本 kind 产物（如旧目录尚未重算、缺方框图）＝无判别点：同 0 像素空图判完全不匹配
-                    // （不匹配占比 100）；该分类及其样本不进任何指标统计，只在明细行显示「——」
-                    s = 100.0;
-                } else {
-                    // 点击区图按鼠标点击点裁框、注意区图按注意点裁框；缺点击点的分类由识别端回退注意点
-                    s = classifier.verifyKindScore(work, cd.art, kind, new FrameClassifier.Centers(
-                            cd.ctx.actLeft() == null ? -1 : cd.ctx.actLeft(),
-                            cd.ctx.actTop() == null ? -1 : cd.ctx.actTop(),
-                            cd.ctx.attnLeft() == null ? 0 : cd.ctx.attnLeft(),
-                            cd.ctx.attnTop() == null ? 0 : cd.ctx.attnTop()));
-                    if (s < 0) {
-                        sv[j] = -1;
-                        continue;
-                    }
+                if (sv[j] < 0) {
+                    continue;
                 }
-                sv[j] = s;
                 if (j == ownPos) {
-                    self = s;
-                } else if (cd.valid && ownOk) {
-                    omSum += s;   // C：别的分类的原图 vs 该分类产物（仅产物有效、且样本归属分类有效时统计）
+                    self = sv[j];
+                } else if (cands.get(j).valid && ownOk) {
+                    omSum += sv[j];   // C：别的分类的原图 vs 该分类产物（仅产物有效、且样本归属分类有效时统计）
                     omCnt++;
                 }
             }
@@ -783,11 +883,11 @@ public class VerifyService {
                 otherSum[0] += omSum;
                 otherCnt[0] += omCnt;
             }
-            Run rr = run;
-            if (rr != null) {
-                rr.processed++;
-            }
         });
+        Run runNow = run;
+        if (runNow != null) {
+            runNow.reuseRows += reuse.get();   // 整轮累加（computeKind 按 kind 顺序单线程跑）
+        }
 
         // 整库汇总 + 分类级行（B / C / D 的统计一律排除「该分类没生成有效图」的样本）
         int totalSamples = 0;     // 全部参与分类的样本数（仅用于「样本 N 张」展示）
@@ -818,8 +918,8 @@ public class VerifyService {
             row.put("action", cd.ctx.action());
             row.put("attnLeft", cd.ctx.attnLeft());
             row.put("attnTop", cd.ctx.attnTop());
-            row.put("valid", cd.valid);           // 该分类此特征是否生成了有效合成图：false → 前端数值列显示「——」
-            row.put("missing", cd.art == null);   // 连产物文件都没有（与「产物存在但全透明」区分展示）
+            row.put("valid", cd.valid);       // 该分类此特征是否生成了有效合成图：false → 前端数值列显示「——」
+            row.put("missing", !cd.decoded);  // 连产物文件都没有（与「产物存在但全透明」区分展示）
             row.put("samples", c);
             // B（该分类行）= 自分类匹配占比均值；内部 selfSum 累加的是不匹配占比，故输出取 100 − 均值；
             // 无法生成有效图 → null（显示「——」而不是 0%，其样本不进任何指标统计）

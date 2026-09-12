@@ -3431,16 +3431,16 @@ function openVkDetail(r, mode){
   ov.innerHTML =
     '<div class="xcard">' +
       // 标题带上「这是哪个分类（标注 ｜ 动作）的哪种明细」；本弹窗覆盖整页、看不到身后的右栏与表格，
-      // 故紧随其后再用一行信息条把「哪种汇总图算法 / 几个样本 / D·E·命中」一并摆出来，不用关掉弹窗去回看
+      // 故紧随其后再用一行信息条把「哪种汇总图算法 / 几个样本 / D·E·匹配正确个数 / 无法区分个数」一并摆出来，不用关掉弹窗去回看
       '<div class="xt2">' + (isTie ? "无法区分明细" : "匹配错误明细") + ' - ' + escHtml(r.state) + ' ｜ ' + escHtml(act) + '</div>' +
       '<div class="xmeta">' +
         '<span>汇总图算法<b>' + escHtml(info.name) + '</b></span>' +
         '<span>样本<b>' + r.samples + ' 张</b></span>' +
         '<span>匹配正确率<b class="' + vkBC(r.c) + '">' + fmtV(r.c) + '</b></span>' +
-        '<span>命中<b>' + (r.hit != null ? r.hit + " / " + (r.decided != null ? r.decided : "—") : "—") + '</b></span>' +
+        '<span>匹配正确个数<b>' + (r.hit != null ? r.hit + " / " + (r.decided != null ? r.decided : "—") : "—") + '</b></span>' +
         '<span>匹配错误<b>' + wrongAll.length + ' 张</b></span>' +
         '<span>无法区分率<b class="' + vkE(r.e) + '">' + fmtV(r.e) + '</b></span>' +
-        '<span>无法区分<b>' + (r.tie != null ? r.tie + " / " + r.samples : "—") + '</b></span>' +
+        '<span>无法区分个数<b>' + (r.tie != null ? r.tie + " / " + r.samples : "—") + '</b></span>' +
       '</div>' +
       '<div class="sub">' + sub + '</div>' +
       '<div class="list">' + (isTie ? tieBody : wrongBody) + '</div>' +
@@ -3465,6 +3465,11 @@ function vkTaskUi(j){
   if(doneCount || staleCount) base += "（已计算 " + doneCount + " · 需重算 " + staleCount + "）";   // 与列表 chip 同口径
   // 结果来自 summary/verify.json（完整缓存）：已标注与汇总分析的数据没变就直接用上次的，不必重算
   if(j.cached && (doneCount || staleCount)) base += "\n已从 summary/" + (j.cacheFile || "verify.json") + " 恢复上次结果（数据没变即可直接用）。";
+  // 逐图比对结果缓存（summary/verify-matrix.json）：每张原图与每个分类产物各按自己的大小 / 修改时间记账，
+  // 没变过的整表 / 整行连 PNG 都不解码；算法调优用同一份，跨重启也能接着复用
+  const mx = "summary/" + (j.matrixFile || "verify-matrix.json");
+  if(j.matrixRows) base += "\n逐图比对结果缓存：" + mx + "（已载入 " + j.matrixKinds + " 种特征 · " + j.matrixRows + " 条样本行）。";
+  else if(j.matrixBytes) base += "\n逐图比对结果缓存：" + mx + "（开始验证时自动载入，没变过的图不必重比）。";
   if(staleCount) base += "\n注意：已标注 / 汇总分析的数据有变动，需重新验证（" + staleCount + " 种）。";
   if(j.running && t && !t.finished){
     bar.style.display = "block";
@@ -3489,6 +3494,9 @@ function vkTaskUi(j){
       }else{
         txt.style.color = "var(--green)";
         txt.textContent = "最近一次验证已完成：" + t.done + "/" + t.total + " 种算法。";
+        if(t.reuseRows || t.reuseKinds){
+          base += "\n其中直接复用逐图比对结果：" + (t.reuseRows || 0) + " 条样本行 · " + (t.reuseKinds || 0) + " 种特征（没变过的图不重比）。";
+        }
       }
     }else{
       bar.style.display = "none";
@@ -3880,7 +3888,8 @@ function optRender(){
         ? "正在后台自动调整参数：逐权重在 0~1 之间随机试 10 次（步进 0.001），只有匹配正确率上升、或无法区分率下降才采纳，"
           + "新权重保存到 classify/opt-weights.json。\n（" + st + "）"
         : "正在后台验证全部算法的分类准确率…（" + (t.stage || "准备中")
-          + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "") + "）")
+          + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "")
+          + (t.reuseRows ? " · 复用 " + t.reuseRows + " 行" : "") + "）")
       + "\n建议先停掉特征验证 / 执行模式自动识别，避免两者互相争抢 CPU 与磁盘 IO。";
   }else{
     taskBox.style.display = "none";
@@ -3903,7 +3912,12 @@ function optRender(){
             + (j.tune.improved || 0) + " 处权重调整（共试探 " + (j.tune.weights || 0) + " 个权重），权重文件 "
             + (j.tune.file || "") : "") +
           // 特征选择 + 权重数值始终另存一份最新的（后续功能 / 开发验证直接读，不必解析界面状态）
-          "\n特征选择与权重数值快照：summary/" + (j.snapshotFile || "opt-weights.json") + "（每次跑完覆写最新的）。";
+          "\n特征选择与权重数值快照：summary/" + (j.snapshotFile || "opt-weights.json") + "（每次跑完覆写最新的）。" +
+          // 逐图比对结果与特征验证共用同一份：特征验证刚跑过就在内存里命中，一张都不用重比
+          (j.matrixRows || j.matrixBytes
+            ? "\n逐图比对结果缓存：summary/" + (j.matrixFile || "verify-matrix.json") + "（与特征验证共用，没变过的图不必重比"
+              + (j.matrixRows ? "，已载入 " + j.matrixRows + " 条样本行" : "") + "）。"
+            : "");
       }else stat.textContent = "已组合 " + algos.length + " 个算法，点右上角「验证所有算法」开始。";
     }
   }

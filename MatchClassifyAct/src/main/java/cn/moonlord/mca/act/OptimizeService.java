@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -59,7 +60,9 @@ import java.util.stream.Stream;
  * 一次验证跑完全部算法，给出整体与分类级匹配正确率 + 无法区分率。评价口径与特征验证的 D / E 完全一致：
  * <b>匹配正确率 = 命中 / (可判定样本 − 无法区分) = 命中 / (命中 + 判错)</b>（无法区分既不算命中也不算判错，
  * 不进这个分母，只回答「能给出结果的样本里判对了多少」）；<b>无法区分率 = 无法区分 / 可判定样本</b>
- * （分母含无法区分样本）。与特征验证同理：逐张按需解码重算矩阵、用后即释放（常驻缓存回收交给 JVM 的 GC）。
+ * （分母含无法区分样本）。与特征验证同理：逐张按需解码算矩阵、用后即释放（常驻缓存回收交给 JVM 的 GC），
+ * 但矩阵本身与特征验证共用 {@link VerifyMatrixCache}（{@code summary/verify-matrix.json}）：特征验证刚跑完
+ * 就直接在内存里命中，一张都不用重比；跨进程也按「每张原图 / 每个产物自己的大小 / 修改时间」复用，没变过的部分不重算。
  *
  * <p><b>结果完整缓存到 {@code summary/opt-result.json}</b>（与特征验证的 {@code summary/verify.json} 同一套做法）：
  * 一次跑完（无 error）即把全部算法的结果（含逐分类明细）+ 最近一次「自动调整参数」摘要完整落盘。缓存有效性
@@ -86,6 +89,7 @@ public class OptimizeService {
     private final ClassifyStore classifyStore;
     private final FrameClassifier classifier;
     private final VerifyService verify;
+    private final VerifyMatrixCache matrix;
 
     /** 单线程后台执行器（矩阵内逐样本比对用并行流加速）。 */
     private final ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
@@ -202,6 +206,9 @@ public class OptimizeService {
         public volatile int totalSamples;
         /** 最近处理的样本文件名（精确到张，供界面显示「正在比对 img_xxx.png」）。 */
         public volatile String sample;
+        /** 本轮直接复用逐图比对结果的样本张数与整表复用的特征数（界面提示省下了多少重算）。 */
+        public volatile int reuseRows;
+        public volatile int reuseKinds;
         /** 跨阶段合计张数进度：进度条按它连续推进，不再随阶段切换回零。 */
         public volatile int allDone;
         public volatile int allTotal;
@@ -269,8 +276,9 @@ public class OptimizeService {
                        Integer actLeft, Integer actTop) {
     }
 
-    /** classify/ 下的一张已标注原图（归属某分类目录）。 */
-    private record Smp(Path png, Ctx own) {
+    /** classify/ 下的一张已标注原图（归属某分类目录）；mtime / size = 原图文件自身的大小与修改时间
+     *  （逐图比对结果的缓存键：图被换掉就能识别出来，没换过的那一行直接复用）。 */
+    private record Smp(Path png, Ctx own, long mtime, long size) {
     }
 
     /** 某 kind 在验证结果里的静态指标（用于组合算法，不重复跑比对）。 */
@@ -397,6 +405,8 @@ public class OptimizeService {
         out.put("cached", cacheRestored);
         out.put("cacheFile", RESULT_FILE);
         out.put("snapshotFile", SNAPSHOT_FILE);
+        // 逐图比对结果缓存（与特征验证共用 summary/verify-matrix.json）：界面提示复用规模与省下的重算
+        out.putAll(matrix.status());
         out.put("fp", fp);
         // 当前算法组合口径（为空 = 特征验证结果不齐 → 恢复出来的结果一律算过期）
         String live = sigOf(algorithms());
@@ -422,6 +432,8 @@ public class OptimizeService {
             task.put("sample", r.sample);
             task.put("allDone", r.allDone);
             task.put("allTotal", r.allTotal);
+            task.put("reuseRows", r.reuseRows);     // 本轮直接复用逐图比对结果的样本张数
+            task.put("reuseKinds", r.reuseKinds);   // 本轮整表复用的特征数
             task.put("mode", r.mode);
             task.put("tuneKind", r.tuneKind);
             task.put("trial", r.trial);
@@ -787,6 +799,7 @@ public class OptimizeService {
         // 完整缓存 + 特征选择 / 权重快照：下次启动只要「已标注 / 汇总分析 / 特征验证」都没变就直接复用
         saveCache(res, null);
         saveSnapshot(res.fp, res.sig, algos, rows);
+        matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
 
         r.stage = "完成";
         r.finished = true;
@@ -1020,6 +1033,7 @@ public class OptimizeService {
         // 完整缓存（结果 + 本次调整摘要）+ 特征选择 / 权重快照
         saveCache(res, t);
         saveSnapshot(res.fp, res.sig, algos, rows);
+        matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
 
         r.stage = "完成";
         r.finished = true;
@@ -1050,17 +1064,48 @@ public class OptimizeService {
         String file = classifier.verifyFile(kind);
         int gn = groups.size();
         int sn = samples.size();
+        // 列键 = 各分类该 kind 的产物 + info.json 的大小/修改时间（+ 尺寸与裁剪框心）：全对得上说明产物像素
+        // 与裁剪都没变，整表（含「该分类有没有有效产物」）直接复用、一个 PNG 都不解码；对不上才整表重算
+        List<VerifyMatrixCache.ColKey> cols = new ArrayList<>(gn);
+        for (int j = 0; j < gn; j++) {
+            Ctx c = groups.get(j);
+            Path dir = Path.of(c.dir());
+            cols.add(VerifyMatrixCache.colKey(c.state(), c.w(), c.h(), c.attnLeft(), c.attnTop(),
+                    c.actLeft(), c.actTop(), dir.resolve(file), dir.resolve(ArtifactKind.FILE_INFO)));
+        }
+        VerifyMatrixCache.Table cachedTab = matrix.table(kind, cols);
         List<FrameClassifier.CachedPx> arts = new ArrayList<>(gn);
         boolean[] valid = new boolean[gn];
-        for (int j = 0; j < gn; j++) {
-            Path f = Path.of(groups.get(j).dir(), file);
-            FrameClassifier.CachedPx art = Files.isRegularFile(f) ? classifier.verifyArtifact(f, kind) : null;
-            arts.add(art);
-            // 与特征验证 Cand.valid 同一口径：产物存在且至少一个不透明像素才算「该分类生成了有效产物」
-            valid[j] = VerifyService.hasPixels(art);
+        final VerifyMatrixCache.Table tab;   // 列对得上 = 整表照用，对不上 = 现算一张新表
+        if (cachedTab != null) {
+            tab = cachedTab;
+            for (int j = 0; j < gn; j++) {
+                arts.add(null);
+                valid[j] = tab.valid(j);   // 与特征验证同一份缓存：产物没变，有效性也照旧
+            }
+            if (r != null) {
+                r.reuseKinds++;
+            }
+        } else {
+            for (int j = 0; j < gn; j++) {
+                Path f = Path.of(groups.get(j).dir(), file);
+                FrameClassifier.CachedPx art = Files.isRegularFile(f) ? classifier.verifyArtifact(f, kind) : null;
+                arts.add(art);
+                // 与特征验证 Cand.valid 同一口径：产物存在且至少一个不透明像素才算「该分类生成了有效产物」
+                valid[j] = VerifyService.hasPixels(art);
+            }
+            boolean[] dec = new boolean[gn];
+            for (int j = 0; j < gn; j++) {
+                dec[j] = arts.get(j) != null;
+            }
+            tab = matrix.begin(kind, cols, dec, valid);
         }
         double[][] m = new double[sn][gn];
         java.util.concurrent.atomic.AtomicInteger step = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger reuse = new java.util.concurrent.atomic.AtomicInteger();
+        // 整表复用路径的产物按需解码槽（列号 → 产物图；解不开的不缓存，下次再看）：
+        // 只有「没命中缓存行」的样本才会真的比对，故多数情况下一张产物都不解
+        java.util.concurrent.ConcurrentHashMap<Integer, FrameClassifier.CachedPx> lazyArts = new java.util.concurrent.ConcurrentHashMap<>();
         java.util.stream.IntStream.range(0, sn).parallel().forEach(i -> {
             Smp smp = samples.get(i);
             r.sample = smp.png().getFileName().toString();   // 精确到张：界面显示正在比对哪一张
@@ -1068,6 +1113,14 @@ public class OptimizeService {
             r.processed = n;                                 // 并行流按「已开始处理」计，收尾正好到 sn
             r.allDone = base + n;
             Ctx own = smp.own();
+            String name = smp.png().getFileName().toString();
+            // 逐图比对结果缓存：这张原图（文件名 + 大小 + 修改时间 + 所属分类尺寸）算过的整行直接取用
+            double[] cached = tab.row(name, smp.mtime(), smp.size(), own.w(), own.h());
+            if (cached != null && cached.length == gn) {
+                m[i] = cached;   // 连原图都不解码
+                reuse.incrementAndGet();
+                return;
+            }
             String wkey = smp.png().toString();
             FrameClassifier.FrameWork work = works.get(wkey);
             if (work == null) {
@@ -1079,8 +1132,17 @@ public class OptimizeService {
                 FrameClassifier.FrameWork prev = works.putIfAbsent(wkey, built);
                 work = prev == null ? built : prev;
             }
+            double[] row = new double[gn];
             for (int j = 0; j < gn; j++) {
-                FrameClassifier.CachedPx art = arts.get(j);
+                // 整表复用路径没预先解码产物：上次记着「没有产物 / 解不开」的列算 100，
+                // 其余按需解码一次（同一列解出来的图全行共用，只有真没命中缓存的行才会走到）
+                FrameClassifier.CachedPx art = null;
+                if (tab.decoded(j)) {
+                    art = arts.get(j) != null ? arts.get(j) : lazyArts.computeIfAbsent(j, k -> {
+                        Path fa = Path.of(groups.get(k).dir(), file);
+                        return Files.isRegularFile(fa) ? classifier.verifyArtifact(fa, kind) : null;
+                    });
+                }
                 double s;
                 if (art == null) {
                     s = 100.0;   // 无产物 = 无判别点，与空图同口径判完全不匹配
@@ -1092,9 +1154,14 @@ public class OptimizeService {
                             c.attnLeft() == null ? 0 : c.attnLeft(),
                             c.attnTop() == null ? 0 : c.attnTop()));
                 }
-                m[i][j] = s;
+                row[j] = s;
             }
+            m[i] = row;
+            tab.fill(name, smp.mtime(), smp.size(), own.w(), own.h(), row);
         });
+        if (r != null) {
+            r.reuseRows += reuse.get();
+        }
         return new Matrix(m, valid);
     }
 
@@ -1765,10 +1832,21 @@ public class OptimizeService {
             String st = m.getState() == null ? "" : m.getState().trim();
             Ctx own = st.isEmpty() ? null : byState.get(st);
             if (own != null) {
-                out.add(new Smp(png, own));
+                long[] at = stat(png);
+                out.add(new Smp(png, own, at[0], at[1]));
             }
         }
         return out;
+    }
+
+    /** 文件的大小 / 修改时间（-1 = 读不到）；逐图比对结果的缓存键用它，故每次扫描只 stat 一遍。 */
+    private static long[] stat(Path p) {
+        try {
+            BasicFileAttributes at = Files.readAttributes(p, BasicFileAttributes.class);
+            return new long[]{at.lastModifiedTime().toMillis(), at.size()};
+        } catch (IOException e) {
+            return new long[]{-1, 0};
+        }
     }
 
     private static Integer intOf(Object o) {
