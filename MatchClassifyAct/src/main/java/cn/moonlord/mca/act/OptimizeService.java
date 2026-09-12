@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -58,7 +59,7 @@ import java.util.stream.Stream;
  * <li>归属分类在本算法参与特征上没有「可判定的产物」（无有效产物、或产物存在但比对不了）的样本整张跳过、
  * 不进分母（与特征验证的「可匹配样本」同口径）。</li>
  * </ul>
- * 一次验证跑完全部算法，给出整体与分类级匹配正确率 + 无法区分率。评价口径与特征验证的 D / E 完全一致：
+ * 一次验证（默认全部算法，也可只重算指定的那几个）给出整体与分类级匹配正确率 + 无法区分率。评价口径与特征验证的 D / E 完全一致：
  * <b>匹配正确率 = 命中 / (可判定样本 − 无法区分) = 命中 / (命中 + 判错)</b>（无法区分既不算命中也不算判错，
  * 不进这个分母，只回答「能给出结果的样本里判对了多少」）；<b>无法区分率 = 无法区分 / 可判定样本</b>
  * （分母含无法区分样本）。与特征验证同理：逐张按需解码算矩阵、用后即释放（常驻缓存回收交给 JVM 的 GC），
@@ -76,6 +77,7 @@ import java.util.stream.Stream;
  * 各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——第一轮在 [0, {@value #Y_MAX}] 之间整段随机，第二轮在第一轮定下来的值附近
  * 按 ±0.001 ~ ±0.1（{@value #TUNE_FINE_STEPS} 档）就近微调；只要这次改动让该算法的<b>匹配正确率上升</b>或
  * <b>无法区分率下降</b>就采纳，并把最新权重保存到 {@code classify/opt-weights.json}（可手删，删了回到全 1）。
+ * 某个权重这一遍里采纳过更好的值，就从这个新值再整段来一遍（最多追加 {@value #TUNE_REPEAT} 遍），避免只试一遍就停在局部最优。
  * 另有一份<b>特征选择 + 权重数值快照</b>始终保存到 {@code summary/opt-weights.json}（每次跑完覆写，
  * 供后续功能 / 开发验证直接读取，见 {@link #snapshotFile()}）。
  * <b>单一特征算法的权重固定 1</b>：界面不可编辑、也不参与自动调整——只有一个特征时 Y 在 Σ「X × Y」里被约掉，
@@ -128,6 +130,10 @@ public class OptimizeService {
 
     /** 就近微调的步长档数：±1 ~ ±{@value #TUNE_FINE_STEPS} 个 0.001（即 ±0.001 ~ ±0.1）。 */
     private static final int TUNE_FINE_STEPS = 100;
+
+    /** 某个权重这一遍（{@value #TUNE_ROUNDS} 轮各 {@value #TUNE_TRIALS} 次）里找到更好的值就再整段来一遍：
+     *  最多追加 {@value} 遍（单个权重最多试 1 + {@value} 遍），避免只试一遍就停在局部最优。 */
+    private static final int TUNE_REPEAT = 3;
 
     /** 权重 Y 的步进 / 精度：区间 [0, {@value #Y_MAX}] 内精确到 0.001（界面输入框 step、手输截断、自动调整的随机取值、落盘与回读都按它统一）。 */
     private static final int Y_SCALE = 1000;
@@ -225,8 +231,12 @@ public class OptimizeService {
         public volatile int allTotal;
         /** 任务类型：verify = 验证所有算法；tune = 自动调整参数（阶段文案与完成提示都按它区分）。 */
         public volatile String mode = "verify";
+        /** 本轮只重算的算法 id（空 = 全部）：改某个权重时只重算它，其余算法沿用上次结果、界面也不标「等待刷新」。 */
+        public volatile List<String> only = List.of();
         /** 自动调整参数阶段：当前权重所属特征 kind、本轮名称（随机 / 微调）、第几次尝试（共 trials 次）、本次 Y、基线与已找到的最好结果。 */
         public volatile String tuneKind;
+        /** 当前权重试到第几遍（0 = 第一遍；这一遍采纳了更好的值就再追加一遍，最多 {@value #TUNE_REPEAT} 遍）。 */
+        public volatile int tunePass;
         public volatile String trialRound;
         public volatile int trial;
         public volatile int trials;
@@ -269,6 +279,8 @@ public class OptimizeService {
         public volatile int trials = TUNE_TRIALS;
         /** 被采纳（正确率上升或无法区分率下降）并落盘的权重调整次数。 */
         public volatile int improved;
+        /** 因找到更好的值而追加的重跑遍数合计（单个权重最多追加 {@value #TUNE_REPEAT} 遍）。 */
+        public volatile int repeats;
         /** 权重文件的落盘路径。 */
         public volatile String file;
         /** 记录时的验证指纹（与当前不一致 = 已标注 / 汇总分析有变动，摘要即过期）。 */
@@ -348,7 +360,7 @@ public class OptimizeService {
     /**
      * 启动一次「自动调整参数」：逐算法逐权重分两轮各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——先整段随机，
      * 再在定下来的值附近按 ±0.001 ~ ±0.1 就近微调；只要这次改动让该算法的匹配正确率上升或无法区分率下降
-     * 就采纳并落盘；单一特征算法的权重固定 1、不参与调整。
+     * 就采纳并落盘，随后就这个权重再整段来一遍（最多追加 {@value #TUNE_REPEAT} 遍）；单一特征算法的权重固定 1、不参与调整。
      *
      * @param weightsByAlgo 起点权重（界面上的 Y，key = 算法 id，value 与算法特征顺序一一对应；缺省 = 文件里保存的 / 1）
      * @return 是否成功启动
@@ -366,12 +378,13 @@ public class OptimizeService {
     }
 
     /**
-     * 启动一次「全部算法」的匹配正确率验证。
+     * 启动一次匹配正确率验证：改了某个算法的权重就只重算它（其余算法直接沿用上次结果里的行，数值不会变）。
      *
      * @param weightsByAlgo 界面上的权重 Y（key = 算法 id，value 与算法特征顺序一一对应；缺省 = 1，超出 [0, 2] 截断）
+     * @param onlyIds 只重算这些算法 id（空 / null = 全部算法；上次结果里没有可复用行的算法照样算）
      * @return 是否成功启动
      */
-    public synchronized boolean start(Map<String, List<Double>> weightsByAlgo) {
+    public synchronized boolean start(Map<String, List<Double>> weightsByAlgo, Collection<String> onlyIds) {
         if (running()) {
             return false;
         }
@@ -380,8 +393,9 @@ public class OptimizeService {
             return false;
         }
         Run r = new Run();
+        r.only = onlyIds == null ? List.of() : onlyIds.stream().filter(s -> s != null && !s.isBlank()).toList();
         run = r;
-        exec.submit(() -> doRun(r, algos, weightsByAlgo == null ? Map.of() : weightsByAlgo));
+        exec.submit(() -> doRun(r, algos, weightsByAlgo == null ? Map.of() : weightsByAlgo, r.only));
         return true;
     }
 
@@ -450,7 +464,9 @@ public class OptimizeService {
             task.put("reuseRows", r.reuseRows);     // 本轮直接复用逐图比对结果的样本张数
             task.put("reuseKinds", r.reuseKinds);   // 本轮整表复用的特征数
             task.put("mode", r.mode);
+            task.put("only", r.only);                // 只重算的算法 id（空 = 全部）：界面把进度与「等待刷新」收敛到它上面
             task.put("tuneKind", r.tuneKind);
+            task.put("tunePass", r.tunePass);         // 当前权重试到第几遍（0 起）：找到更好的值就再整段来一遍
             task.put("trialRound", r.trialRound);
             task.put("trial", r.trial);
             task.put("trials", r.trials);
@@ -492,6 +508,7 @@ public class OptimizeService {
             tm.put("weights", t.weights);
             tm.put("trials", t.trials);
             tm.put("improved", t.improved);
+            tm.put("repeats", t.repeats);             // 找到更好的值后追加的重跑遍数合计（界面统计行按它交代多花的工夫）
             tm.put("file", t.file);
             tm.put("stale", staleOf(t.fp, t.sig, fp, live));
             tm.put("algos", t.algos);
@@ -785,8 +802,34 @@ public class OptimizeService {
 
     // ---------------------------------------------------------------- 验证
 
-    private void doRun(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo) {
-        Env env = prepare(r, algos);
+    private void doRun(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo, List<String> onlyIds) {
+        // 只重算被改动的算法（onlyIds）：其余算法直接沿用上次结果里的行 —— 同一批样本 / 产物、同一份比对矩阵、
+        // 权重又没变，重算只会得到一模一样的数值，省下时间的同时界面也不必把它们标成「等待刷新」
+        String sig = sigOf(algos);
+        Map<String, Map<String, Object>> prevRows = new HashMap<>();
+        Result prev = result;
+        if (prev != null && prev.finished && prev.error == null && prev.algos != null
+                && prev.fp != null && prev.fp.equals(verify.fingerprint()) && sig.equals(prev.sig)) {
+            for (Map<String, Object> row : prev.algos) {
+                prevRows.put(String.valueOf(row.get("id")), row);
+            }
+        }
+        Set<String> only = new LinkedHashSet<>(onlyIds == null ? List.of() : onlyIds);
+        List<Algo> todo = new ArrayList<>();
+        for (Algo a : algos) {
+            if (only.isEmpty() || only.contains(a.id) || !prevRows.containsKey(a.id)) {
+                todo.add(a);   // 没点名只算谁、或就是被改动的那个、或上次结果里没有它的行（没跑过 / 口径变了）
+            }
+        }
+        if (todo.isEmpty()) {
+            // 点名的算法全都可直接复用（权重其实没改 / id 已不存在）：不跑评估，上次结果原样生效
+            r.stage = "完成";
+            r.finished = true;
+            r.endedMs = System.currentTimeMillis();
+            r.running = false;
+            return;
+        }
+        Env env = prepare(r, todo);
         if (env == null) {
             return;
         }
@@ -795,23 +838,28 @@ public class OptimizeService {
         int gn = groups.size();
         int sn = samples.size();
         int baseEval = env.kinds().size() * sn;
-        r.allTotal = baseEval + algos.size() * sn;
+        r.allTotal = baseEval + todo.size() * sn;
         r.stage = "算法评估";
-        r.total = algos.size();
+        r.total = todo.size();
         r.done = 0;
         r.processed = 0;
         Map<String, AlgoEval> evals = new HashMap<>();
-        List<Map<String, Object>> rows = new ArrayList<>();
+        Map<String, Map<String, Object>> fresh = new HashMap<>();
         long t0 = System.currentTimeMillis();
-        for (int ai = 0; ai < algos.size(); ai++) {
-            Algo a = algos.get(ai);
+        for (int ai = 0; ai < todo.size(); ai++) {
+            Algo a = todo.get(ai);
             r.cur = a.name;
             r.processed = 0;
-            rows.add(evalOf(evals, a, env.mats(), gn, sn)
+            fresh.put(a.id, evalOf(evals, a, env.mats(), gn, sn)
                     .eval(weightsByAlgo.get(a.id), groups, samples, r, baseEval + ai * sn));
             r.done = ai + 1;
             r.processed = sn;
             r.allDone = baseEval + (ai + 1) * sn;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Algo a : algos) {
+            Map<String, Object> row = fresh.get(a.id);
+            rows.add(row != null ? row : prevRows.get(a.id));   // 行序与算法顺序一致（界面按 id 取行）
         }
         Result res = new Result();
         res.finished = true;
@@ -819,7 +867,7 @@ public class OptimizeService {
         res.samples = sn;
         res.groups = gn;
         res.fp = env.fp();
-        res.sig = sigOf(algos);
+        res.sig = sig;
         res.algos = rows;
         result = res;
         // 完整缓存 + 特征选择 / 权重快照：下次启动只要「已标注 / 汇总分析 / 特征验证」都没变就直接复用
@@ -902,7 +950,8 @@ public class OptimizeService {
      * 自动调整参数：逐算法逐权重分两轮各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——第一轮在 0~{@value #Y_MAX} 之间整段随机，
      * 第二轮在第一轮定下来的值附近按 ±0.001 ~ ±0.1（{@value #TUNE_FINE_STEPS} 档）就近微调（5 个特征的算法即 1000 次评分）；
      * 只要这次改动让该算法的
-     * <b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳并立刻落盘；单一特征算法的权重固定 1、不参与调整。
+     * <b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳并立刻落盘，随后就这个权重再整段来一遍（最多追加 {@value #TUNE_REPEAT} 遍：
+     * 上面这两轮合称「一遍」）；单一特征算法的权重固定 1、不参与调整。
      * 全部调完用最终权重重算一遍全部算法：界面直接看到新数值、新权重（矩阵已就绪，只跑评分）。
      */
     private void doTune(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo) {
@@ -938,6 +987,8 @@ public class OptimizeService {
         int offset = baseEval;
         int done = 0;
         int improved = 0;
+        int repeats = 0;
+        int passCost = TUNE_TRIALS * TUNE_ROUNDS * sn;   // 一个权重「一遍」的试探量（两轮各 TUNE_TRIALS 次 × 样本张数），追加一遍就多这一份
         Map<String, Saved> savedNow = new LinkedHashMap<>(savedWeights());
         List<Map<String, Object>> summary = new ArrayList<>();
         Random rnd = new Random();
@@ -966,56 +1017,67 @@ public class OptimizeService {
             for (int i = 0; a.features.size() >= 2 && i < a.features.size(); i++) {
                 r.done = ++done;
                 r.tuneKind = a.features.get(i).kind;
-                double curY = y[i];   // 本轮起点：第一轮 = 原值，第二轮 = 第一轮定格下来的值
-                // 两轮各试 TUNE_TRIALS 次：第一轮整段随机（0~Y_MAX），第二轮在起点附近 ±0.001 ~ ±0.1 就近微调
-                for (int round = 0; round < TUNE_ROUNDS; round++) {
-                    r.trialRound = round == 0 ? "随机" : "微调";
-                    r.trial = 0;
-                    r.trialY = null;
-                    double pickY = Double.NaN;
-                    double pickAcc = 0;
-                    double pickTie = 0;
-                    for (int t = 1; t <= TUNE_TRIALS; t++) {
-                        double cand;
-                        if (round == 0) {
-                            cand = rnd.nextInt((int) (Y_MAX * Y_SCALE) + 1) / (double) Y_SCALE;   // [0, 2] 整段随机，精确到 0.001
+                double curY = y[i];   // 起点：第一遍 = 原值，之后 = 上一遍定格下来的值
+                // 一遍 = 两轮各试 TUNE_TRIALS 次：第一轮整段随机（0~Y_MAX），第二轮在起点附近 ±0.001 ~ ±0.1 就近微调；
+                // 这一遍只要采纳过（说明找着了更好的 Y）就从这个新值再整段来一遍，最多追加 TUNE_REPEAT 遍
+                for (int pass = 0; ; pass++) {
+                    r.tunePass = pass;
+                    boolean adopted = false;
+                    for (int round = 0; round < TUNE_ROUNDS; round++) {
+                        r.trialRound = round == 0 ? "随机" : "微调";
+                        r.trial = 0;
+                        r.trialY = null;
+                        double pickY = Double.NaN;
+                        double pickAcc = 0;
+                        double pickTie = 0;
+                        for (int t = 1; t <= TUNE_TRIALS; t++) {
+                            double cand;
+                            if (round == 0) {
+                                cand = rnd.nextInt((int) (Y_MAX * Y_SCALE) + 1) / (double) Y_SCALE;   // [0, 2] 整段随机，精确到 0.001
+                            } else {
+                                int step = 1 + rnd.nextInt(TUNE_FINE_STEPS);          // 1~100 档
+                                double delta = step / (double) Y_SCALE * (rnd.nextBoolean() ? 1 : -1);
+                                cand = roundY(clampY(curY + delta));                   // ±0.001 ~ ±0.1，精确到 0.001
+                            }
+                            y[i] = cand;
+                            r.trial = t;
+                            r.trialY = cand;
+                            r.processed = 0;
+                            Map<String, Object> rr = ev.eval(ys(y), groups, samples, r, offset);
+                            offset += sn;
+                            double ca = accOf(rr.get("accuracy"));
+                            double ct = tieOf(rr.get("tieRate"));
+                            // 采纳口径（用户指定）：正确率上升、或无法区分率下降；本轮候选里取「正确率更高、再比无法区分率更低」的那个
+                            if (ca <= acc + 1e-9 && ct >= tie - 1e-9) {
+                                continue;
+                            }
+                            if (Double.isNaN(pickY) || ca > pickAcc + 1e-9
+                                    || (Math.abs(ca - pickAcc) <= 1e-9 && ct < pickTie)) {
+                                pickY = cand;
+                                pickAcc = ca;
+                                pickTie = ct;
+                            }
+                        }
+                        if (Double.isNaN(pickY)) {
+                            y[i] = curY;   // 本轮没能改善：保持本轮起点
                         } else {
-                            int step = 1 + rnd.nextInt(TUNE_FINE_STEPS);          // 1~100 档
-                            double delta = step / (double) Y_SCALE * (rnd.nextBoolean() ? 1 : -1);
-                            cand = roundY(clampY(curY + delta));                   // ±0.001 ~ ±0.1，精确到 0.001
-                        }
-                        y[i] = cand;
-                        r.trial = t;
-                        r.trialY = cand;
-                        r.processed = 0;
-                        Map<String, Object> rr = ev.eval(ys(y), groups, samples, r, offset);
-                        offset += sn;
-                        double ca = accOf(rr.get("accuracy"));
-                        double ct = tieOf(rr.get("tieRate"));
-                        // 采纳口径（用户指定）：正确率上升、或无法区分率下降；本轮候选里取「正确率更高、再比无法区分率更低」的那个
-                        if (ca <= acc + 1e-9 && ct >= tie - 1e-9) {
-                            continue;
-                        }
-                        if (Double.isNaN(pickY) || ca > pickAcc + 1e-9
-                                || (Math.abs(ca - pickAcc) <= 1e-9 && ct < pickTie)) {
-                            pickY = cand;
-                            pickAcc = ca;
-                            pickTie = ct;
+                            y[i] = pickY;
+                            curY = pickY;   // 第二轮就在这个更好的值附近微调；下一遍的随机轮也从这个新值出发微调
+                            acc = pickAcc;
+                            tie = pickTie;
+                            adopted = true;
+                            improved++;
+                            savedNow.put(a.id, new Saved(kindsOf(a), ys(y)));
+                            saveWeights(savedNow);   // 采纳一次落一次盘：中途被杀也只是丢掉最后这一次调整
+                            r.bestAcc = acc < 0 ? null : round(acc);
+                            r.bestTie = round(tie);
                         }
                     }
-                    if (Double.isNaN(pickY)) {
-                        y[i] = curY;   // 本轮没能改善：保持本轮起点
-                    } else {
-                        y[i] = pickY;
-                        curY = pickY;   // 第二轮就在这个更好的值附近微调
-                        acc = pickAcc;
-                        tie = pickTie;
-                        improved++;
-                        savedNow.put(a.id, new Saved(kindsOf(a), ys(y)));
-                        saveWeights(savedNow);   // 采纳一次落一次盘：中途被杀也只是丢掉最后这一次调整
-                        r.bestAcc = acc < 0 ? null : round(acc);
-                        r.bestTie = round(tie);
+                    if (!adopted || pass >= TUNE_REPEAT) {
+                        break;   // 这一遍没能再改善（或已追加到上限）：这个权重到此为止
                     }
+                    repeats++;
+                    r.allTotal += passCost;   // 追加的这一遍也计入合计张数：进度条按真实工作量推进，不会提前走满
                 }
             }
             // 无论有没有改善都记下最终权重（文件即「当前生效的权重」；单一特征算法不进文件）
@@ -1032,6 +1094,7 @@ public class OptimizeService {
         r.total = algos.size();
         r.done = 0;
         r.tuneKind = null;
+        r.tunePass = 0;
         r.trialRound = null;
         r.trial = 0;
         r.trialY = null;
@@ -1068,6 +1131,7 @@ public class OptimizeService {
         t.weights = weightsTotal;
         t.trials = TUNE_TRIALS;
         t.improved = improved;
+        t.repeats = repeats;
         t.file = weightsFile().toString();
         t.fp = env.fp();
         t.sig = res.sig;
@@ -1082,8 +1146,8 @@ public class OptimizeService {
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
-        log.info("自动调整参数完成：试探 {} 个权重 × {} 轮 × {} 次，采纳 {} 个，权重写入 {}",
-                weightsTotal, TUNE_ROUNDS, TUNE_TRIALS, improved, t.file);
+        log.info("自动调整参数完成：试探 {} 个权重 × {} 轮 × {} 次（找到更好值后追加 {} 遍重跑），采纳 {} 个，权重写入 {}",
+                weightsTotal, TUNE_ROUNDS, TUNE_TRIALS, repeats, improved, t.file);
     }
 
     private void fail(Run r, String msg) {
@@ -1672,6 +1736,7 @@ public class OptimizeService {
                 t.weights = tn.path("weights").asInt(0);
                 t.trials = tn.path("trials").asInt(0);   // 旧缓存没这个字段：0 = 未知，界面按「若干次」描述、不写死数字
                 t.improved = tn.path("improved").asInt(0);
+                t.repeats = tn.path("repeats").asInt(0);   // 旧缓存没这个字段：0 = 没有追加过重跑
                 t.file = textOf(tn, "file");
                 t.fp = textOf(tn, "fp");
                 t.sig = sig;
@@ -1714,6 +1779,7 @@ public class OptimizeService {
             tm.put("weights", t.weights);
             tm.put("trials", t.trials);
             tm.put("improved", t.improved);
+            tm.put("repeats", t.repeats);
             tm.put("file", t.file);
             tm.put("fp", t.fp);
             tm.put("algos", t.algos);

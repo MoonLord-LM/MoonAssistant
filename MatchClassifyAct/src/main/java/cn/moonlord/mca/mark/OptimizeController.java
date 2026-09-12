@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 算法调优（把特征组合成匹配算法并验证分类匹配正确率）：状态 / 启动一次「全部算法」验证 / 启动一次「自动调整参数」。
+ * 算法调优（把特征组合成匹配算法并验证分类匹配正确率）：状态 / 启动一次验证（可只重算指定算法） / 启动一次「自动调整参数」。
  */
 @RestController
 @RequestMapping("/api/optimize")
@@ -29,7 +29,10 @@ public class OptimizeController {
         return optimize.status();
     }
 
-    /** 启动一次验证：weights = {算法 id: [权重 Y...]}（与算法特征顺序一一对应，缺省 1）。 */
+    /**
+     * 启动一次验证：weights = {算法 id: [权重 Y...]}（与算法特征顺序一一对应，缺省 1）；
+     * only = 只重算这些算法 id（缺省 / 空 = 全部算法；改了某个算法的权重时只传它，其余算法数值不变）。
+     */
     @PostMapping("/start")
     public Map<String, Object> start(@RequestBody(required = false) Map<String, Object> body) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -38,7 +41,7 @@ public class OptimizeController {
             out.put("error", "请先在「特征验证」视图完成一次验证（算法由验证结果组合而来）");
             return out;
         }
-        out.put("started", optimize.start(parseWeights(body)));
+        out.put("started", optimize.start(parseWeights(body), parseOnly(body)));
         return out;
     }
 
@@ -55,6 +58,20 @@ public class OptimizeController {
             return out;
         }
         out.put("started", optimize.autoStart(parseWeights(body)));
+        return out;
+    }
+
+    /** 解析 only：只重算的算法 id 列表（缺省 / 空 = 全部算法）。 */
+    private static List<String> parseOnly(Map<String, Object> body) {
+        List<String> out = new ArrayList<>();
+        if (body == null || !(body.get("only") instanceof List<?> raw)) {
+            return out;
+        }
+        for (Object o : raw) {
+            if (o != null && !String.valueOf(o).isBlank()) {
+                out.add(String.valueOf(o).trim());
+            }
+        }
         return out;
     }
 
