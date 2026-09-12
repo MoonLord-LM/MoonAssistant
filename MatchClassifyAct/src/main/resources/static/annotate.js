@@ -5384,7 +5384,8 @@ const execSleep = ms => new Promise(r => setTimeout(r, ms));
 const execModeZh = m => (m === "screen" ? "前台点击" : "后台消息");
 
 /* 状态提示：粉色的 <b>…</b> 是「高亮的那半句」，一律独占一行 —— 由 CSS 的
-   `.execAutoState b{display:block}` 负责（前后自动断行），各提示语里不用再写 <br>（用户指定） */
+   `.execAutoState b{display:block}` 负责（前后自动断行），各提示语里不用再写 <br>（用户指定）。
+   另：**灰色正文（<b> 之前那半句）末尾不写「。」或「…」**，标点只出现在粉字里（用户指定） */
 function execAutoStatus(html){
   const el = $("execAutoState");
   if(!el) return;
@@ -5443,11 +5444,11 @@ async function execAutoLoop(){
     round++;
     execAutoRound = round;             // 记住当前轮次，供「已停止」提示交代停在第几轮
     // 1) 截图并识别：/refresh 为同步一轮，返回即「识别完成」，随后渲染画面与右侧结果
-    execAutoStatus("第 " + round + " 轮：正在截图识别…");
+    execAutoStatus("第 " + round + " 轮：正在截图识别");
     const j = await execGet("/api/execute/refresh", { method:"POST" });
     if(!(execAutoOn && seq === execAutoSeq)) return;
     if(!j){
-      const k1 = await execAutoWait('第 ' + round + ' 轮：识别接口不可用。<b>{s} 秒后重试…</b>', 3, seq);
+      const k1 = await execAutoWait('第 ' + round + ' 轮：识别接口不可用<b>{s} 秒后重试…</b>', 3, seq);
       if(!k1) return;
       continue;
     }
@@ -5461,34 +5462,34 @@ async function execAutoLoop(){
           : (j.state
               ? (j.action === "click"
                   ? "该分类尚无点击坐标"
-                  : "该分类无「鼠标点击」动作")
+                  : "无需动作")
               : "未识别出已标注分类（可能尚无同尺寸样本），不动作");
-      const k1 = await execAutoWait('第 ' + round + ' 轮：' + why + '。<b>{s} 秒后开始下一轮…</b>', 3, seq);
+      const k1 = await execAutoWait('第 ' + round + ' 轮：' + why + '<b>{s} 秒后开始下一轮…</b>', 3, seq);
       if(!k1) return;
       continue;
     }
     // 2) 识别出可点击动作：留 3 秒确认时间（可查看画面/右侧结果，随时可点按钮停止）
     //    分类名不在状态行里重复 —— 画面准星 + 右栏「识别结果」已经写明识别成哪个分类（用户指定）
-    const keep2 = await execAutoWait('第 ' + round + ' 轮：点击 (' + j.left + ',' + j.top + ')。'
+    const keep2 = await execAutoWait('第 ' + round + ' 轮：即将点击 (' + j.left + ',' + j.top + ')'
         + '<b>{s} 秒后按「' + execModeZh(execClickMode) + '」执行…</b>', 3, seq);
     if(!keep2) return;
     // 3) 按所选前台 / 后台方式直接执行本轮已识别结果（后端不再重复截图识别）
-    execAutoStatus('第 ' + round + ' 轮：正在按「' + execModeZh(execClickMode) + '」执行点击…');
+    execAutoStatus('第 ' + round + ' 轮：正在执行点击');
     const r = await execGet("/api/execute/act", { method:"POST" });
     await execLoadLatest();            // 同步展示最近结果（点击不产生新识别）
     if(!(execAutoOn && seq === execAutoSeq)) return;
     if(!r){
-      const k3 = await execAutoWait('第 ' + round + ' 轮：执行请求失败（后端不可用）。<b>{s} 秒后开始下一轮…</b>', 2, seq);
+      const k3 = await execAutoWait('第 ' + round + ' 轮：执行请求失败（后端不可用）<b>{s} 秒后开始下一轮…</b>', 3, seq);
       if(!k3) return;
     } else if(r.ok){
       // 4) 动作完成：留 3 秒游戏响应等待时间再拍下一张（分两行：上一行交代这次点击怎么发的，下一行交代何时进下一轮）
       //    同样不报分类名（右栏结果区已展示）
-      const k3 = await execAutoWait('第 ' + round + ' 轮：已执行点击（' + execModeZh(execClickMode)
-          + '）。<b>{s} 秒游戏响应等待后开始下一轮…</b>', 3, seq);
+      const k3 = await execAutoWait('第 ' + round + ' 轮：已点击（' + execModeZh(execClickMode)
+          + '）<b>{s} 秒后开始下一轮…</b>', 3, seq);
       if(!k3) return;
     } else {
       const k3 = await execAutoWait('第 ' + round + ' 轮：本轮未能执行点击'
-          + (r.message ? "（" + execEsc(r.message) + "）" : "") + '。<b>{s} 秒后开始下一轮…</b>', 2, seq);
+          + (r.message ? "（" + execEsc(r.message) + "）" : "") + '<b>{s} 秒后开始下一轮…</b>', 3, seq);
       if(!k3) return;
     }
   }
