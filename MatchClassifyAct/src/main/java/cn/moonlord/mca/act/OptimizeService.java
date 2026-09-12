@@ -45,7 +45,7 @@ import java.util.stream.Stream;
  * <li><b>单一最佳+70+%正确率特征</b>：同上，种子换成 D ≥ 70%（含 100%）的全部特征。补不满时给出界面提示。</li>
  * </ol>
  *
- * <p>每个特征的基础分 {@code X = B（自分类平均匹配值）− C（其它分类平均匹配值）}；界面权重 Y ∈ [0, 2]，默认 1。
+ * <p>每个特征的基础分 {@code X = B（自分类平均匹配值）− C（其它分类平均匹配值）}；界面权重 Y ∈ [0, 10]，默认 1。
  * 某分类的总分 = Σ「(100 − 不匹配占比) × X × Y」/ Σ「X × Y」（只累加该分类能判定的特征），总分唯一最高的分类
  * 即判定结果，与样本归属分类一致即命中。
  *
@@ -73,11 +73,16 @@ import java.util.stream.Stream;
  * 与「算法组合口径没变（{@code sig}）」。三者都没变时进程启动即恢复上次结果（界面「已计算」，无需重算）；
  * 任何一处有变动就把结果标记为过期，界面提示重新计算。
  *
- * <p><b>自动调整参数</b>（{@link #autoStart}）只在「验证所有算法」跑完之后才允许启动：对每个可调的权重 Y 分两轮
- * 各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——第一轮在 [0, {@value #Y_MAX}] 之间整段随机，第二轮在第一轮定下来的值附近
- * 按 ±0.001 ~ ±0.1（{@value #TUNE_FINE_STEPS} 档）就近微调；只要这次改动让该算法的<b>匹配正确率上升</b>或
+ * <p><b>自动调整参数</b>（{@link #autoStart}）只在「验证所有算法」跑完之后才允许启动：对每个可调的权重 Y 分三轮
+ * 各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——第一轮在 [0, {@value #Y_MAX}] 之间整段随机，第二轮按
+ * {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX} 递增 {@value #TUNE_GRID_STEP} 的固定网格逐个走一遍（{@value #TUNE_TRIALS} 个值），
+ * 第三轮在当前最好值附近按 ±0.001 ~ ±0.1（{@value #TUNE_FINE_STEPS} 档）就近微调；最终留下的就是这
+ * {@value #TUNE_TRIALS} × {@value #TUNE_ROUNDS} = 300 次里找到的最优值。只要这次改动让该算法的<b>匹配正确率上升</b>或
  * <b>无法区分率下降</b>就采纳，并把最新权重保存到 {@code classify/opt-weights.json}（可手删，删了回到全 1）。
- * 某个权重这一遍里采纳过更好的值，就从这个新值再整段来一遍（最多追加 {@value #TUNE_REPEAT} 遍），避免只试一遍就停在局部最优。
+ * 某个权重这一遍里采纳过更好的值，就再<b>只跑随机轮</b>做追加重试（一遍 {@value #TUNE_RETRY_TRIALS} 个随机值，
+ * 最多追加 {@value #TUNE_REPEAT} 遍），避免只试一遍就停在局部最优。
+ * 每个算法调完还有一次<b>四舍五入收尾</b>：把整条权重依次按 0.01 → 0.1 → 1 四舍五入后重算一遍，只要匹配正确率与
+ * 无法区分率<b>一点没变</b>，就说明多出来的小数位对结果没有影响，直接用四舍五入后的值（最终权重更简单直白）。
  * 另有一份<b>特征选择 + 权重数值快照</b>始终保存到 {@code summary/opt-weights.json}（每次跑完覆写，
  * 供后续功能 / 开发验证直接读取，见 {@link #snapshotFile()}）。
  * <b>单一特征算法的权重固定 1</b>：界面不可编辑、也不参与自动调整——只有一个特征时 Y 在 Σ「X × Y」里被约掉，
@@ -122,24 +127,37 @@ public class OptimizeService {
     /** JSON 读写（权重文件的解析与落盘：键名 / 数值都由它正规转义，避免手写拼接）。 */
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** 每个权重每一轮试探的次数（两轮：先整段随机、再就近微调，都精确到 0.001）。 */
+    /** 每个权重第一遍每一轮试探的次数（三轮：先整段随机、再走一遍固定网格、最后就近微调，都精确到 0.001）。 */
     private static final int TUNE_TRIALS = 100;
 
-    /** 权重试探的轮数：第一轮在 0~{@value #Y_MAX} 之间整段随机，第二轮在定下来的值附近 ±0.001 ~ ±0.1 就近微调。 */
-    private static final int TUNE_ROUNDS = 2;
+    /** 权重试探的轮数：第一轮在 0~{@value #Y_MAX} 之间整段随机，第二轮按 {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX}
+     *  递增 {@value #TUNE_GRID_STEP} 的固定网格逐个走一遍，第三轮在当前最好值附近 ±0.001 ~ ±0.1 就近微调。 */
+    private static final int TUNE_ROUNDS = 3;
 
     /** 就近微调的步长档数：±1 ~ ±{@value #TUNE_FINE_STEPS} 个 0.001（即 ±0.001 ~ ±0.1）。 */
     private static final int TUNE_FINE_STEPS = 100;
 
-    /** 某个权重这一遍（{@value #TUNE_ROUNDS} 轮各 {@value #TUNE_TRIALS} 次）里找到更好的值就再整段来一遍：
-     *  最多追加 {@value} 遍（单个权重最多试 1 + {@value} 遍），避免只试一遍就停在局部最优。 */
+    /** 追加重试的随机数个数：第一遍里找到更好的值才跑，且只跑随机轮、随机值个数换成它
+     *  （每追加一遍 = {@value} 个 [0, {@value #Y_MAX}] 的随机值，精确到 0.001），网格轮与微调轮不再重复跑。 */
+    private static final int TUNE_RETRY_TRIALS = 300;
+
+    /** 追加重试的遍数上限：某个权重这一遍（{@value #TUNE_ROUNDS} 轮各 {@value #TUNE_TRIALS} 次）里找到更好的值就
+     *  再随机试 {@value #TUNE_RETRY_TRIALS} 个值，又有改善就继续追加，最多 {@value} 遍
+     *  （单个权重最多 {@value #TUNE_TRIALS} × {@value #TUNE_ROUNDS} + {@value} × {@value #TUNE_RETRY_TRIALS} 次）。 */
     private static final int TUNE_REPEAT = 3;
+
+    /** 四舍五入收尾的精度档（依次 0.01 → 0.1 → 1）：每个算法调完把整条权重按档四舍五入后重算一遍，
+     *  匹配正确率与无法区分率一点没变就用四舍五入后的值——少的小数位对结果没影响，权重就留更简单直白的那个。 */
+    private static final double[] TUNE_SIMPLIFY = {0.01, 0.1, 1.0};
 
     /** 权重 Y 的步进 / 精度：区间 [0, {@value #Y_MAX}] 内精确到 0.001（界面输入框 step、手输截断、自动调整的随机取值、落盘与回读都按它统一）。 */
     private static final int Y_SCALE = 1000;
 
     /** 权重 Y 的上限（下限恒 0）：界面输入框 max、手输截断、自动调整的整段随机取值与就近微调的夹取都按它；前端同名常量 {@code OPT_Y_MAX} 必须同值。 */
-    private static final double Y_MAX = 2.0;
+    private static final double Y_MAX = 10.0;
+
+    /** 第二轮（固定网格轮）的步长：从 {@value} 起每 {@value} 一个值、到 {@value #Y_MAX} 正好 {@value #TUNE_TRIALS} 个（0.1、0.2、…、10）。 */
+    private static final double TUNE_GRID_STEP = Y_MAX / TUNE_TRIALS;
 
     /** 权重文件名（与去重缓存同放 classify/：可手删、随 *.json 一并忽略）。 */
     private static final String WEIGHTS_FILE = "opt-weights.json";
@@ -233,9 +251,9 @@ public class OptimizeService {
         public volatile String mode = "verify";
         /** 本轮只重算的算法 id（空 = 全部）：改某个权重时只重算它，其余算法沿用上次结果、界面也不标「等待刷新」。 */
         public volatile List<String> only = List.of();
-        /** 自动调整参数阶段：当前权重所属特征 kind、本轮名称（随机 / 微调）、第几次尝试（共 trials 次）、本次 Y、基线与已找到的最好结果。 */
+        /** 自动调整参数阶段：当前权重所属特征 kind、本轮名称（随机 / 网格 / 微调）、第几次尝试（共 trials 次）、本次 Y、基线与已找到的最好结果。 */
         public volatile String tuneKind;
-        /** 当前权重试到第几遍（0 = 第一遍；这一遍采纳了更好的值就再追加一遍，最多 {@value #TUNE_REPEAT} 遍）。 */
+        /** 当前权重试到第几遍（0 = 第一遍三轮；这一遍采纳了更好的值就再只跑随机轮追加一遍，最多 {@value #TUNE_REPEAT} 遍）。 */
         public volatile int tunePass;
         public volatile String trialRound;
         public volatile int trial;
@@ -273,14 +291,16 @@ public class OptimizeService {
         public volatile boolean finished;
         public volatile String error;
         public volatile long costMs;
-        /** 试探过的权重个数（每个权重两轮各试 {@value #TUNE_TRIALS} 次）。 */
+        /** 试探过的权重个数（每个权重第一遍 {@value #TUNE_ROUNDS} 轮各试 {@value #TUNE_TRIALS} 次，有改善再追加只跑随机的重试）。 */
         public volatile int weights;
-        /** 每轮试探次数（随结果落盘并下发界面：结果卡 / 进度文案都按它显示，不写死数字）。 */
+        /** 第一遍每轮试探次数（随结果落盘并下发界面：结果卡 / 进度文案都按它显示，不写死数字）。 */
         public volatile int trials = TUNE_TRIALS;
         /** 被采纳（正确率上升或无法区分率下降）并落盘的权重调整次数。 */
         public volatile int improved;
-        /** 因找到更好的值而追加的重跑遍数合计（单个权重最多追加 {@value #TUNE_REPEAT} 遍）。 */
+        /** 因找到更好的值而追加的随机重试遍数合计（单个权重最多追加 {@value #TUNE_REPEAT} 遍，每遍 {@value #TUNE_RETRY_TRIALS} 个随机值）。 */
         public volatile int repeats;
+        /** 四舍五入收尾里变简单的权重个数（按 {@code TUNE_SIMPLIFY} 三档四舍五入后两率一点没变，就留下更简单的值）。 */
+        public volatile int simplified;
         /** 权重文件的落盘路径。 */
         public volatile String file;
         /** 记录时的验证指纹（与当前不一致 = 已标注 / 汇总分析有变动，摘要即过期）。 */
@@ -358,9 +378,12 @@ public class OptimizeService {
     }
 
     /**
-     * 启动一次「自动调整参数」：逐算法逐权重分两轮各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——先整段随机，
-     * 再在定下来的值附近按 ±0.001 ~ ±0.1 就近微调；只要这次改动让该算法的匹配正确率上升或无法区分率下降
-     * 就采纳并落盘，随后就这个权重再整段来一遍（最多追加 {@value #TUNE_REPEAT} 遍）；单一特征算法的权重固定 1、不参与调整。
+     * 启动一次「自动调整参数」：逐算法逐权重分三轮各试 {@value #TUNE_TRIALS} 次（精确到 0.001、共 300 次）——先整段随机、
+     * 再按 {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX} 递增的固定网格全走一遍、最后在当前最好值附近按 ±0.001 ~ ±0.1 就近微调；
+     * 最终留下的即这 300 次里找到的最优值：只要这次改动让该算法的匹配正确率上升或无法区分率下降就采纳并落盘，
+     * 随后就这个权重再只跑随机轮重试（一遍 {@value #TUNE_RETRY_TRIALS} 个随机值，最多追加 {@value #TUNE_REPEAT} 遍）；
+     * 每个算法调完再按 0.01 → 0.1 → 1 三档做一次四舍五入收尾（两率一点没变就用更简单的值）；
+     * 单一特征算法的权重固定 1、不参与调整。
      *
      * @param weightsByAlgo 起点权重（界面上的 Y，key = 算法 id，value 与算法特征顺序一一对应；缺省 = 文件里保存的 / 1）
      * @return 是否成功启动
@@ -380,7 +403,7 @@ public class OptimizeService {
     /**
      * 启动一次匹配正确率验证：改了某个算法的权重就只重算它（其余算法直接沿用上次结果里的行，数值不会变）。
      *
-     * @param weightsByAlgo 界面上的权重 Y（key = 算法 id，value 与算法特征顺序一一对应；缺省 = 1，超出 [0, 2] 截断）
+     * @param weightsByAlgo 界面上的权重 Y（key = 算法 id，value 与算法特征顺序一一对应；缺省 = 1，超出 [0, 10] 截断）
      * @param onlyIds 只重算这些算法 id（空 / null = 全部算法；上次结果里没有可复用行的算法照样算）
      * @return 是否成功启动
      */
@@ -466,7 +489,7 @@ public class OptimizeService {
             task.put("mode", r.mode);
             task.put("only", r.only);                // 只重算的算法 id（空 = 全部）：界面把进度与「等待刷新」收敛到它上面
             task.put("tuneKind", r.tuneKind);
-            task.put("tunePass", r.tunePass);         // 当前权重试到第几遍（0 起）：找到更好的值就再整段来一遍
+            task.put("tunePass", r.tunePass);         // 当前权重试到第几遍（0 起）：找到更好的值就再只跑随机轮重试一遍
             task.put("trialRound", r.trialRound);
             task.put("trial", r.trial);
             task.put("trials", r.trials);
@@ -509,6 +532,7 @@ public class OptimizeService {
             tm.put("trials", t.trials);
             tm.put("improved", t.improved);
             tm.put("repeats", t.repeats);             // 找到更好的值后追加的重跑遍数合计（界面统计行按它交代多花的工夫）
+            tm.put("simplified", t.simplified);       // 四舍五入收尾里变简单的权重个数（界面统计行按它交代权重被收尾到什么程度）
             tm.put("file", t.file);
             tm.put("stale", staleOf(t.fp, t.sig, fp, live));
             tm.put("algos", t.algos);
@@ -947,11 +971,16 @@ public class OptimizeService {
     }
 
     /**
-     * 自动调整参数：逐算法逐权重分两轮各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——第一轮在 0~{@value #Y_MAX} 之间整段随机，
-     * 第二轮在第一轮定下来的值附近按 ±0.001 ~ ±0.1（{@value #TUNE_FINE_STEPS} 档）就近微调（5 个特征的算法即 1000 次评分）；
+     * 自动调整参数：逐算法逐权重分三轮各试 {@value #TUNE_TRIALS} 次（精确到 0.001）——第一轮在 0~{@value #Y_MAX} 之间整段随机，
+     * 第二轮按 {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX} 递增 {@value #TUNE_GRID_STEP} 的固定网格逐个走一遍（{@value #TUNE_TRIALS} 个值），
+     * 第三轮在第二轮之后定下来的最好值附近按 ±0.001 ~ ±0.1（{@value #TUNE_FINE_STEPS} 档）就近微调（5 个特征的算法第一遍即
+     * 5 × {@value #TUNE_TRIALS} × {@value #TUNE_ROUNDS} = 1500 次评分，最终留下的就是这里面最好的那个值）；
      * 只要这次改动让该算法的
-     * <b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳并立刻落盘，随后就这个权重再整段来一遍（最多追加 {@value #TUNE_REPEAT} 遍：
-     * 上面这两轮合称「一遍」）；单一特征算法的权重固定 1、不参与调整。
+     * <b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳并立刻落盘；「一遍」= 上面这三轮，某个权重的这一遍里采纳过更好的值
+     * 就再追加<b>只跑随机轮</b>的重试（一遍 {@value #TUNE_RETRY_TRIALS} 个 [0, {@value #Y_MAX}] 的随机值，
+     * 最多追加 {@value #TUNE_REPEAT} 遍）；单一特征算法的权重固定 1、不参与调整。
+     * 每个算法调完再做一次<b>四舍五入收尾</b>：按 0.01 → 0.1 → 1 三档把整条权重四舍五入后重算一遍，
+     * 匹配正确率与无法区分率一点没变就用更简单的值（小数位对结果没影响就别留着）。
      * 全部调完用最终权重重算一遍全部算法：界面直接看到新数值、新权重（矩阵已就绪，只跑评分）。
      */
     private void doTune(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo) {
@@ -988,7 +1017,8 @@ public class OptimizeService {
         int done = 0;
         int improved = 0;
         int repeats = 0;
-        int passCost = TUNE_TRIALS * TUNE_ROUNDS * sn;   // 一个权重「一遍」的试探量（两轮各 TUNE_TRIALS 次 × 样本张数），追加一遍就多这一份
+        int simplified = 0;   // 四舍五入收尾里变简单的权重个数（两率一点没变才收）
+        int retryCost = TUNE_RETRY_TRIALS * sn;   // 追加的一遍只跑随机轮：TUNE_RETRY_TRIALS 个随机值 × 样本张数，追加一遍就多这一份
         Map<String, Saved> savedNow = new LinkedHashMap<>(savedWeights());
         List<Map<String, Object>> summary = new ArrayList<>();
         Random rnd = new Random();
@@ -1017,27 +1047,34 @@ public class OptimizeService {
             for (int i = 0; a.features.size() >= 2 && i < a.features.size(); i++) {
                 r.done = ++done;
                 r.tuneKind = a.features.get(i).kind;
-                double curY = y[i];   // 起点：第一遍 = 原值，之后 = 上一遍定格下来的值
-                // 一遍 = 两轮各试 TUNE_TRIALS 次：第一轮整段随机（0~Y_MAX），第二轮在起点附近 ±0.001 ~ ±0.1 就近微调；
-                // 这一遍只要采纳过（说明找着了更好的 Y）就从这个新值再整段来一遍，最多追加 TUNE_REPEAT 遍
+                double curY = y[i];   // 起点：第一遍 = 原值（之后 = 上一轮采纳后的值）；本轮采纳即成为下一轮用的「当前最好值」
+                // 第一遍 = 三轮各试 TUNE_TRIALS 次：①整段随机（0~Y_MAX）②0.1~Y_MAX 递增 0.1 的固定网格逐个走一遍
+                // ③在当前最好值附近 ±0.001 ~ ±0.1 就近微调；第一遍只要采纳过（说明找着了更好的 Y）就只跑随机轮重试：
+                // 一遍 = TUNE_RETRY_TRIALS 个随机值（网格轮与微调轮不再重复），又有改善就继续追加，最多追加 TUNE_REPEAT 遍
                 for (int pass = 0; ; pass++) {
                     r.tunePass = pass;
                     boolean adopted = false;
-                    for (int round = 0; round < TUNE_ROUNDS; round++) {
-                        r.trialRound = round == 0 ? "随机" : "微调";
+                    int rounds = pass == 0 ? TUNE_ROUNDS : 1;                       // 追加的遍只跑随机轮
+                    for (int k = 0; k < rounds; k++) {
+                        int round = pass == 0 ? k : 0;                              // 追加的遍按随机轮处理
+                        int trials = pass == 0 ? TUNE_TRIALS : TUNE_RETRY_TRIALS;   // 追加的遍换成 TUNE_RETRY_TRIALS 个随机值
+                        r.trials = trials;
+                        r.trialRound = round == 0 ? "随机" : (round == 1 ? "网格" : "微调");
                         r.trial = 0;
                         r.trialY = null;
                         double pickY = Double.NaN;
                         double pickAcc = 0;
                         double pickTie = 0;
-                        for (int t = 1; t <= TUNE_TRIALS; t++) {
+                        for (int t = 1; t <= trials; t++) {
                             double cand;
                             if (round == 0) {
-                                cand = rnd.nextInt((int) (Y_MAX * Y_SCALE) + 1) / (double) Y_SCALE;   // [0, 2] 整段随机，精确到 0.001
+                                cand = rnd.nextInt((int) (Y_MAX * Y_SCALE) + 1) / (double) Y_SCALE;   // [0, 10] 整段随机，精确到 0.001
+                            } else if (round == 1) {
+                                cand = roundY(TUNE_GRID_STEP * t);                     // 0.1 ~ 10 递增 0.1（固定网格，一个一个走完）
                             } else {
                                 int step = 1 + rnd.nextInt(TUNE_FINE_STEPS);          // 1~100 档
                                 double delta = step / (double) Y_SCALE * (rnd.nextBoolean() ? 1 : -1);
-                                cand = roundY(clampY(curY + delta));                   // ±0.001 ~ ±0.1，精确到 0.001
+                                cand = roundY(clampY(curY + delta));                   // 在当前最好值附近 ±0.001 ~ ±0.1，精确到 0.001
                             }
                             y[i] = cand;
                             r.trial = t;
@@ -1062,7 +1099,7 @@ public class OptimizeService {
                             y[i] = curY;   // 本轮没能改善：保持本轮起点
                         } else {
                             y[i] = pickY;
-                            curY = pickY;   // 第二轮就在这个更好的值附近微调；下一遍的随机轮也从这个新值出发微调
+                            curY = pickY;   // 本轮定下来的「当前最好值」：第一遍的下一轮就在它附近微调，追加的随机轮也只跟它比
                             acc = pickAcc;
                             tie = pickTie;
                             adopted = true;
@@ -1077,7 +1114,55 @@ public class OptimizeService {
                         break;   // 这一遍没能再改善（或已追加到上限）：这个权重到此为止
                     }
                     repeats++;
-                    r.allTotal += passCost;   // 追加的这一遍也计入合计张数：进度条按真实工作量推进，不会提前走满
+                    r.allTotal += retryCost;   // 追加的这一遍（只跑随机轮）也计入合计张数：进度条按真实工作量推进，不会提前走满
+                }
+            }
+            // 四舍五入收尾：把整条权重依次按 0.01 → 0.1 → 1 四舍五入后重算一遍——只要匹配正确率与无法区分率
+            // 一点没变，就说明多出来的小数位对结果没有任何影响，直接用四舍五入后的值（最终权重更简单直白）
+            if (a.features.size() >= 2) {
+                double[] raw = y.clone();
+                r.tuneKind = null;
+                r.tunePass = 0;
+                r.trialRound = "四舍五入";
+                r.trials = TUNE_SIMPLIFY.length;
+                r.trial = 0;
+                r.trialY = null;
+                for (int k = 0; k < TUNE_SIMPLIFY.length; k++) {
+                    double step = TUNE_SIMPLIFY[k];
+                    double[] cand = new double[y.length];
+                    double first = Double.NaN;
+                    boolean simpler = false;
+                    for (int i = 0; i < y.length; i++) {
+                        cand[i] = roundTo(y[i], step);
+                        if (Math.abs(cand[i] - y[i]) > EPS) {
+                            simpler = true;
+                            if (Double.isNaN(first)) {
+                                first = cand[i];   // 进度行显示这一档第一个被改的值
+                            }
+                        }
+                    }
+                    if (!simpler) {
+                        continue;   // 值本来就是这一档（或更粗）：不用试
+                    }
+                    r.trial = k + 1;
+                    r.trialY = first;
+                    r.processed = 0;
+                    Map<String, Object> rr = ev.eval(ys(cand), groups, samples, r, offset);
+                    offset += sn;
+                    r.allTotal += sn;   // 收尾也真跑了一遍评分：计入合计张数，进度条不会提前走满
+                    // 两率（含「全部无法区分」时的正确率 −1）一模一样才算没影响：这一档照收，否则保留原值
+                    if (Math.abs(accOf(rr.get("accuracy")) - acc) <= EPS
+                            && Math.abs(tieOf(rr.get("tieRate")) - tie) <= EPS) {
+                        System.arraycopy(cand, 0, y, 0, y.length);   // y 就是 cur 里那份，最终评估与落盘都按它
+                    }
+                }
+                r.trialRound = null;
+                r.trial = 0;
+                r.trialY = null;
+                for (int i = 0; i < y.length; i++) {
+                    if (Math.abs(y[i] - raw[i]) > EPS) {
+                        simplified++;
+                    }
                 }
             }
             // 无论有没有改善都记下最终权重（文件即「当前生效的权重」；单一特征算法不进文件）
@@ -1132,6 +1217,7 @@ public class OptimizeService {
         t.trials = TUNE_TRIALS;
         t.improved = improved;
         t.repeats = repeats;
+        t.simplified = simplified;
         t.file = weightsFile().toString();
         t.fp = env.fp();
         t.sig = res.sig;
@@ -1146,8 +1232,8 @@ public class OptimizeService {
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
-        log.info("自动调整参数完成：试探 {} 个权重 × {} 轮 × {} 次（找到更好值后追加 {} 遍重跑），采纳 {} 个，权重写入 {}",
-                weightsTotal, TUNE_ROUNDS, TUNE_TRIALS, repeats, improved, t.file);
+        log.info("自动调整参数完成：试探 {} 个权重 × {} 轮（随机 / 网格 / 微调）× {} 次（找到更好值后追加 {} 遍只跑随机的重试、每遍 {} 个随机值），采纳 {} 个，四舍五入收尾简化 {} 个，权重写入 {}",
+                weightsTotal, TUNE_ROUNDS, TUNE_TRIALS, repeats, TUNE_RETRY_TRIALS, improved, simplified, t.file);
     }
 
     private void fail(Run r, String msg) {
@@ -1737,6 +1823,7 @@ public class OptimizeService {
                 t.trials = tn.path("trials").asInt(0);   // 旧缓存没这个字段：0 = 未知，界面按「若干次」描述、不写死数字
                 t.improved = tn.path("improved").asInt(0);
                 t.repeats = tn.path("repeats").asInt(0);   // 旧缓存没这个字段：0 = 没有追加过重跑
+                t.simplified = tn.path("simplified").asInt(0);   // 旧缓存没这个字段：0 = 没做过四舍五入收尾
                 t.file = textOf(tn, "file");
                 t.fp = textOf(tn, "fp");
                 t.sig = sig;
@@ -1780,6 +1867,7 @@ public class OptimizeService {
             tm.put("trials", t.trials);
             tm.put("improved", t.improved);
             tm.put("repeats", t.repeats);
+            tm.put("simplified", t.simplified);
             tm.put("file", t.file);
             tm.put("fp", t.fp);
             tm.put("algos", t.algos);
@@ -1997,5 +2085,10 @@ public class OptimizeService {
     /** 权重 Y 收齐到 {@value #Y_SCALE} 分之一（= 0.001）：界面步进、自动调整的随机值、落盘与回读统一口径。 */
     private static double roundY(double v) {
         return Math.round(v * Y_SCALE) / (double) Y_SCALE;
+    }
+
+    /** 按给定档位四舍五入（四舍五入收尾用的 0.01 / 0.1 / 1）：再收齐到 0.001 并夹在 [0, {@value #Y_MAX}] 内。 */
+    private static double roundTo(double v, double step) {
+        return roundY(clampY(Math.round(v / step) * step));
     }
 }

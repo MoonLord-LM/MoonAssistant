@@ -293,8 +293,6 @@
   #optPane .optTbl input[type=number]:hover{border-color:var(--accent)}
   #optPane .optTbl input[type=number]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
   #optPane .optTbl input[type=number]:disabled{opacity:.5}
-  #optPane .optTbl input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
-  #optPane .optTbl input[type=checkbox]:disabled{cursor:not-allowed}
   #optPane summary{user-select:none}
   /* 选项 chip 内的坐标文本：红 = 鼠标点击点、绿 = 关注点（与图上红 / 绿点一致）；等宽数字不跳动 */
   .act .ptval{margin-left:2px;font-size:12.5px}
