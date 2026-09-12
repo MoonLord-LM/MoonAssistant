@@ -16,10 +16,12 @@
       <option value="exec">执行模式</option>
     </select>
   </div>
+  <!-- 六视图标签（2026-09-13 调整顺序）：未标注（启动默认，故 class="on"）/ 已标注 / 全部 / 汇总分析 / 特征验证 / 算法调优
+       —— 「全部」是浏览 + 分类过滤用的，退到第三位；计数与高亮由 setSegState() 按 data-f 写，与 DOM 顺序无关 -->
   <div class="seg mark-only" id="filterSeg">
-    <button data-f="all">全部</button>
     <button data-f="unmarked" class="on">未标注</button>
     <button data-f="marked">已标注</button>
+    <button data-f="all">全部</button>
     <button data-f="think">汇总分析</button>
     <button data-f="verify">特征验证</button>
     <button data-f="opt">算法调优</button>
@@ -166,9 +168,9 @@
   <div id="edThink" style="display:none">
     <div class="edHead">
       <h3 id="tkTitle" style="margin:0;font-size:14px">汇总分析</h3>
-      <button type="button" class="btn" id="btnRebuild" style="margin-left:auto;font-size:12px"
+      <button type="button" class="btn amber" id="btnRebuild" style="font-size:12px"
         title="清空 summary/ 下全部对照图产物，再从 classify/ 已标注样本全量重建各分类适用的对照图（15 张基础合成图含交集 100/90/80/70/60/50 六档（100% = 样本完全一致）与多数/均值/去重均值/8·32 块图 + 15 张独有区图 + 12 张注意区交集图，共 42 张，全部参与识别比对；注意区图以各分类关注点为中心（未设 = 屏幕中心，每个分类都生成）；鼠标点击分类另加 12 张以点击点为中心的点击区交集图，共 54 张）。产物为可再生成数据，删除不影响原始截图与标注。">重新生成全部</button>
-      <button type="button" class="btn green" id="btnThinkStart" style="font-size:12px"
+      <button type="button" class="btn green" id="btnThinkStart" style="margin-left:auto;font-size:12px"
         title="为「已标注样本 ≥1 张、但尚无对照图或样本已变动」的分类标注后台分析（每个分类 42 张：15 张基础合成图（交集六档 + 多数/均值/去重均值/8·32 块图）+ 15 张独有区图 + 12 张注意区交集图，鼠标点击分类另含 12 张点击区交集图 = 54 张，与识别比对的是同一套产物）；产物齐全且样本未变动的分类自动跳过。">开始分析</button>
     </div>
     <div class="tkstat" id="tkStat" style="margin-top:10px;font-size:12px;line-height:1.8">正在读取分析状态…</div>
@@ -210,9 +212,9 @@
       <button type="button" class="hbtn" id="optHelpBtn"
         title="算法调优 · 详细说明（算法怎么组合 · 基础分 X 与权重 Y · 匹配度与打平口径 · 自动调整参数 · 缓存与过期）">!</button>
       <button type="button" class="btn amber" id="optAutoBtn" style="margin-left:auto;font-size:12px"
-        title="自动调整参数：对每个可调的权重 Y 逐个算法 → 逐个权重 → 逐个轮次地试（精确到 0.001），第一遍 4 轮共 403 次——第 1 轮 0~10 整段随机 100 个；第 2 轮 0.1~10 递增 0.1 递进扫描 100 个；第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1）；第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1：重算后两率一点没变就换成更简单的值）；前三轮只要匹配正确率上升、或无法区分率下降就采纳；某个权重这一遍里采纳过更好的值，就再只跑随机轮重试（一遍 300 个 0~10 的随机值，最多追加 3 遍），并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；需先点「验证所有算法」并等它跑完；单一特征算法只有一个特征、权重固定 1，不参与调整">自动调整参数</button>
+        title="自动调整参数：逐个算法地调——每个算法先做 100 次「随机组合尝试」（每次随机取 1 ~ 全部 个特征、它们各自的权重 Y 随机取 0~10 内的任意值，其余特征保持当前值），再对每个可调的权重 Y 逐个权重 → 逐个轮次地试（精确到 0.001），第一遍 4 轮共 403 次——第 1 轮 0~10 整段随机 100 个；第 2 轮 0.1~10 递增 0.1 递进扫描 100 个；第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1）；第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1：重算后两率一点没变就换成更简单的值）；随机组合尝试与前三轮都是只要匹配正确率上升、或无法区分率下降就采纳；某个权重这一遍里采纳过更好的值，就再只跑随机轮重试（一遍 300 个 0~10 的随机值，最多追加 3 遍），并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；需先点「刷新算法特征」并等它跑完；单一特征算法只有一个特征、权重固定 1，不参与调整">自动调整参数</button>
       <button type="button" class="btn green" id="optRunBtn" style="font-size:12px"
-        title="按当前特征组合与权重 Y 验证全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动">验证所有算法</button>
+        title="按最新特征验证结果重新组合算法与特征（含基础分 X），再按当前权重 Y 重新计算全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动">刷新算法特征</button>
     </div>
     <div id="optStat" style="margin-top:10px;font-size:12px;line-height:1.8;white-space:pre-line;color:var(--text)">正在读取状态…</div>
     <div id="optTask" style="display:none;margin-top:10px">
@@ -229,15 +231,16 @@
         <div class="sub">本视图把「特征验证」算出的 A/B/C/D/E 自动组合成匹配算法，再用权重 Y 调优；下面按「算法怎么来 → 怎么判定 → 打平怎么办 → 自动调整参数 → 缓存与过期」依次说明。</div>
         <div class="hlist">
           <div>算法调优建立在<b style="color:var(--text)">特征验证</b>结果之上：先「汇总分析」生成各分类产物，再到「特征验证」算出每个特征的 A/B/C/D/E，本视图据此自动组合算法。</div>
-      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,10]</b> 默认 1 可改（步进 <b style="color:var(--text)">0.001</b>，上下箭头 / 手输都按 0.001 收齐）。改完（<b style="color:var(--text)">回车或点别处</b>）会<b style="color:var(--text)">立刻锁住本视图的按钮与输入框、并按新权重自动重新验证一遍</b>（把某个特征的 Y 改成 0 = 该特征不参与本算法，同样立刻重算），不必再点「验证所有算法」；这轮<b style="color:var(--text)">只重算被改动的那个算法</b>（其余算法直接沿用上次结果：同一批样本 / 产物 + 同一份比对矩阵 + 权重没变，数值必然一样），因此<b style="color:var(--text)">只有它</b>的数值后面标 <b style="color:var(--amber)">（等待刷新）</b>、其余算法连卡片里的逐分类明细都不重建，跑完自动换成新值。（手动「验证所有算法」= 全部算法都重算、都标；「自动调整参数」会改所有算法的权重，同样全标。）左栏每行右上角的状态 chip 同步这条状态：未计算 / 计算中… / 等待刷新 / 需重算 / 已计算（与「特征验证」「汇总分析」列表行同一套口径与配色），数值一律放在下一行。<b style="color:var(--text)">改权重触发的这轮重算，开始 / 结束各弹一条提示</b>（同时写进右上角「历史日志」）：开始写「修改「&lt;算法名&gt;」的「&lt;特征名&gt;」权重 Y &lt;旧值&gt; -&gt; &lt;新值&gt;，开始重新计算」，结束写「重新计算完成，匹配正确率/无法区分率的变化——「&lt;算法名&gt;」匹配正确率 &lt;旧&gt; -&gt; &lt;新&gt;、无法区分率 &lt;旧&gt; -&gt; &lt;新&gt;，用时 &lt;N 秒&gt;」（只列真的变了的算法）。</div>
+      <div style="margin-top:6px">右上角「<b style="color:var(--text)">刷新算法特征</b>」= 按最新特征验证结果<b style="color:var(--text)">重新组合算法与特征（含基础分 X）</b>，再按当前权重 Y <b style="color:var(--text)">重新计算全部算法的分类匹配正确率</b>（没变过的部分直接复用逐图比对矩阵，不必重比）；改完权重 Y 会自动<b style="color:var(--text)">只重算被改动的那个算法</b>，手动点它则是全部算法都重算。</div>
+      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,10]</b> 默认 1 可改（步进 <b style="color:var(--text)">0.001</b>，上下箭头 / 手输都按 0.001 收齐）。改完（<b style="color:var(--text)">回车或点别处</b>）会<b style="color:var(--text)">立刻锁住本视图的按钮与输入框、并按新权重自动重新验证一遍</b>（把某个特征的 Y 改成 0 = 该特征不参与本算法，同样立刻重算），不必再点「刷新算法特征」；这轮<b style="color:var(--text)">只重算被改动的那个算法</b>（其余算法直接沿用上次结果：同一批样本 / 产物 + 同一份比对矩阵 + 权重没变，数值必然一样），因此<b style="color:var(--text)">只有它</b>的数值后面标 <b style="color:var(--amber)">（等待刷新）</b>、其余算法连卡片里的逐分类明细都不重建，跑完自动换成新值。（手动「刷新算法特征」= 全部算法都重算、都标；「自动调整参数」会改所有算法的权重，同样全标。）左栏每行右上角的状态 chip 同步这条状态：未计算 / 计算中… / 等待刷新 / 需重算 / 已计算（与「特征验证」「汇总分析」列表行同一套口径与配色），数值一律放在下一行。<b style="color:var(--text)">改权重触发的这轮重算，开始 / 结束各弹一条提示</b>（同时写进右上角「历史日志」）：开始写「修改「&lt;算法名&gt;」的「&lt;特征名&gt;」权重 Y &lt;旧值&gt; -&gt; &lt;新值&gt;，开始重新计算」，结束写「重新计算完成，匹配正确率/无法区分率的变化——「&lt;算法名&gt;」匹配正确率 &lt;旧&gt; -&gt; &lt;新&gt;、无法区分率 &lt;旧&gt; -&gt; &lt;新&gt;，用时 &lt;N 秒&gt;」（只列真的变了的算法）。</div>
       <div style="margin-top:6px">某分类匹配度 = Σ「(100 − 不匹配占比) × X × Y」÷ Σ「X × Y」（加权平均，只累加该分类有有效产物的特征），匹配度<b style="color:var(--text)">唯一最高</b>的分类即判定结果，与样本归属分类一致即命中。</div>
       <div style="margin-top:6px">每个算法的<b style="color:var(--text)">结果卡横着并排三张</b>：<b style="color:var(--text)">匹配正确率</b>（含命中 / 判错 / 无法区分 / 跳过 / 用时）、<b style="color:var(--text)">无法区分率</b>、<b style="color:var(--text)">生效特征 N / M</b>——副文案：<b style="color:var(--text)">Y 权重值大于 0 的特征，视为生效特征，参与最终匹配值的计算；Y 权重等于 0 的不参与计算</b>（另列出全部权重值）；三张卡下面接通栏的「查看各分类匹配正确率与无法区分率」折叠明细。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">打平（并列）处理</b>：逐张样本先看每个特征——某特征的最高匹配值被 <b style="color:var(--text)">≥2 个分类并列</b>（分值一样、分不出该选哪一类）即视为该特征有问题，这张样本的加权平均里<b style="color:var(--text)">整张放弃该特征</b>；放弃后重新加权，若最高匹配度<b style="color:var(--text)">仍然并列</b>（或本张样本的可用特征被全部放弃、无从判定），则给出<b style="color:var(--text)">无法区分</b>的最终结论：既不算命中也不算判错，单列「无法区分率」（分母 = 可判定样本、含无法区分，与特征验证的 E 同口径）；它<b style="color:var(--text)">也不进「匹配正确率」的分母</b>（正确率 = 命中 /（可判定样本 − 无法区分）= 命中 /（命中 + 判错），与特征验证的 D 同口径），故正确率 + 无法区分率不一定等于 100%。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">自动调整参数</b>（琥珀色按钮，位于本视图右上角）：先「验证所有算法」并等它跑完（结果要能对上当前样本 / 产物）才能点。它<b style="color:var(--text)">逐个算法 → 逐个权重 → 逐个轮次</b>地走，每个可调权重第一遍 4 轮共 <b style="color:var(--text)">403 次</b>（精确到 0.001）：<b style="color:var(--text)">第 1 轮 0~10 整段随机 100 个</b>、<b style="color:var(--text)">第 2 轮 0.1 ~ 10 按 0.1 递增递进扫描 100 个</b>、<b style="color:var(--text)">第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1 逐个走一遍）</b>、<b style="color:var(--text)">第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1）</b>（<b style="color:var(--text)">5 个特征的算法即 5 × 403 = 2015 次评分</b>，张数越多越慢）；前三轮都只要这次改动让该算法的<b style="color:var(--text)">匹配正确率上升</b>或<b style="color:var(--text)">无法区分率下降</b>就采纳（本轮候选里取「正确率更高、再比无法区分率更低」的那个，一轮都没改善就保持该轮起点；第 4 轮四舍五入微调的判据是「两率一点没变」）；<b style="color:var(--text)">某个权重这一遍（上面四轮）里采纳过更好的值（第 4 轮不算），就再只跑随机轮重试</b>（一遍 300 个 0~10 的随机值、精度 0.001，第 2~4 轮不再重复跑；最多追加 3 遍，进度行会显示「第 N 遍」；没找到改进的权重只跑一遍），采纳后立即把当前权重写入 <b style="color:var(--text)">classify/opt-weights.json</b>（可随时手删，删了回到默认全 1）；全部调完再用最终权重重算一遍全部算法，界面的权重框与结果卡随新权重刷新（采纳几处 / 共试探多少权重 / 耗时 / 权重落盘路径由右栏统计行给出，不再单独占一张卡）。界面上的权重框也以这份文件为起点（改了文件刷新页面即生效）；<b style="color:var(--text)">「验证所有算法」跑完也会把本次算过的权重写进同一份文件</b>（只写这次算过的算法、值没变就不重写）——两份任务的权重都不会只留在内存里，重启后界面与后续功能读到的都是最近一次算过的值。<b style="color:var(--text)">第 4 轮四舍五入微调</b>（逐权重）：把这个权重当前值依次按 <b style="color:var(--text)">0.01 → 0.1 → 1</b> 四舍五入后各重算一遍，只要<b style="color:var(--text)">匹配正确率与无法区分率一点没变</b>，就说明多出来的小数位对结果没有影响、直接换成更简单的值（例如 3.427 → 3.43 → 3.4 → 3，采纳后再拿新值试更粗的一档；两率一变就保留原值），最终权重更简单直白；被换过值的权重个数由右栏统计行交代。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">自动调整参数</b>（琥珀色按钮，位于本视图右上角）：先「刷新算法特征」并等它跑完（结果要能对上当前样本 / 产物）才能点。它<b style="color:var(--text)">逐个算法</b>地走：每个算法先做 <b style="color:var(--text)">100 次随机组合尝试</b>——每次随机取 <b style="color:var(--text)">1 ~ 全部 个特征</b>，把它们各自的权重 Y 都<b style="color:var(--text)">随机取 0 ~ 10 内的任意值</b>（其余特征保持当前值；一次能同时改动多个权重、随机范围更大，避免停在局部最优），只要这次尝试让该算法的两率有改善就<b style="color:var(--text)">立刻采纳、并成为后面尝试的起点</b>；再<b style="color:var(--text)">逐个权重 → 逐个轮次</b>地精调，每个可调权重第一遍 4 轮共 <b style="color:var(--text)">403 次</b>（精确到 0.001）：<b style="color:var(--text)">第 1 轮 0~10 整段随机 100 个</b>、<b style="color:var(--text)">第 2 轮 0.1 ~ 10 按 0.1 递增递进扫描 100 个</b>、<b style="color:var(--text)">第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1 逐个走一遍）</b>、<b style="color:var(--text)">第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1）</b>（<b style="color:var(--text)">5 个特征的算法即 100 + 5 × 403 = 2115 次评分</b>，张数越多越慢）；随机组合尝试与前三轮都只要这次改动让该算法的<b style="color:var(--text)">匹配正确率上升</b>或<b style="color:var(--text)">无法区分率下降</b>就采纳（本轮候选里取「正确率更高、再比无法区分率更低」的那个，一轮都没改善就保持该轮起点；第 4 轮四舍五入微调的判据是「两率一点没变」）；<b style="color:var(--text)">某个权重这一遍（上面四轮）里采纳过更好的值（第 4 轮不算），就再只跑随机轮重试</b>（一遍 300 个 0~10 的随机值、精度 0.001，第 2~4 轮不再重复跑；最多追加 3 遍，进度行会显示「第 N 遍」；没找到改进的权重只跑一遍），采纳后立即把当前权重写入 <b style="color:var(--text)">classify/opt-weights.json</b>（可随时手删，删了回到默认全 1）；全部调完再用最终权重重算一遍全部算法，界面的权重框与结果卡随新权重刷新（采纳几处 / 共试探多少权重 / 耗时 / 权重落盘路径由右栏统计行给出，不再单独占一张卡）。界面上的权重框也以这份文件为起点（改了文件刷新页面即生效）；<b style="color:var(--text)">「刷新算法特征」跑完也会把本次算过的权重写进同一份文件</b>（只写这次算过的算法、值没变就不重写）——两份任务的权重都不会只留在内存里，重启后界面与后续功能读到的都是最近一次算过的值。<b style="color:var(--text)">第 4 轮四舍五入微调</b>（逐权重）：把这个权重当前值依次按 <b style="color:var(--text)">0.01 → 0.1 → 1</b> 四舍五入后各重算一遍，只要<b style="color:var(--text)">匹配正确率与无法区分率一点没变</b>，就说明多出来的小数位对结果没有影响、直接换成更简单的值（例如 3.427 → 3.43 → 3.4 → 3，采纳后再拿新值试更粗的一档；两率一变就保留原值），最终权重更简单直白；被换过值的权重个数由右栏统计行交代。</div>
       <div style="margin-top:6px">单一特征算法只有一个特征，权重 Y 在 Σ「X × Y」里被约掉、改它对加权平均没有任何影响，因此<b style="color:var(--text)">权重固定 1、只展示数值不给编辑框、也不参与「自动调整参数」</b>（后端也不把它写进权重文件）。</div>
       <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 5 个：单一最佳匹配特征 / 单一最佳+100%正确率特征 / 单一最佳+90+%正确率特征 / 单一最佳+80+%正确率特征 / 单一最佳+70+%正确率特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/opt-result.json</b>（各算法结果 + 逐分类明细 + 最近一次「自动调整参数」摘要），下次打开本页自动恢复上次结果 ——「<b style="color:var(--text)">已标注（classify/）、汇总分析（summary/ 产物）、特征验证（各特征的五种指标）</b>三处数据都没变」就直接用上次的，不必重算；只要其中任何一处有变动（含特征验证被重算后特征口径变了），结果立即标记过期：右栏统计行给出提示、并提示一次重新计算。另外<b style="color:var(--text)">特征选择 + 权重数值每次跑完都会覆写一份最新的快照</b>到 <b style="color:var(--text)">summary/opt-weights.json</b>（每个算法：特征 kind 清单 + 基础分 X + 权重 Y + 当时指标），方便后续功能 / 开发验证直接读取，不必解析界面状态。</div>
-      <div style="margin-top:6px">本视图的比对矩阵与特征验证<b style="color:var(--text)">共用同一份缓存</b>（<b style="color:var(--text)">summary/verify-matrix.json</b>）：特征验证刚跑完就直接在内存里命中 —— 换一组权重、再来一次「验证所有算法」或「自动调整参数」都不必重新逐图比对；跨重启也按每张图的大小与修改时间复用没变过的部分，右栏统计行会给出复用规模。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/opt-result.json</b>（各算法结果 + 逐分类明细 + 最近一次「自动调整参数」摘要），下次打开本页自动恢复上次结果 ——「<b style="color:var(--text)">已标注（classify/）、汇总分析（summary/ 产物）、特征验证（各特征的五种指标）</b>三处数据都没变」就直接用上次的，不必重算；只要其中任何一处有变动（含特征验证被重算后特征口径变了），结果立即标记过期 —— 像「汇总分析」那样：<b style="color:var(--text)">主图区顶部出现一条琥珀色「已过期 · 需重算」状态条</b>，同时<b style="color:var(--text)">主图区算法卡片、左栏数值与结果卡照常显示上次的数据</b>（只展示、不可改，权重框锁上），卡片标题标「（已过期）」、左栏状态 chip 标「需重算」、右栏统计行给出提示、并提示一次重新计算；状态条上的按钮按情况给「去特征验证」（特征验证结果已变旧、算法与特征要先按最新数据重新组合）或「重新计算」（能组合、只是结果旧）。另外<b style="color:var(--text)">特征选择 + 权重数值每次跑完都会覆写一份最新的快照</b>到 <b style="color:var(--text)">summary/opt-weights.json</b>（每个算法：特征 kind 清单 + 基础分 X + 权重 Y + 当时指标），方便后续功能 / 开发验证直接读取，不必解析界面状态。</div>
+      <div style="margin-top:6px">本视图的比对矩阵与特征验证<b style="color:var(--text)">共用同一份缓存</b>（<b style="color:var(--text)">summary/verify-matrix.json</b>）：特征验证刚跑完就直接在内存里命中 —— 换一组权重、再来一次「刷新算法特征」或「自动调整参数」都不必重新逐图比对；跨重启也按每张图的大小与修改时间复用没变过的部分，右栏统计行会给出复用规模。</div>
       <div style="margin-top:6px;color:var(--amber)">验证期间建议先停掉「特征验证」与执行模式自动识别（两者都会长时间占用 CPU 与磁盘 IO）。</div>
         </div>
         <div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="optHelpOk">知道了</button></div>
@@ -338,6 +341,14 @@
 </section>
 
 <div id="toasts"></div>
+
+<!-- 全局底部 tips 行：每个页面（六个视图 / 执行模式各自）的常驻进度区，一行居中显示「现在在干什么、到哪了」
+     （各页只显示归自己的那条：启动重复清理 → 未标注、汇总分析 / 特征验证 / 算法调优 各归本页，切视图不中断）；
+     开始 / 结束这类需要回溯的消息仍走右下角 toast（并进右上角「历史日志」）；本页没任务时**不显示任何文本**
+     （连悬停提示也没有），但这一条照旧占满最下 30px —— 高度宽度恒定不变，只当一条分隔线用（上边框 + 面板底色） -->
+<div class="tipsbar" id="tipsBar">
+  <span class="tipstx" id="tipsTx"></span>
+</div>
 
 <div id="imgLightbox">
   <button type="button" id="lbClose" title="关闭（Esc）">✕</button>

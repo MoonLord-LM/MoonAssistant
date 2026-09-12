@@ -47,14 +47,14 @@ public class OptimizeController {
 
     /**
      * 启动一次「自动调整参数」：weights = 起点权重（与 /start 同格式，缺省 1）。
-     * 只有「验证所有算法」跑完、且结果对得上当前样本 / 产物时才受理（单一特征算法不参与调整）。
+     * 只有「刷新算法特征」跑完、且结果对得上当前样本 / 产物时才受理（单一特征算法不参与调整）。
      */
     @PostMapping("/auto")
     public Map<String, Object> auto(@RequestBody(required = false) Map<String, Object> body) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (!optimize.tunable()) {
             out.put("started", false);
-            out.put("error", "请先点「验证所有算法」并等它跑完（结果要能对上当前的样本 / 产物）");
+            out.put("error", "请先点「刷新算法特征」并等它跑完（结果要能对上当前的样本 / 产物）");
             return out;
         }
         out.put("started", optimize.autoStart(parseWeights(body)));

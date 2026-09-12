@@ -5,6 +5,7 @@
     --green:#2fbf71; --green-soft:rgba(47,191,113,.14);
     --amber:#f0a83c; --danger:#ff5c6c;
     --radius:10px;
+    --tips-h:30px;             /* 全局底部 tips 行高度：页面主区高度与右下角提示都按它让位 */
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
@@ -28,7 +29,7 @@
   body[data-appmode="exec"] .layout{display:none!important}
   body[data-appmode="mark"] #execPane{display:none!important}
   /* 执行模式：实时画面识别 + 动作执行（画面顶栏放「立即识别 / 执行动作」，右侧识别信息） */
-  #execPane{display:flex;flex-direction:column;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0;box-sizing:border-box}
+  #execPane{display:flex;flex-direction:column;gap:12px;padding:12px;height:calc(100vh - 54px - var(--tips-h));min-height:0;box-sizing:border-box}
   .exec-main{flex:1;min-height:0;display:flex;gap:0}
   .exec-stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden}
   .exec-stage .stagebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-height:42px}
@@ -104,9 +105,14 @@
     .exec-area{min-height:260px}
   }
   .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px}
-  /* 六视图标签（全部/未标注/已标注/汇总分析/特征验证/算法调优）：左右内边距与最小宽度收紧，整体更紧凑 */
+  /* 六视图标签（未标注/已标注/全部/汇总分析/特征验证/算法调优）：左右内边距与最小宽度收紧，整体更紧凑 */
   .seg button{border:0;background:transparent;color:var(--muted);padding:4px 11px;border-radius:6px;min-width:52px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
   .seg button.on{background:var(--accent);color:#fff}
+  /* 标签任务态（黄色字）：该页面有常驻任务在跑时置位 —— 启动重复清理 → 未标注、汇总分析 / 特征验证 / 算法调优
+     各归各页（与页面最下方 tips 行同一状态），任务的开始 / 完成 / 中断由 JS 恢复；
+     当前视图的蓝底高亮态同样用黄字（蓝底 + 黄字，一眼可辨本页正在处理） */
+  #filterSeg button.busy{color:var(--amber)}
+  #filterSeg button.busy.on{color:var(--amber)}
   .meta{color:var(--muted);font-size:12px;white-space:nowrap}
   .spacer{flex:1}
   .btn{border:1px solid var(--border);background:var(--panel2);color:var(--text);padding:6px 13px;border-radius:8px;transition:background .15s}
@@ -135,18 +141,17 @@
   /* 「取消修改」（原「使用上次标记」）：白字白描边，便于在深色面板上辨认 */
   #btnLast{border-color:rgba(255,255,255,.85);color:#fff;background:rgba(255,255,255,.07)}
   #btnLast:hover{background:rgba(255,255,255,.18)}
-  /* 汇总分析右栏两个按钮：开始分析 = 主操作（绿），重新生成全部 = 次操作（蓝系描边，避免两个绿色按钮并排混淆） */
+  /* 汇总分析右栏两个按钮：重新生成全部 = 清空重建（amber 琥珀色，样式同「自动调整参数」，紧接标题在左）、
+     开始分析 = 增量分析（绿主按钮，靠最右）。#btnRebuild 直接复用 .btn.amber，这里只留两按钮共用的置灰态 */
   #btnThinkStart{background:var(--green);border-color:var(--green);color:#fff}
   #btnThinkStart:hover{filter:brightness(1.08)}
-  #btnRebuild{border-color:rgba(79,140,255,.45);color:var(--accent);background:rgba(79,140,255,.08)}
-  #btnRebuild:hover{background:rgba(79,140,255,.18)}
   #btnThinkStart:disabled,#btnRebuild:disabled{opacity:.45;cursor:not-allowed}
   .btn.cap{min-width:104px;transition:background .15s,border-color .15s,color .15s}
   .btn.cap.on{border-color:rgba(47,191,113,.65);color:var(--green);background:rgba(47,191,113,.12);font-weight:600}
   .btn.cap.on:hover{background:var(--green);color:#04120a}
   .btn.cap:not(.on){border-color:rgba(240,168,60,.5);color:var(--amber);background:rgba(240,168,60,.08)}
   .btn.cap:not(.on):hover{background:rgba(240,168,60,.2)}
-  .layout{display:flex;gap:12px;padding:12px;height:calc(100vh - 54px);min-height:0}
+  .layout{display:flex;gap:12px;padding:12px;height:calc(100vh - 54px - var(--tips-h));min-height:0}
   .sidebar{width:318px;flex:none;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden}
   .listhead{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
   .thinkfil{display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border)}
@@ -273,6 +278,14 @@
   .optTop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
   .optTop .ot{font-size:18px;font-weight:700;letter-spacing:.3px}
   .optTop .otSub{color:var(--muted);font-size:12.5px}
+  /* 算法调优「已过期 · 需重算」状态条：与汇总分析的状态条同一套 warn 配色，但作为主图区里的横条（不是浮层） */
+  .optStale{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 12px;font-size:12px;line-height:1.6;color:#ffe6b0;
+    border:1px solid rgba(255,178,44,.45);border-radius:10px;background:rgba(255,178,44,.07)}
+  .optStale[hidden]{display:none}
+  .optStale .ost{flex:none;color:var(--amber);font-weight:600;letter-spacing:.3px}
+  .optStale .osTag{flex:none;color:var(--amber);font-weight:700}
+  .optStale .osTxt{flex:1 1 260px;min-width:0}
+  .optStale .btn{flex:none;margin-left:0}
   .optcard{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:12px 14px}
   .optcard h4{margin:0 0 6px;font-size:13px}
   .optcard .ocap{font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.6}
@@ -320,7 +333,14 @@
   #coordBox .hint.bad{background:rgba(255,90,90,.10);border-left-color:var(--danger)}
   .hint.bad{color:#ffd2c9;background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.4);padding:6px 9px;border-radius:8px}
   kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
-  #toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:50}
+  /* 全局底部 tips 行（每个页面各自的进度区）：常驻一行「当前进度」，居中、超长省略、只读不拦鼠标；
+     本页没任务时不显示任何文本 —— 只剩这条上边框 + 面板底色，起一条分隔线的作用。
+     尺寸恒定：固定占住窗口最下 30px（--tips-h）+ 整屏宽，有无进度都不变（空态只是没字，元素不隐藏、不塌陷）——
+     主区高度与右下角提示都已按它让位，故不遮挡任何内容 */
+  .tipsbar{position:fixed;left:0;right:0;bottom:0;height:var(--tips-h);z-index:45;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 14px;background:var(--panel);border-top:1px solid var(--border);color:var(--muted);font-size:12px;pointer-events:none}
+  .tipsbar .tipstx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tipsbar.on{color:#e8edf7;border-top-color:var(--border-strong)}   /* 有进度在跑：字色提亮、分界线更清楚 */
+  #toasts{position:fixed;right:14px;bottom:calc(var(--tips-h) + 12px);display:flex;flex-direction:column;gap:8px;z-index:50}
   .toast{background:#20293d;color:#e8edf7;border:1px solid #33405e;border-left:3px solid var(--accent);padding:9px 14px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-width:420px;animation:fadein .18s ease}
   .toast.ok{border-left-color:var(--green)}
   .toast.err{border-left-color:var(--danger)}
@@ -343,6 +363,9 @@
   .thinkbar .kv{color:#ffd24d;font-weight:700;font-variant-numeric:tabular-nums}
   .thinkbar.warn{color:#ffe6b0}
   .thinkbar.warn .tb-title{color:var(--amber)}
+  /* 「排队」态：任务还没轮到、没有任何进度可言 → 用低调小字常驻，不抢 warn 的琥珀高亮（等待 ≠ 告警） */
+  .thinkbar.wait{font-size:11.5px;color:var(--muted)}
+  .thinkbar.wait .tb-title{color:var(--muted)}
   .thinkbar.bad{color:#ffd9d2}
   .thinkbar.bad .tb-title{color:#ffb4ab}
   .smartbar .spin{width:13px;height:13px;flex:none;border:2px solid #33405e;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
@@ -532,7 +555,9 @@
   .logrow.skip .lk,.logrow.warn .lk{color:var(--amber)}
   .logrow.info{border-left-color:var(--accent)}
   .logempty{padding:42px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.8}
+  /* 窄屏：主区改为整页滚动（不再固定满高），底部 tips 行仍固定在窗口最下 —— body 让出等高内边距，免得压住内容 */
   @media (max-width:1150px){
+    body{padding-bottom:var(--tips-h)}
     .layout{flex-direction:column;height:auto;overflow:auto}
     .sidebar,.editor{width:100%;max-height:280px}
     .stage{min-height:460px}

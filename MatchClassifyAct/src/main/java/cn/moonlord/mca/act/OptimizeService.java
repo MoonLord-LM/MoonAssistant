@@ -73,20 +73,23 @@ import java.util.stream.Stream;
  * 与「算法组合口径没变（{@code sig}）」。三者都没变时进程启动即恢复上次结果（界面「已计算」，无需重算）；
  * 任何一处有变动就把结果标记为过期，界面提示重新计算。
  *
- * <p><b>自动调整参数</b>（{@link #autoStart}）只在「验证所有算法」跑完之后才允许启动，顺序是「逐个算法 → 逐个权重 → 逐个轮次」：
- * 每个权重第一遍走 {@value #TUNE_ROUNDS} 轮、共 {@value #TUNE_TRIALS_ALL} 次（精确到 0.001）——①[0, {@value #Y_MAX}]
- * 整段随机 {@value #TUNE_TRIALS} 个；②按 {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX} 递增 {@value #TUNE_GRID_STEP} 的固定网格逐个走一遍
- * （{@value #TUNE_TRIALS} 个）；③在当前最好值附近微调（加法 {@value #TUNE_FINE_STEPS} 个 + 减法 {@value #TUNE_FINE_STEPS} 个，
- * 即 ±0.001 ~ ±0.1 逐个走一遍）；④四舍五入微调（按 0.01 / 0.1 / 1 逐档四舍五入，两率<b>一点没变</b>就换成更简单的值）。
- * 前三轮只要这次改动让该算法的<b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳，并把最新权重保存到
- * {@code classify/opt-weights.json}（可手删，删了回到全 1）；某个权重这一遍里采纳过更好的值，就再<b>只跑随机轮</b>做追加重试
- * （一遍 {@value #TUNE_RETRY_TRIALS} 个随机值，最多追加 {@value #TUNE_REPEAT} 遍），避免只试一遍就停在局部最优。
- * {@link #start}（验证所有算法）跑完同样把本次生效的权重写进同一个文件（只写这次算过的算法），
+ * <p><b>自动调整参数</b>（{@link #autoStart}）只在「刷新算法特征」跑完之后才允许启动，顺序是「逐个算法 →（随机组合尝试 → 逐个权重 → 逐个轮次）」：
+ * 每个算法先走 {@value #TUNE_COMBO_TRIALS} 次<b>随机组合尝试</b>——每次随机取「随机个数（1 ~ 该算法全部特征）」的特征，
+ * 把它们的权重 Y 各随机取 [0, {@value #Y_MAX}] 内的任意值（精确到 0.001），其余特征保持当前值：一次能同时改动多个权重、
+ * 随机范围更大，避免停在局部最优；随后每个权重第一遍走 {@value #TUNE_ROUNDS} 轮、共 {@value #TUNE_TRIALS_ALL} 次（精确到 0.001）
+ * ——①[0, {@value #Y_MAX}] 整段随机 {@value #TUNE_TRIALS} 个；②按 {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX} 递增 {@value #TUNE_GRID_STEP}
+ * 的固定网格逐个走一遍（{@value #TUNE_TRIALS} 个）；③在当前最好值附近微调（加法 {@value #TUNE_FINE_STEPS} 个 + 减法
+ * {@value #TUNE_FINE_STEPS} 个，即 ±0.001 ~ ±0.1 逐个走一遍）；④四舍五入微调（按 0.01 / 0.1 / 1 逐档四舍五入，
+ * 两率<b>一点没变</b>就换成更简单的值）。随机组合尝试与前三轮都是只要这次改动让该算法的<b>匹配正确率上升</b>或
+ * <b>无法区分率下降</b>就采纳，并把最新权重保存到 {@code classify/opt-weights.json}（可手删，删了回到全 1）；
+ * 某个权重这一遍里采纳过更好的值，就再<b>只跑随机轮</b>做追加重试（一遍 {@value #TUNE_RETRY_TRIALS} 个随机值，
+ * 最多追加 {@value #TUNE_REPEAT} 遍），避免只试一遍就停在局部最优。
+ * {@link #start}（刷新算法特征）跑完同样把本次生效的权重写进同一个文件（只写这次算过的算法），
  * 所以两份任务都不会让权重只留在内存里：重启后界面与后续功能读到的就是最近一次算过的值。
  * 另有一份<b>特征选择 + 权重数值快照</b>始终保存到 {@code summary/opt-weights.json}（每次跑完覆写，
  * 供后续功能 / 开发验证直接读取，见 {@link #snapshotFile()}）。
  * <b>单一特征算法的权重固定 1</b>：界面不可编辑、也不参与自动调整——只有一个特征时 Y 在 Σ「X × Y」里被约掉，
- * 改它对加权平均（因而对结果）没有任何影响。评估矩阵与「验证所有算法」共用一套，且与权重无关的部分只算一次
+ * 改它对加权平均（因而对结果）没有任何影响。评估矩阵与「刷新算法特征」共用一套，且与权重无关的部分只算一次
  * （见 {@link AlgoEval}），所以换一组权重评估一次很便宜；全部调完后用最终权重重算一遍，界面直接看到新数值。
  */
 @Slf4j
@@ -129,6 +132,12 @@ public class OptimizeService {
 
     /** 每个权重第一遍每一轮试探的次数（第 1 轮整段随机、第 2 轮固定网格各 {@value} 个，都精确到 0.001）。 */
     private static final int TUNE_TRIALS = 100;
+
+    /** 「随机组合尝试」阶段每个算法的尝试次数（在每个算法的逐个权重处理<b>之前</b>先走一遍）：每次随机取
+     *  「随机个数（1 ~ 该算法全部特征）」的特征，把它们的权重 Y 各随机取 [0, {@value #Y_MAX}] 内的任意值
+     *  （精确到 0.001），其余特征保持当前值 —— 一次能同时改动多个权重（逐个权重只能一次动一个）、
+     *  随机范围更大，避免停在局部最优。 */
+    private static final int TUNE_COMBO_TRIALS = 100;
 
     /** 权重试探的轮数：①[0, {@value #Y_MAX}] 整段随机 ②按 {@value #TUNE_GRID_STEP} 递增的固定网格逐个走一遍
      *  ③在当前最好值附近微调（加法 {@value #TUNE_FINE_STEPS} 个 + 减法 {@value #TUNE_FINE_STEPS} 个）
@@ -184,6 +193,11 @@ public class OptimizeService {
 
     /** 本次进程的结果是否来自缓存文件（前端提示「已恢复上次结果」用）。 */
     private volatile boolean cacheRestored;
+
+    /** 上次结果里的算法结构（快照 summary/opt-weights.json 的 {@code algos}：特征清单 + 基础分 X + 权重 Y）。
+     *  只在「特征验证结果已变旧、算法组合不出来」时随 status 下发：界面像「汇总分析」那样照常展示上次的数据
+     *  （主图区算法卡片 + 左栏数值 + 结果卡），并标「已过期 · 需重算」。 */
+    private volatile List<Map<String, Object>> lastAlgos = List.of();
 
     // ---------------------------------------------------------------- 数据结构
 
@@ -252,7 +266,7 @@ public class OptimizeService {
         /** 跨阶段合计张数进度：进度条按它连续推进，不再随阶段切换回零。 */
         public volatile int allDone;
         public volatile int allTotal;
-        /** 任务类型：verify = 验证所有算法；tune = 自动调整参数（阶段文案与完成提示都按它区分）。 */
+        /** 任务类型：verify = 刷新算法特征；tune = 自动调整参数（阶段文案与完成提示都按它区分）。 */
         public volatile String mode = "verify";
         /** 本轮只重算的算法 id（空 = 全部）：改某个权重时只重算它，其余算法沿用上次结果、界面也不标「等待刷新」。 */
         public volatile List<String> only = List.of();
@@ -264,6 +278,9 @@ public class OptimizeService {
         public volatile int trial;
         public volatile int trials;
         public volatile Double trialY;
+        /** 随机组合尝试阶段：这一次随机挑中的特征 kind 与各自试的 Y（一一对应）；界面显示「随机 2 个特征：A = 0.032、B = 3.4」。 */
+        public volatile List<String> comboKinds = List.of();
+        public volatile List<Double> comboYs = List.of();
         public volatile Double baseAcc;
         public volatile Double baseTie;
         public volatile Double bestAcc;
@@ -291,7 +308,7 @@ public class OptimizeService {
         public volatile List<Map<String, Object>> algos = List.of();
     }
 
-    /** 「自动调整参数」结果摘要（试探了多少权重、采纳了几个、每个算法的前后对比与落盘位置）。 */
+    /** 「自动调整参数」结果摘要（试探了多少权重、随机组合尝试与逐个权重各采纳了几个、每个算法的前后对比与落盘位置）。 */
     public static class Tune {
         public volatile boolean finished;
         public volatile String error;
@@ -300,8 +317,10 @@ public class OptimizeService {
         public volatile int weights;
         /** 第一遍的默认每轮试探次数（实际每次轮由进度实时下发：第 3 轮翻倍、第 4 轮为档数）。 */
         public volatile int trials = TUNE_TRIALS;
-        /** 被采纳（正确率上升或无法区分率下降）并落盘的权重调整次数。 */
+        /** 被采纳（正确率上升或无法区分率下降）并落盘的权重调整次数（含随机组合尝试阶段采纳的）。 */
         public volatile int improved;
+        /** 其中「随机组合尝试」阶段（每个算法先试 {@value #TUNE_COMBO_TRIALS} 次）被采纳的次数（已计入 {@link #improved}）。 */
+        public volatile int combos;
         /** 因找到更好的值而追加的随机重试遍数合计（单个权重最多追加 {@value #TUNE_REPEAT} 遍，每遍 {@value #TUNE_RETRY_TRIALS} 个随机值）。 */
         public volatile int repeats;
         /** 第 4 轮四舍五入微调里被换成更简单值的权重个数（按 {@code TUNE_SIMPLIFY} 逐档四舍五入后两率一点没变才换）。 */
@@ -349,7 +368,7 @@ public class OptimizeService {
 
     // ---------------------------------------------------------------- 对外
 
-    /** 是否正在验证。 */
+    /** 是否正在刷新算法特征（本视图的任务在跑）。 */
     public boolean running() {
         Run r = run;
         return r != null && r.running && !r.finished;
@@ -360,7 +379,7 @@ public class OptimizeService {
         return !algorithms().isEmpty();
     }
 
-    /** 「自动调整参数」的前置：不在跑任务、验证已完成且结果没过期，并且存在可调的权重（算法特征数 ≥ 2）。 */
+    /** 「自动调整参数」的前置：不在跑任务、算法特征已刷新（结果已完成）且没过期，并且存在可调的权重（算法特征数 ≥ 2）。 */
     public boolean tunable() {
         ensureCacheLoaded();
         if (running() || !ready()) {
@@ -369,7 +388,7 @@ public class OptimizeService {
         Result res = result;
         if (res == null || !res.finished || res.error != null || res.fp == null
                 || !res.fp.equals(verify.fingerprint())) {
-            return false;   // 必须先跑完一次「验证所有算法」，且结果对得上当前的样本 / 产物
+            return false;   // 必须先跑完一次「刷新算法特征」，且结果对得上当前的样本 / 产物
         }
         if (!sigOf(algorithms()).equals(res.sig)) {
             return false;   // 算法组合口径变了（特征集合换了一套）：旧结果不能作为调整起点
@@ -383,11 +402,13 @@ public class OptimizeService {
     }
 
     /**
-     * 启动一次「自动调整参数」：逐个算法 → 逐个权重 → 逐个轮次，每个权重第一遍走 {@value #TUNE_ROUNDS} 轮共 {@value #TUNE_TRIALS_ALL} 次
+     * 启动一次「自动调整参数」：逐个算法先走 {@value #TUNE_COMBO_TRIALS} 次随机组合尝试（每次随机取
+     * 1 ~ 全部 个特征、其权重 Y 各随机取 [0, {@value #Y_MAX}] 内的任意值，其余特征保持当前值），
+     * 再逐个权重 → 逐个轮次，每个权重第一遍走 {@value #TUNE_ROUNDS} 轮共 {@value #TUNE_TRIALS_ALL} 次
      *（精确到 0.001）——①[0, {@value #Y_MAX}] 整段随机 {@value #TUNE_TRIALS} 个 ②固定网格逐个走一遍 {@value #TUNE_TRIALS} 个
      *  ③在当前最好值附近微调（加法 {@value #TUNE_FINE_STEPS} 个 + 减法 {@value #TUNE_FINE_STEPS} 个）
      *  ④四舍五入微调（按 0.01 / 0.1 / 1 逐档把当前值四舍五入，两率一点没变就换成更简单的值）；
-     * 前三轮只要这次改动让该算法的匹配正确率上升或无法区分率下降就采纳并落盘；
+     * 随机组合尝试与前三轮都是只要这次改动让该算法的匹配正确率上升或无法区分率下降就采纳并落盘；
      * 随后就这个权重再只跑随机轮重试（一遍 {@value #TUNE_RETRY_TRIALS} 个随机值，最多追加 {@value #TUNE_REPEAT} 遍）；
      * 单一特征算法的权重固定 1、不参与调整。
      *
@@ -475,6 +496,10 @@ public class OptimizeService {
             algos.add(algoMap(a));
         }
         out.put("algos", algos);
+        // 特征验证结果已变旧（算法组合不出来）时，把上次结果里的算法结构一并下发：过期态照样展示上次的数据
+        if (built.isEmpty() && !lastAlgos.isEmpty()) {
+            out.put("lastAlgos", lastAlgos);
+        }
 
         Run r = run;
         if (r != null) {
@@ -500,6 +525,8 @@ public class OptimizeService {
             task.put("trial", r.trial);
             task.put("trials", r.trials);
             task.put("trialY", r.trialY);
+            task.put("comboKinds", r.comboKinds);    // 随机组合尝试阶段：本次挑中的特征 kind
+            task.put("comboYs", r.comboYs);          // 与 comboKinds 一一对应的试取值
             task.put("baseAcc", r.baseAcc);
             task.put("baseTie", r.baseTie);
             task.put("bestAcc", r.bestAcc);
@@ -537,6 +564,7 @@ public class OptimizeService {
             tm.put("weights", t.weights);
             tm.put("trials", t.trials);
             tm.put("improved", t.improved);
+            tm.put("combos", t.combos);               // 其中随机组合尝试阶段采纳的次数（已计入 improved；界面统计行按它交代）
             tm.put("repeats", t.repeats);             // 找到更好的值后追加的重跑遍数合计（界面统计行按它交代多花的工夫）
             tm.put("simplified", t.simplified);       // 第 4 轮四舍五入微调里被换成更简单值的权重个数（界面统计行按它交代）
             tm.put("file", t.file);
@@ -904,7 +932,7 @@ public class OptimizeService {
         // 完整缓存 + 特征选择 / 权重快照：下次启动只要「已标注 / 汇总分析 / 特征验证」都没变就直接复用
         saveCache(res, null);
         saveSnapshot(res.fp, res.sig, algos, rows);
-        saveWeightsOf(rows);   // 本次算过的权重同样落盘：文件始终 = 最近一次「验证所有算法」的生效权重
+        saveWeightsOf(rows);   // 本次算过的权重同样落盘：文件始终 = 最近一次「刷新算法特征」的生效权重
         matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
 
         r.stage = "完成";
@@ -914,7 +942,7 @@ public class OptimizeService {
     }
 
     /**
-     * 准备分类、样本与全部参与特征的比对矩阵（「验证所有算法」与「自动调整参数」共用）；失败时已把原因写进 run。
+     * 准备分类、样本与全部参与特征的比对矩阵（「刷新算法特征」与「自动调整参数」共用）；失败时已把原因写进 run。
      *
      * @return null = 准备失败（run 里已有错误信息）
      */
@@ -979,14 +1007,19 @@ public class OptimizeService {
     }
 
     /**
-     * 自动调整参数：逐个算法 → 逐个权重 → 逐个轮次，每个权重第一遍走 {@value #TUNE_ROUNDS} 轮共 {@value #TUNE_TRIALS_ALL} 次（精确到 0.001）——
+     * 自动调整参数：逐个算法 →（随机组合尝试 → 逐个权重 → 逐个轮次）。
+     * 每个算法先走 {@value #TUNE_COMBO_TRIALS} 次<b>随机组合尝试</b>：每次随机取「随机个数（1 ~ 全部特征）」的特征，
+     * 把它们的权重 Y 各随机取 [0, {@value #Y_MAX}] 内的任意值（精确到 0.001），其余特征保持当前值 ——
+     * 一次能同时改动多个权重（逐个权重只能一次动一个）、随机范围更大，避免停在局部最优。
+     * 随后每个权重第一遍走 {@value #TUNE_ROUNDS} 轮共 {@value #TUNE_TRIALS_ALL} 次（精确到 0.001）——
      * ①[0, {@value #Y_MAX}] 整段随机；②按 {@value #TUNE_GRID_STEP} ~ {@value #Y_MAX} 递增 {@value #TUNE_GRID_STEP} 的固定网格逐个走一遍
      * （{@value #TUNE_TRIALS} 个值）；③在当前最好值附近微调（加法 {@value #TUNE_FINE_STEPS} 个 + 减法 {@value #TUNE_FINE_STEPS} 个，
      * 即 ±0.001 ~ ±0.1 逐个走一遍）；④<b>四舍五入微调</b>（按 0.01 / 0.1 / 1 逐档把当前值四舍五入，重算后两率一点没变就换成更简单的值）。
-     * 5 个特征的算法第一遍即 5 × {@value #TUNE_TRIALS_ALL} = 2015 次评分。前三轮只要这次改动让该算法的
-     * <b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳并立刻落盘；「一遍」= 上面这四轮，某个权重的这一遍里采纳过更好的值
-     * （第 4 轮不算）就再追加<b>只跑随机轮</b>的重试（一遍 {@value #TUNE_RETRY_TRIALS} 个 [0, {@value #Y_MAX}] 的随机值，
-     * 最多追加 {@value #TUNE_REPEAT} 遍）；单一特征算法的权重固定 1、不参与调整。
+     * 5 个特征的算法即随机组合 {@value #TUNE_COMBO_TRIALS} 次 + 5 × {@value #TUNE_TRIALS_ALL} = 2115 次评分。
+     * 随机组合尝试与前三轮都是只要这次改动让该算法的 <b>匹配正确率上升</b>或<b>无法区分率下降</b>就采纳并立刻落盘；
+     * 「一遍」= 上面这四轮，某个权重的这一遍里采纳过更好的值（第 4 轮不算）就再追加<b>只跑随机轮</b>的重试
+     * （一遍 {@value #TUNE_RETRY_TRIALS} 个 [0, {@value #Y_MAX}] 的随机值，最多追加 {@value #TUNE_REPEAT} 遍）；
+     * 单一特征算法的权重固定 1、不参与调整。
      * 全部调完用最终权重重算一遍全部算法：界面直接看到新数值、新权重（矩阵已就绪，只跑评分）。
      */
     private void doTune(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo) {
@@ -1004,10 +1037,12 @@ public class OptimizeService {
         // 可调权重 = 特征数 ≥ 2 的算法（单一特征算法的 Y 在加权平均里被约掉，固定 1 不调）
         Map<String, double[]> cur = new LinkedHashMap<>();
         int weightsTotal = 0;
+        int comboAlgos = 0;   // 参与「随机组合尝试」的算法数（特征数 ≥ 2：单一特征算法没有可调的权重）
         for (Algo a : algos) {
             cur.put(a.id, startY(a, weightsByAlgo.get(a.id)));
             if (a.features.size() >= 2) {
                 weightsTotal += a.features.size();
+                comboAlgos++;
             }
         }
         if (weightsTotal == 0) {
@@ -1016,12 +1051,14 @@ public class OptimizeService {
         }
 
         long t0 = System.currentTimeMillis();
-        r.allTotal = baseEval + (weightsTotal * TUNE_TRIALS_ALL + algos.size()) * sn;
+        r.allTotal = baseEval + (weightsTotal * TUNE_TRIALS_ALL + comboAlgos * TUNE_COMBO_TRIALS + algos.size()) * sn;
         r.allDone = baseEval;
         r.trials = TUNE_TRIALS;
         int offset = baseEval;
         int done = 0;
         int improved = 0;
+        int combos = 0;       // 「随机组合尝试」阶段被采纳的次数（也计入 improved，这里单列交代多少改善来自大范围随机）
+        int comboDone = 0;    // 已走完随机组合尝试的算法数
         int repeats = 0;
         int simplified = 0;   // 第 4 轮四舍五入微调里被换成更简单值的权重个数（两率一点没变才换）
         int retryCost = TUNE_RETRY_TRIALS * sn;   // 追加的一遍只跑随机轮：TUNE_RETRY_TRIALS 个随机值 × 样本张数，追加一遍就多这一份
@@ -1050,6 +1087,80 @@ public class OptimizeService {
             r.baseTie = round(tie);
             r.bestAcc = r.baseAcc;
             r.bestTie = r.baseTie;
+            // ① 「随机组合尝试」：进逐个权重之前先在权重空间里大范围随机一把 —— 每次随机取「随机个数（1 ~ 全部特征）」
+            //    的特征、把它们的 Y 各随机取 [0, Y_MAX]（精确到 0.001），其余特征保持当前值；一次能同时改动多个权重
+            //    （逐个权重只能一次动一个），随机范围更大、不易停在局部最优。采纳口径同下（正确率上升或无法区分率下降）。
+            if (a.features.size() >= 2) {
+                r.stage = "随机组合尝试";
+                r.total = comboAlgos;
+                r.done = ++comboDone;
+                r.tuneKind = null;
+                r.tunePass = 0;
+                r.trialRound = "随机组合";
+                r.trials = TUNE_COMBO_TRIALS;
+                int nf = a.features.size();
+                double[] keep = new double[nf];   // 本次尝试前的值：没被采纳就还原（采纳则留下当后面尝试的起点）
+                for (int t = 1; t <= TUNE_COMBO_TRIALS; t++) {
+                    int k = 1 + rnd.nextInt(nf);              // 随机个数：1 ~ 全部特征
+                    int[] idx = new int[k];
+                    int picked = 0;
+                    while (picked < k) {                      // 随机取 k 个互不相同的特征下标
+                        int c = rnd.nextInt(nf);
+                        boolean dup = false;
+                        for (int x = 0; x < picked; x++) {
+                            if (idx[x] == c) {
+                                dup = true;
+                                break;
+                            }
+                        }
+                        if (!dup) {
+                            idx[picked++] = c;
+                        }
+                    }
+                    java.util.Arrays.sort(idx);               // 展示按算法内的特征顺序排列
+                    List<String> kinds = new ArrayList<>(k);
+                    List<Double> vals = new ArrayList<>(k);
+                    for (int x = 0; x < k; x++) {
+                        keep[idx[x]] = y[idx[x]];
+                        double cand = rnd.nextInt((int) (Y_MAX * Y_SCALE) + 1) / (double) Y_SCALE;   // [0, 10] 随机，精确到 0.001
+                        y[idx[x]] = cand;
+                        kinds.add(a.features.get(idx[x]).kind);
+                        vals.add(cand);
+                    }
+                    r.trial = t;
+                    r.comboKinds = kinds;                     // 进度行按它显示这次挑中了哪几个特征、各试了多少
+                    r.comboYs = vals;
+                    r.processed = 0;
+                    Map<String, Object> rr = ev.eval(ys(y), groups, samples, r, offset);
+                    offset += sn;
+                    double ca = accOf(rr.get("accuracy"));
+                    double ct = tieOf(rr.get("tieRate"));
+                    if (ca > acc + 1e-9 || ct < tie - 1e-9) {
+                        acc = ca;                             // 采纳：留着当后面尝试的起点，并立刻落盘
+                        tie = ct;
+                        combos++;
+                        improved++;
+                        savedNow.put(a.id, new Saved(kindsOf(a), ys(y)));
+                        saveWeights(savedNow);
+                        r.bestAcc = acc < 0 ? null : round(acc);
+                        r.bestTie = round(tie);
+                    } else {
+                        for (int x = 0; x < k; x++) {
+                            y[idx[x]] = keep[idx[x]];         // 没改善：还原，下一次尝试仍从当前最好值出发
+                        }
+                    }
+                }
+                r.comboKinds = List.of();
+                r.comboYs = List.of();
+                r.stage = "自动调整参数";                      // 回到逐个权重阶段：阶段文案与计数口径换回来
+                r.total = weightsTotal;
+                r.done = done;
+                r.trial = 0;
+                r.trialRound = null;
+                r.trialY = null;
+                r.tunePass = 0;
+                r.processed = 0;
+            }
             for (int i = 0; a.features.size() >= 2 && i < a.features.size(); i++) {
                 r.done = ++done;
                 r.tuneKind = a.features.get(i).kind;
@@ -1199,6 +1310,7 @@ public class OptimizeService {
         t.weights = weightsTotal;
         t.trials = TUNE_TRIALS;
         t.improved = improved;
+        t.combos = combos;
         t.repeats = repeats;
         t.simplified = simplified;
         t.file = weightsFile().toString();
@@ -1215,8 +1327,9 @@ public class OptimizeService {
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
-        log.info("自动调整参数完成：试探 {} 个权重 × {} 轮（随机 / 网格 / 微调 / 四舍五入）× 每权重 {} 次（找到更好值后追加 {} 遍只跑随机的重试、每遍 {} 个随机值），采纳 {} 个，第 4 轮四舍五入微调把 {} 个权重换成更简单的值，权重写入 {}",
-                weightsTotal, TUNE_ROUNDS, TUNE_TRIALS_ALL, repeats, TUNE_RETRY_TRIALS, improved, simplified, t.file);
+        log.info("自动调整参数完成：每个算法先随机组合尝试 {} 次（随机取 1~全部 个特征、Y 随机取 [0, {}]，其余特征保持当前值），再试探 {} 个权重 × {} 轮（随机 / 网格 / 微调 / 四舍五入）× 每权重 {} 次（找到更好值后追加 {} 遍只跑随机的重试、每遍 {} 个随机值），采纳 {} 个（其中随机组合 {} 个），第 4 轮四舍五入微调把 {} 个权重换成更简单的值，权重写入 {}",
+                TUNE_COMBO_TRIALS, Y_MAX, weightsTotal, TUNE_ROUNDS, TUNE_TRIALS_ALL, repeats, TUNE_RETRY_TRIALS,
+                improved, combos, simplified, t.file);
     }
 
     private void fail(Run r, String msg) {
@@ -1656,7 +1769,7 @@ public class OptimizeService {
     }
 
     /**
-     * 「验证所有算法」跑完也把本次生效的权重落盘（文件始终 = 最近一次算过的权重，重启后界面与后续功能读到的就是它）：
+     * 「刷新算法特征」跑完也把本次生效的权重落盘（文件始终 = 最近一次算过的权重，重启后界面与后续功能读到的就是它）：
      * 直接按结果行里的 {@code features} / {@code weights} 写（行里的权重就是本次评估真正用的值，口径必然一致），
      * 只写本次算过（有结果行）的算法 —— 没参与本次评估的算法保留文件里那一条，单一特征算法顺手从文件里剔除（权重恒为 1）。
      * 值没变就不重写文件，避免无谓改动 mtime 让别处重新解析。
@@ -1844,6 +1957,7 @@ public class OptimizeService {
                 t.weights = tn.path("weights").asInt(0);
                 t.trials = tn.path("trials").asInt(0);   // 旧缓存没这个字段：0 = 未知，界面按「若干次」描述、不写死数字
                 t.improved = tn.path("improved").asInt(0);
+                t.combos = tn.path("combos").asInt(0);     // 旧缓存没这个字段：0 = 不知道有多少来自随机组合尝试
                 t.repeats = tn.path("repeats").asInt(0);   // 旧缓存没这个字段：0 = 没有追加过重跑
                 t.simplified = tn.path("simplified").asInt(0);   // 旧缓存没这个字段：0 = 没做过第 4 轮四舍五入微调
                 t.file = textOf(tn, "file");
@@ -1854,6 +1968,16 @@ public class OptimizeService {
             }
             log.info("算法调优结果已从缓存恢复（{}）：{} 个算法，缓存指纹 {}；与当前指纹 / 算法签名一致才显示「已计算」",
                     f, result == null ? 0 : result.algos.size(), root.path("fp").asText(""));
+            // 上次结果里的算法结构（特征 / 基础分 X / 权重 Y）另存一份：数据变动后算法组合不出来时，
+            // 界面照样能展示上次的数据（与「汇总分析」过期时继续展示旧产物同一口径）
+            Path sf = snapshotFile();
+            if (Files.isRegularFile(sf)) {
+                JsonNode sroot = JSON.readTree(sf.toFile());
+                List<Map<String, Object>> sa = sroot == null ? List.of() : rowsOf(sroot.get("algos"));
+                if (!sa.isEmpty()) {
+                    lastAlgos = List.copyOf(sa);
+                }
+            }
         } catch (Exception e) {
             log.warn("算法调优缓存读取失败 {}：{}", f, e.toString());
         }
@@ -1888,6 +2012,7 @@ public class OptimizeService {
             tm.put("weights", t.weights);
             tm.put("trials", t.trials);
             tm.put("improved", t.improved);
+            tm.put("combos", t.combos);               // 其中「随机组合尝试」阶段采纳的次数（已计入 improved）
             tm.put("repeats", t.repeats);
             tm.put("simplified", t.simplified);
             tm.put("file", t.file);
@@ -1954,10 +2079,13 @@ public class OptimizeService {
         root.put("savedMs", System.currentTimeMillis());
         root.put("fp", fp);
         root.put("sig", sig);
-        root.put("note", "特征选择 features[].kind 与权重数值 weights 一一对应；每次「验证所有算法 / 自动调整参数」"
+        root.put("note", "特征选择 features[].kind 与权重数值 weights 一一对应；每次「刷新算法特征 / 自动调整参数」"
                 + "跑完由 OptimizeService 覆写，供后续功能直接读取（界面上可调的 Y 另存 classify/opt-weights.json）");
         root.put("algos", out);
         writeJson(snapshotFile(), root, "特征选择与权重快照");
+        // 同时留一份在内存里：三处数据变动（特征验证结果变旧 → 算法组合不出来）时随 status 下发，
+        // 界面照常展示上次的算法结构（见 status()），不必重启进程去读文件
+        lastAlgos = List.copyOf(out);
     }
 
     /** 原子落盘（先写 .tmp 再改名）：写失败只记日志，不打断任务。 */
