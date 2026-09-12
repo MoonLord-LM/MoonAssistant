@@ -3969,15 +3969,16 @@ function optRender(){
     const sn = Math.max(0, Number(t.totalSamples) || 0);
     const isMat = t.stage === "逐特征比对矩阵";
     const tuneStage = t.mode === "tune" && t.stage === "自动调整参数";
-    let st = "阶段：" + (t.stage || "准备中");
-    if(t.total) st += "　" + Math.min(t.done || 0, t.total) + "/" + t.total + " 个" + (isMat ? "特征" : (tuneStage ? "权重" : "算法"));
-    // 自动调整参数阶段：当前是「哪个算法 · 哪个特征 · 第几遍」的哪一轮（随机 / 网格 / 微调 / 四舍五入）第几次尝试、这次试到的 Y 是多少
-    if(tuneStage && t.cur) st += "（" + t.cur + (t.tuneKind ? " · " + vkInfo(t.tuneKind).name : "")
-      + (t.tunePass ? " · 第 " + (+t.tunePass + 1) + " 遍" : "")
-      + (t.trial ? " · 第 " + t.trial + "/" + (t.trials || 100) + " 次" + (t.trialRound || "随机") + " Y=" + fmtY(t.trialY) : "") + "）";
-    else if(t.cur) st += "（" + (isMat ? vkInfo(t.cur).name : t.cur) + "）";
-    if(sn) st += "　第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张";
-    tStat.textContent = st;
+    // 三行展示（原来挤成一行太长）：①阶段 ②当前项（第 N/M 个权重 + 哪个算法 · 哪个特征 · 第几遍）③本次尝试（哪一轮第几次 + Y）+ 本项内已比对张数
+    const item = t.total ? "第 " + Math.min(t.done || 0, t.total) + "/" + t.total + " 个" + (isMat ? "特征" : (tuneStage ? "权重" : "算法")) : "";
+    const cur = t.cur ? (isMat ? vkInfo(t.cur).name : t.cur) : "";
+    const itemTxt = item + (cur ? "（" + cur + (tuneStage && t.tuneKind ? " · " + vkInfo(t.tuneKind).name : "")
+      + (tuneStage && t.tunePass ? " · 第 " + (+t.tunePass + 1) + " 遍" : "") + "）" : "");
+    // 本轮（随机 / 网格 / 微调 / 四舍五入）第几次尝试、这次试到的 Y 是多少
+    const trialTxt = (tuneStage && t.trial) ? "第 " + t.trial + "/" + (t.trials || 100) + " 次" + (t.trialRound || "随机") + "，Y=" + fmtY(t.trialY) : "";
+    const sampleTxt = sn ? "比对第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "";
+    tStat.textContent = ["阶段：" + (t.stage || "准备中"), itemTxt, [trialTxt, sampleTxt].filter(Boolean).join("，")]
+      .filter(Boolean).join("\n");
     // 进度条走「合计张数」（跨特征 / 跨算法连续、每张都推进，不再等整张矩阵跑完才跳一格）；拿不到张数时退回外层项占比
     const pct = t.allTotal
       ? Math.min(t.allDone || 0, t.allTotal) / t.allTotal * 100
