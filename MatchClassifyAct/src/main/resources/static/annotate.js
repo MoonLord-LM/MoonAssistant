@@ -1661,7 +1661,7 @@ function showExitingScreen(){
   ov.id = "exitingScreen";
   ov.innerHTML =
     '<div class="xt" style="color:var(--amber)">正在退出程序…</div>' +
-    '<div class="msg">正在停止控制台服务与后台截图（录屏）任务。<br>此过程约需数秒，完成后页面会自动关闭。</div>';
+    '<div class="msg">正在停止后台服务。<br>此过程约需数秒，完成后页面会自动关闭。</div>';
   document.body.appendChild(ov);
 }
 
@@ -4889,19 +4889,22 @@ $("modeSel").addEventListener("change", ()=>{
 });
 
 /* ---------------- 执行模式：实时画面识别 + 动作执行（驱动 /api/execute/*；单次识别，无后台循环） ---------------- */
-let execClickMode = "post";     // 后端配置的点击方式（/api/execute/status.clickMode：post=后台消息 / screen=前台点击）
+let execClickMode = "screen";   // 后端配置的点击方式（/api/execute/status.clickMode：post=后台消息 / screen=前台点击，本值为后端默认的初值，进页面会按 /status 覆盖）
 let execLatest = null;          // 最近一次 /api/execute/latest 的返回
 let execShownAt = 0;            // 当前画面对应快照的 at（与 /api/execute/frame 配对）
 let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
 let execImgReady = false;       // 当前是否已有可展示的画面
 let execActBusy = false;        // “执行动作”进行中（防连点）
 let execShownStored = false;    // 当前画面是否已存入过（分类样本 / 待标注截图）：存入任一去处后其它存入按钮联动置灰，防同一帧重复存入
+let execShownStoreBusy = false; // 当前画面上有一笔「存入」在途：点下按钮的瞬间就把两组存入按钮全部置灰（不等后端 —— 查重要逐像素比全部历史图，可能很慢）；
+                                // 后端返回成功 / 判重都保持置灰（判重 = 这帧不必再存），只有真失败才恢复可点以便重试
 let execPending = false;        // 是否有「立即识别 / 进入即识别」一轮在途：在途时中央保持转圈，不让占位文案覆盖
 let execScanningOn = false;     // 中央是否正处于「正在截图识别…」转圈态（轮询期间避免反复重建动画）
 let execFrameRetries = 0;       // 画面帧瞬时加载失败的重试计数（快照刚被替换时短暂出现，最多重试 3 次）
 const execPollMs = 1500;
 let execAutoOn = false;     // 自动识别循环运行中？（红色按钮开关：运行时会自动 截图→确认→动作→响应等待 循环）
 let execAutoSeq = 0;        // 自动识别「代」序号：开/关时自增，用于让停止前仍在途的旧轮自动退出
+let execAutoRound = 0;      // 自动识别已进入的轮次（让「已停止」提示也能以「第 N 轮：」开头）
 
 const execEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -5074,6 +5077,7 @@ function renderExecAll(){
   if(j.imageWidth > 0 && j.at !== execShownAt){
     execShownAt = j.at;
     execShownStored = false;      // 新画面：重新允许存入（分类样本 / 待标注截图）
+    execShownStoreBusy = false;   // 新画面：上一帧在途的存入不再约束本帧按钮
     execLoadFrame();
   } else if(j.imageWidth > 0){
     renderExecMarkers();      // 同一帧：只刷新标记
@@ -5102,15 +5106,17 @@ function renderExecActBtn(j, clickable){
 }
 
 /* 「存入待标注」可用态：有当前画面即可点（自动识别循环中也保持可用，画面随时可另存为待标注）；
-   当前画面已存入过任一去处（execShownStored）时置灰为「已存入」，与候选行的「存入分类」联动 */
+   当前画面已存入过任一去处（execShownStored）或有存入在途（execShownStoreBusy）时置灰，与候选行的「存入分类」联动 */
 function renderExecSaveCap(j){
   const b = $("execSaveCap"); if(!b) return;
   if(!b.dataset.t0) b.dataset.t0 = b.title;      // 记住 HTML 里的原始说明，恢复用
   const can = !!(j && j.imageWidth > 0 && j.imageHeight > 0);
-  if(execShownStored){
+  if(execShownStored || execShownStoreBusy){
     b.disabled = true;
-    b.textContent = "已存入";
-    b.title = "当前画面已存入（待标注截图或某分类样本）；「立即识别」出新画面后可再次存入";
+    b.textContent = execShownStoreBusy ? "保存中…" : "已存入";
+    b.title = execShownStoreBusy
+      ? "正在保存当前画面（后台逐像素查重，可能较慢）…"
+      : "当前画面已存入（待标注截图或某分类样本）；「立即识别」出新画面后可再次存入";
   } else {
     b.disabled = !can;
     b.textContent = "存入待标注";
@@ -5123,19 +5129,24 @@ async function execSaveToCapture(){
   const b = $("execSaveCap");
   if(!b || b.disabled) return;
   const at0 = execShownAt;
-  b.disabled = true;
-  b.textContent = "保存中…";
+  // 点下即锁定两组存入按钮（不等后端）：查重要逐像素比全部历史图，可能很慢，这期间不能让按钮还能点
+  execShownStoreBusy = true;
+  renderExecSaveCap(execLatest);
+  renderExecCandidates((execLatest && execLatest.candidates) || []);
   const j = await execGet("/api/execute/save-to-capture", { method:"POST" });
+  const same = execShownAt === at0;                 // 仍是同一帧才改按钮状态（画面已换则交给新帧自己的状态）
   if(j && j.ok){
-    if(execShownAt === at0) execShownStored = true;   // 同帧保存成功：候选「存入分类」联动置灰
+    if(same){ execShownStored = true; execShownStoreBusy = false; }   // 保存成功：保持置灰
     toast("已把当前画面存入 resource/capture/（" + j.name + "）。切到「标注模式 → 未标注」即可定位并精确标注（含匹配动作与关注点坐标）。", "ok");
   } else if(j && j.kind === "dup"){
     // 与某张历史画面差异 ≤ 手动阈值被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与重复参考由后端给出
+    if(same){ execShownStored = true; execShownStoreBusy = false; }   // 几乎重复 = 这帧不必再存：同样保持置灰
     toast(j.message || "当前画面与某张已保存截图几乎重复（不一致像素占比 ≤ 手动阈值），本次未另存", "skip");
   } else {
+    if(same) execShownStoreBusy = false;            // 真失败：解除锁定，允许重试
     toast("保存失败：" + ((j && j.message) || "接口不可用"), "err");
   }
-  if(execShownAt === at0){                           // 仍是同一帧：立即刷新两组存入按钮，不等下轮轮询
+  if(same){                           // 仍是同一帧：立即刷新两组存入按钮，不等下轮轮询
     renderExecSaveCap(execLatest);
     renderExecCandidates((execLatest && execLatest.candidates) || []);
   }
@@ -5148,7 +5159,8 @@ function renderExecCandidates(list){
     box.innerHTML = '<div class="hint">暂无可用比对分组：请在标注模式为每个分类保存 ≥1 张同尺寸样本，并到「汇总分析」生成对照图（汇总分析完成即可参与识别）。</div>';
     return;
   }
-  const done = execShownStored;
+  const done = execShownStored, busy = execShownStoreBusy;
+  const locked = done || busy;    // 已存入 或 有一笔存入在途（点下即锁，不等后端查重）
   list.forEach((it, i) => {
     const row = document.createElement("div");
     row.className = "cand" + (i === 0 ? " top" : "");
@@ -5171,10 +5183,11 @@ function renderExecCandidates(list){
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mbtn";
-    btn.disabled = done;
-    btn.textContent = done ? "已存入" : "存入分类";
-    btn.title = done
-      ? "当前画面已存入（待标注截图或某分类样本）；重新「立即识别」出新画面后可再次存入"
+    btn.disabled = locked;
+    btn.textContent = locked ? (busy ? "保存中…" : "已存入") : "存入分类";
+    btn.title = locked
+      ? (busy ? "正在保存当前画面（后台逐像素查重，可能较慢）…"
+              : "当前画面已存入（待标注截图或某分类样本）；重新「立即识别」出新画面后可再次存入")
       : "把当前画面登记为「" + stateTxt + "」的样本（此后重跑算法调优会把 resource/runtime/ 刷新成新的综合最佳算法），下次识别会优先参考它";
     btn.addEventListener("click", () => execQuickMark(it.state, btn));
     row.appendChild(btn);
@@ -5233,22 +5246,27 @@ function openKindScores(it){
 async function execQuickMark(state, btn){
   if(!state || btn.disabled) return;
   const at0 = execShownAt;
-  btn.disabled = true;
-  btn.textContent = "存入中…";
+  // 点下即重建候选行 + 置灰「存入待标注」：本行、其它候选行一起锁定，不等后端查重返回（用户指定）
+  execShownStoreBusy = true;
+  renderExecCandidates((execLatest && execLatest.candidates) || []);
+  renderExecSaveCap(execLatest);
   const j = await execGet("/api/execute/mark", {
     method:"POST", headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ state: state })
   });
+  const same = execShownAt === at0;                  // 仍是同一帧才改按钮状态（画面已换则交给新帧自己的状态）
   if(j && j.ok){
-    if(execShownAt === at0) execShownStored = true;   // 同帧存入成功：其它候选行与「存入待标注」联动置灰
+    if(same){ execShownStored = true; execShownStoreBusy = false; }   // 存入成功：保持置灰
     toast("已把当前画面存入分类「" + state + "」的样本，后台将自动刷新该分类的对照图（约 3 秒后开始重算，完成后后续识别即按新样本匹配）。", "ok");
   } else if(j && j.kind === "dup"){
     // 与某张已保存图差异 ≤ 手动阈值被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与重复参考由后端给出
+    if(same){ execShownStored = true; execShownStoreBusy = false; }   // 几乎重复 = 这帧不必再存：同样保持置灰
     toast(j.message || "当前画面与某张已保存图几乎重复（不一致像素占比 ≤ 手动阈值），未存入分类（如需改标请在标注模式修改该样本的分类）", "skip");
   } else {
+    if(same) execShownStoreBusy = false;             // 真失败：解除锁定，允许重试
     toast("标记失败：" + ((j && j.message) || "接口不可用"), "err");
   }
-  if(execShownAt === at0){                           // 仍是同一帧：重建候选行并刷新「存入待标注」，不等下轮轮询
+  if(same){                           // 仍是同一帧：重建候选行并刷新「存入待标注」，不等下轮轮询
     renderExecCandidates((execLatest && execLatest.candidates) || []);
     renderExecSaveCap(execLatest);
   }
@@ -5365,6 +5383,8 @@ function execPollTick(){
 const execSleep = ms => new Promise(r => setTimeout(r, ms));
 const execModeZh = m => (m === "screen" ? "前台点击" : "后台消息");
 
+/* 状态提示：粉色的 <b>…</b> 是「高亮的那半句」，一律独占一行 —— 由 CSS 的
+   `.execAutoState b{display:block}` 负责（前后自动断行），各提示语里不用再写 <br>（用户指定） */
 function execAutoStatus(html){
   const el = $("execAutoState");
   if(!el) return;
@@ -5393,18 +5413,21 @@ function execAutoStop(){
   execAutoSeq++;                       // 让仍在途的旧轮 await 返回后自弃退出
   execAutoSetManual(false);
   execAutoBtnUi();
-  execAutoStatus("<b>已停止自动识别</b>（画面与右侧结果保留）。");
+  // 统一版式：灰字第一行带轮次「第 N 轮：」+ 粉字第二行（用户指定）
+  execAutoStatus("第 " + (execAutoRound || 1) + " 轮：画面与右侧结果保留"
+      + "<b>已停止自动识别。</b>");
 }
 function execAutoToggle(){
   if(execAutoOn){ execAutoStop(); return; }
   execAutoOn = true;
+  execAutoRound = 0;
   execAutoSeq++;
   execAutoBtnUi();
   execAutoSetManual(true);             // 循环期间禁用手动操作，避免与自动点击抢跑
-  execAutoStatus("自动识别已开启，开始第 1 轮：正在截图识别…");
-  execAutoLoop();
+  execAutoLoop();                      // 首句即「第 1 轮：正在截图识别…」，不必再写开启提示
 }
-/* 倒计时等待：把模板里的 {s} 每秒替换成剩余秒数；等待期间被停止则返回 false */
+/* 倒计时等待：把模板里的 {s} 每秒替换成剩余秒数；等待期间被停止则返回 false
+   （模板里粉色 <b> 的单独一行由 CSS `.execAutoState b{display:block}` 负责，不用写 <br>） */
 async function execAutoWait(tpl, secs, seq){
   for(let i = secs; i >= 1; i--){
     if(!(execAutoOn && seq === execAutoSeq)) return false;
@@ -5418,6 +5441,7 @@ async function execAutoLoop(){
   let round = 0;
   while(execAutoOn && seq === execAutoSeq){
     round++;
+    execAutoRound = round;             // 记住当前轮次，供「已停止」提示交代停在第几轮
     // 1) 截图并识别：/refresh 为同步一轮，返回即「识别完成」，随后渲染画面与右侧结果
     execAutoStatus("第 " + round + " 轮：正在截图识别…");
     const j = await execGet("/api/execute/refresh", { method:"POST" });
@@ -5443,8 +5467,8 @@ async function execAutoLoop(){
       continue;
     }
     // 2) 识别出可点击动作：留 3 秒确认时间（可查看画面/右侧结果，随时可点按钮停止）
-    const st = execEsc(j.state || "");
-    const keep2 = await execAutoWait('第 ' + round + ' 轮：识别为「' + st + '」· 点击 (' + j.left + ',' + j.top + ')。'
+    //    分类名不在状态行里重复 —— 画面准星 + 右栏「识别结果」已经写明识别成哪个分类（用户指定）
+    const keep2 = await execAutoWait('第 ' + round + ' 轮：点击 (' + j.left + ',' + j.top + ')。'
         + '<b>{s} 秒后按「' + execModeZh(execClickMode) + '」执行…</b>', 3, seq);
     if(!keep2) return;
     // 3) 按所选前台 / 后台方式直接执行本轮已识别结果（后端不再重复截图识别）
@@ -5456,9 +5480,10 @@ async function execAutoLoop(){
       const k3 = await execAutoWait('第 ' + round + ' 轮：执行请求失败（后端不可用）。<b>{s} 秒后开始下一轮…</b>', 2, seq);
       if(!k3) return;
     } else if(r.ok){
-      // 4) 动作完成：留 3 秒游戏响应时间再拍下一张
-      const k3 = await execAutoWait('已执行点击（' + execModeZh(execClickMode) + '，分类「'
-          + execEsc(r.state || st) + '」）。<b>{s} 秒游戏响应等待后开始下一轮…</b>', 3, seq);
+      // 4) 动作完成：留 3 秒游戏响应等待时间再拍下一张（分两行：上一行交代这次点击怎么发的，下一行交代何时进下一轮）
+      //    同样不报分类名（右栏结果区已展示）
+      const k3 = await execAutoWait('第 ' + round + ' 轮：已执行点击（' + execModeZh(execClickMode)
+          + '）。<b>{s} 秒游戏响应等待后开始下一轮…</b>', 3, seq);
       if(!k3) return;
     } else {
       const k3 = await execAutoWait('第 ' + round + ' 轮：本轮未能执行点击'

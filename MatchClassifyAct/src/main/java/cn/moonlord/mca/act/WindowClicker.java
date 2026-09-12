@@ -15,16 +15,16 @@ import org.springframework.stereotype.Component;
 /**
  * 鼠标点击执行器：把「识别出的点击点」（图片像素 = 窗口相对坐标 Left/Top）转成一次真实的鼠标左键点击。
  *
- * <p>两种执行方式（由 execute.click-mode 控制，默认 {@code post}）：</p>
+ * <p>两种执行方式（由 {@code execute.click-mode} 控制）：</p>
  * <ul>
- *   <li>{@code post}（默认）：后台消息。向目标窗口投递一条与真实鼠标路径一致的消息序列：先 3 次
+ *   <li>{@code screen}（默认）：前台点击。截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
+ *       因此用「窗口外框左上角 + 图片像素」得到屏幕坐标，再把窗口带到前台并用
+ *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。模拟器 / 游戏必须用此项；</li>
+ *   <li>{@code post}：后台消息。向目标窗口投递一条与真实鼠标路径一致的消息序列：先 3 次
  *       {@code WM_MOUSEMOVE} 模拟滑入轨迹、再 {@code WM_MOUSEACTIVATE} 声明点击意图（是否激活由窗口决定）、
  *       最后 {@code WM_LBUTTONDOWN}/{@code WM_LBUTTONUP}（客户区坐标 = 图片像素 − 标题栏 / 边框偏移）。
  *       不需要窗口在前台、不抢占用户鼠标，比只发「按下/抬起」更易被普通桌面程序接受；
- *       游戏 / 模拟器仍多数会忽略合成消息，此时切「前台点击」兜底；</li>
- *   <li>{@code screen}：前台点击。截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
- *       因此用「窗口外框左上角 + 图片像素」得到屏幕坐标，再把窗口带到前台并用
- *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。模拟器 / 游戏必须用此项。</li>
+ *       游戏 / 模拟器仍多数会忽略合成消息（点击效果不好时就用默认的前台点击）。</li>
  * </ul>
  */
 @Slf4j

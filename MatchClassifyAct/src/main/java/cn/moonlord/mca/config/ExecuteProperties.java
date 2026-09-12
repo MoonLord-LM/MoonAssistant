@@ -59,15 +59,15 @@ public class ExecuteProperties {
     /**
      * 鼠标点击的执行方式（控制台「执行模式」页可实时切换，本值为启动默认）：
      * <ul>
-     *   <li>{@code post}（默认）—— 后台消息：向目标窗口投递完整点击消息序列（3 次 {@code WM_MOUSEMOVE}
-     *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}，
-     *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台/可见、不抢占用户焦点。
-     *       比只发按下/抬起更易被普通桌面程序接受；游戏 / 模拟器多数仍忽略合成消息，此时切前台；</li>
-     *   <li>{@code screen} —— 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
+     *   <li>{@code screen}（默认）—— 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
      *       用「外框左上角 + 图片像素」得到屏幕坐标，把窗口带到前台后用
      *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。
-     *       模拟器 / 游戏必须用此项，否则点击无效。要求目标窗口可见且不被完全遮挡。</li>
+     *       模拟器 / 游戏必须用此项，否则点击无效。要求目标窗口可见且不被完全遮挡；</li>
+     *   <li>{@code post} —— 后台消息：向目标窗口投递完整点击消息序列（3 次 {@code WM_MOUSEMOVE}
+     *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}，
+     *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台/可见、不抢占用户焦点。
+     *       比只发按下/抬起更易被普通桌面程序接受；游戏 / 模拟器多数仍忽略合成消息。</li>
      * </ul>
      */
-    private String clickMode = "post";
+    private String clickMode = "screen";
 }

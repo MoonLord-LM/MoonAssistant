@@ -88,7 +88,8 @@
   @keyframes execAutoPulse{50%{opacity:.72}}
   .execAutoState{display:none;margin-top:8px;padding:6px 9px;font-size:11.5px;line-height:1.55;color:var(--muted);border:1px dashed rgba(255,92,108,.35);border-radius:8px;background:rgba(255,92,108,.06)}
   .execAutoState.show{display:block}
-  .execAutoState b{color:#ff98a6}
+  /* 状态提示里粉色的高亮半句一律独占一行（前后自动断行）—— 各提示语不必自己写 <br> */
+  .execAutoState b{display:block;color:#ff98a6}
   .cand{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px dashed var(--border);font-size:12.5px}
   .cand:last-child{border-bottom:0}
   .cand .cst{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
