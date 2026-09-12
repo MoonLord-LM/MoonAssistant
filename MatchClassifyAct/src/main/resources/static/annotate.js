@@ -4861,7 +4861,7 @@ function setAppMode(m){
   tipsRender();          // 换页面（标注 ↔ 执行）：最下方 tips 行只显示本页自己的常驻进度
   syncSugDock();
   if(m === "exec"){
-    toast("已切换到「执行模式」：立即识别当前画面，命中后一键执行点击。", "ok");
+    toast("已切换到「执行模式」：立即识别当前画面", "ok");
     syncCapStatus();                                  // 右上角截图开关沿用标注模式同款状态（文案/高亮与后端一致）
     if(typeof execOnModeChange === "function") execOnModeChange();
   } else {
