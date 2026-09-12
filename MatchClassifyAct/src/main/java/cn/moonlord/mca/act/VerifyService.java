@@ -265,6 +265,12 @@ public class VerifyService {
         return fp();
     }
 
+    /** 缓存里记的计算时指纹（{@code recordedFp}）与当前数据是否一致 —— 判「已计算 / 需重算」一律走这里
+     *  （缓存里本来就没有指纹、或指纹是空的，同样算过期）。 */
+    public boolean isFresh(String recordedFp) {
+        return recordedFp != null && !recordedFp.isEmpty() && recordedFp.equals(fp());
+    }
+
     /** 某 kind 的验证结果（未验证返回 null）：算法调优读取 A/B/C/D 与分类级明细来组合特征、算基础分 X。 */
     public KindStat statOf(String kind) {
         ensureCacheLoaded();
@@ -405,7 +411,7 @@ public class VerifyService {
                 k.put("genTotal", 0);
                 k.put("samples", 0);
             } else {
-                boolean fresh = fp.equals(st.fp);
+                boolean fresh = isFresh(st.fp);
                 if (!fresh) {
                     staleCount++;   // 需重算的算法数（前端提示「数据有变动，请重新验证」）
                 }
@@ -458,7 +464,7 @@ public class VerifyService {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("kind", kind);
-        out.put("fresh", fp().equals(st.fp));
+        out.put("fresh", isFresh(st.fp));
         out.put("doneMs", st.doneMs);
         out.put("costMs", st.costMs);
         out.put("a", st.a);              // 自分类平均匹配值（%）
@@ -488,18 +494,22 @@ public class VerifyService {
         return fpNow();
     }
 
-    /** 样本 / 产物变动指纹：classify 原图与标注 json、summary 产物（png + info.json）的 名称+大小+修改时间。 */
+    /** 样本 / 产物变动指纹：classify 原图与标注 json、summary 产物（png + info.json）的相对路径 + 大小 + 修改时间。 */
     private synchronized String fpNow() {
         StringBuilder sb = new StringBuilder();
-        appendTreeFiles(storage.classify(), sb);
-        appendTreeFiles(storage.summary(), sb);
-        String s = sb.toString();
+        appendTreeFiles("classify", storage.classify(), sb);
+        appendTreeFiles("summary", storage.summary(), sb);
         fpAt = System.currentTimeMillis();
-        fpLast = Integer.toHexString(s.hashCode());
+        fpLast = Integer.toHexString(sb.toString().hashCode());
         return fpLast;
     }
 
-    private void appendTreeFiles(Path root, StringBuilder sb) {
+    /** 把一个分区目录树下的全部常规文件按「分区名 / 相对路径 | 大小 | 修改时间」记进指纹。
+     *  指纹只回答「这批数据是不是同一份」，所以只记相对各自分区根的路径，绝不带绝对路径 / 盘符：
+     *  整个运行目录搬到别处、分区根改名（如从 {@code classify/} 挪到 {@code resource/classify/}）、
+     *  或换一个工作目录启动，只要文件本身（名字、大小、修改时间）没动，指纹就不该变——否则会白算一轮。
+     *  （分区名 + 相对路径 = 文件列表与文件名的完整身份：增删图 / 改名 / 换内容 / 换分类归属都仍会变指纹。） */
+    private void appendTreeFiles(String tag, Path root, StringBuilder sb) {
         if (root == null || !Files.isDirectory(root)) {
             return;
         }
@@ -509,14 +519,15 @@ public class VerifyService {
         } catch (IOException e) {
             return;
         }
-        files.sort((a, b) -> a.toString().compareTo(b.toString()));
+        // 排序键也用相对路径：绝对前缀变了不影响行序（顺序本身只是为了让指纹稳定可复现）
+        files.sort(Comparator.comparing(p -> root.relativize(p).toString()));
         for (Path p : files) {
             if (isDataFile(p.getFileName().toString())) {
                 continue;   // 缓存 / 结果 / 权重 / 去重数据不是产物：写它们（含本服务自己的缓存）不能反过来改变指纹
             }
             try {
                 BasicFileAttributes at = Files.readAttributes(p, BasicFileAttributes.class);
-                sb.append(p.toString()).append('|').append(at.size()).append('|')
+                sb.append(tag).append('/').append(root.relativize(p)).append('|').append(at.size()).append('|')
                   .append(at.lastModifiedTime().toMillis()).append('\n');
             } catch (IOException ignored) {
             }

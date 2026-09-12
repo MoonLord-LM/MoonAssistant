@@ -280,7 +280,7 @@
   .optTop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
   .optTop .ot{font-size:18px;font-weight:700;letter-spacing:.3px}
   .optTop .otSub{color:var(--muted);font-size:12.5px}
-  /* 算法调优「已过期 · 需重算」状态条：与汇总分析的状态条同一套 warn 配色，但作为主图区里的横条（不是浮层） */
+  /* 算法调优「需重算」状态条：与汇总分析的状态条同一套 warn 配色，但作为主图区里的横条（不是浮层） */
   .optStale{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 12px;font-size:12px;line-height:1.6;color:#ffe6b0;
     border:1px solid rgba(255,178,44,.45);border-radius:10px;background:rgba(255,178,44,.07)}
   .optStale[hidden]{display:none}
@@ -291,6 +291,8 @@
   .optcard{border:1px solid var(--border);background:var(--panel2);border-radius:10px;padding:12px 14px}
   .optcard h4{margin:0 0 6px;font-size:13px}
   .optcard .ocap{font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.6}
+  /* 右栏统计行的「综合最佳算法」：主要结果（执行模式 / 「未标注」智能推荐只认它）→ 加粗 + 绿字突出 */
+  .optBest{color:var(--green);font-weight:700}
   .optWBtnRow{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
   .optWBtnRow .btn{font-size:12px}
   .optResWrap{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
@@ -378,8 +380,9 @@
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
   .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
   .sb-btn:hover{background:var(--accent);color:#fff}
-  /* 候选行里每个候选自己的「填入」：比主按钮更小、更低调，点哪个就把哪个填成分类标注 */
-  .sb-btn.mini{margin-left:4px;padding:0 6px;font-size:10.5px;border-color:rgba(79,140,255,.35);color:#8ea6dd}
+  /* 候选行里每个候选自己的「填入」：带边框的小按钮，颜色与候选分类名（<b> 的黄）同色，点哪个就把哪个填成分类标注 */
+  .sb-btn.mini{margin-left:4px;padding:2px 9px;font-size:11.5px;line-height:1.35;border-color:rgba(255,210,77,.75);color:#ffd24d}
+  .sb-btn.mini:hover{background:#ffd24d;color:var(--bg)}
   /* 汇总分析 · 对照图卡片：卡片宽固定 = 原图 1/2 + 边框（仅当主图区窄到连一张整卡都放不下时，
      单卡由 JS 收窄到可用宽、图等比缩小完整可见，绝不横向裁掉右半）。
      #thinkPane 自身就是滚动容器（高度撑满主图区、overflow:auto）：卡片行列超出时由它出纵向滚动条，

@@ -63,6 +63,19 @@ public class StoragePaths {
 
     /** 相对目录名统一挂到 {@value #ROOT_DIR}/ 下；配了绝对路径的则原样使用（Path#resolve 对绝对路径直接返回它自身） */
     private Path resolve(String name) {
-        return Paths.get(ROOT_DIR).resolve(name).toAbsolutePath().normalize();
+        return declared(name).toAbsolutePath().normalize();
+    }
+
+    /** 分区目录「怎么配就怎么写」的写法：相对目录名前挂 {@value #ROOT_DIR}/、绝对路径原样；{@link #resolve} 在它之上补绝对化。 */
+    private static Path declared(String name) {
+        return Paths.get(ROOT_DIR).resolve(name);
+    }
+
+    /** 已标注目录下某个文件的落盘写法（{@value #ROOT_DIR}/&lt;分区目录&gt;/&lt;文件名&gt;）：落盘进 json / 展示给
+     *  用户的路径一律用它 —— 本机绝对路径一旦进了产物（如算法调优摘要里的权重文件位置），换台机器 / 换个目录打开
+     *  就指向别人机器上的位置，既无从核对又泄露本机路径。与 {@link #classify()} 走同一条拼法，所以分区目录改名 /
+     *  配成绝对路径时它跟着变，不会记成一个对不上的位置。 */
+    public String classifyFile(String fileName) {
+        return declared(properties.getClassifyDir()).resolve(fileName).toString();
     }
 }

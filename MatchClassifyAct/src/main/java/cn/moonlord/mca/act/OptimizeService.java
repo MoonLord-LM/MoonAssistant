@@ -210,7 +210,7 @@ public class OptimizeService {
 
     /** 上次结果里的算法结构（快照 resource/summary/opt-weights.json 的 {@code algos}：特征清单 + 基础分 X + 权重 Y）。
      *  只在「特征验证结果已变旧、算法组合不出来」时随 status 下发：界面像「汇总分析」那样照常展示上次的数据
-     *  （主图区算法卡片 + 左栏数值 + 结果卡），并标「已过期 · 需重算」。 */
+     *  （主图区算法卡片 + 左栏数值 + 结果卡），并标「需重算」。 */
     private volatile List<Map<String, Object>> lastAlgos = List.of();
 
     // ---------------------------------------------------------------- 数据结构
@@ -286,12 +286,20 @@ public class OptimizeService {
         public volatile int allTotal;
         /** 任务类型：verify = 刷新算法特征；tune = 自动调整参数（阶段文案与完成提示都按它区分）。 */
         public volatile String mode = "verify";
-        /** 本轮只重算的算法 id（空 = 全部）：改某个权重时只重算它，其余算法沿用上次结果、界面也不标「等待刷新」。 */
+        /** 本轮只重算的算法 id（空 = 全部）：改某个权重时只重算它，其余算法沿用上次结果、界面也不标「等待重算」。 */
         public volatile List<String> only = List.of();
         /** 自动调整参数阶段：当前权重所属特征 kind、本轮名称（随机 / 网格 / 微调 / 四舍五入）、第几次尝试（共 trials 次）、本次 Y、基线与已找到的最好结果。 */
         public volatile String tuneKind;
         /** 当前权重试到第几遍（0 = 第一遍的四轮；这一遍采纳了更好的值就再只跑随机轮追加一遍，最多 {@value #TUNE_REPEAT} 遍）。 */
         public volatile int tunePass;
+        /** 自动调整参数的两个阶段（与界面「!」里的编号同一套）：1 = 逐个算法随机尝试，2 = 逐个权重随机尝试（0 = 还没进 / 已调完）。 */
+        public volatile int tunePhase;
+        /** 正在调第几个算法（1 起）与算法总数：两个阶段都用它交代「当前算法」（含单一特征那种不参与调参的算法）。 */
+        public volatile int algoNo;
+        public volatile int algoTotal;
+        /** 当前权重这一遍走到第几轮（1 起）与本遍轮数：第一遍四轮（随机 / 网格 / 微调 / 四舍五入），追加的遍只跑随机轮。 */
+        public volatile int roundNo;
+        public volatile int roundTotal;
         public volatile String trialRound;
         public volatile int trial;
         public volatile int trials;
@@ -347,7 +355,7 @@ public class OptimizeService {
         public volatile int repeats;
         /** 第 4 轮四舍五入微调里被换成更简单值的权重个数（按 {@code TUNE_SIMPLIFY} 逐档四舍五入后两率一点没变才换）。 */
         public volatile int simplified;
-        /** 权重文件的落盘路径。 */
+        /** 权重文件的落盘位置（相对运行目录的写法，落盘时由 {@link StoragePaths#relative} 生成）。 */
         public volatile String file;
         /** 记录时的验证指纹（与当前不一致 = 已标注 / 汇总分析有变动，摘要即过期）。 */
         public volatile String fp;
@@ -409,8 +417,7 @@ public class OptimizeService {
             return false;
         }
         Result res = result;
-        if (res == null || !res.finished || res.error != null || res.fp == null
-                || !res.fp.equals(verify.fingerprint())) {
+        if (res == null || !res.finished || res.error != null || !verify.isFresh(res.fp)) {
             return false;   // 必须先跑完一次「刷新算法特征」，且结果对得上当前的样本 / 产物
         }
         if (!sigOf(algorithms()).equals(res.sig)) {
@@ -509,7 +516,7 @@ public class OptimizeService {
                 continue;
             }
             computed++;
-            if (fp.equals(st.fp)) {
+            if (verify.isFresh(st.fp)) {
                 fresh++;
             }
         }
@@ -565,9 +572,14 @@ public class OptimizeService {
             task.put("reuseRows", r.reuseRows);     // 本轮直接复用逐图比对结果的样本张数
             task.put("reuseKinds", r.reuseKinds);   // 本轮整表复用的特征数
             task.put("mode", r.mode);
-            task.put("only", r.only);                // 只重算的算法 id（空 = 全部）：界面把进度与「等待刷新」收敛到它上面
+            task.put("only", r.only);                // 只重算的算法 id（空 = 全部）：界面把进度与「等待重算」收敛到它上面
             task.put("tuneKind", r.tuneKind);
             task.put("tunePass", r.tunePass);         // 当前权重试到第几遍（0 起）：找到更好的值就再只跑随机轮重试一遍
+            task.put("tunePhase", r.tunePhase);       // 自动调整参数的两个阶段：1 = 逐个算法随机尝试，2 = 逐个权重随机尝试
+            task.put("algoNo", r.algoNo);             // 正在调第几个算法（1 起）与算法总数
+            task.put("algoTotal", r.algoTotal);
+            task.put("roundNo", r.roundNo);           // 当前权重这一遍的第几轮（1 起）与本遍轮数
+            task.put("roundTotal", r.roundTotal);
             task.put("trialRound", r.trialRound);
             task.put("trial", r.trial);
             task.put("trials", r.trials);
@@ -596,7 +608,7 @@ public class OptimizeService {
             rm.put("groups", res.groups);
             rm.put("fp", res.fp);
             // 过期 = 指纹变了（已标注 / 汇总分析有变动）或算法组合口径变了（特征验证结果不齐 / 代码改了算法定义）
-            rm.put("stale", staleOf(res.fp, res.sig, fp, live));
+            rm.put("stale", staleOf(verify.isFresh(res.fp), res.sig, live));
             rm.put("algos", res.algos);
             out.put("result", rm);
         }
@@ -615,7 +627,7 @@ public class OptimizeService {
             tm.put("repeats", t.repeats);             // 找到更好的值后追加的重跑遍数合计（界面统计行按它交代多花的工夫）
             tm.put("simplified", t.simplified);       // 第 4 轮四舍五入微调里被换成更简单值的权重个数（界面统计行按它交代）
             tm.put("file", t.file);
-            tm.put("stale", staleOf(t.fp, t.sig, fp, live));
+            tm.put("stale", staleOf(verify.isFresh(t.fp), t.sig, live));
             tm.put("algos", t.algos);
             out.put("tune", tm);
         }
@@ -693,7 +705,7 @@ public class OptimizeService {
         List<String> states = new ArrayList<>();
         for (String kind : order) {
             VerifyService.KindStat st = verify.statOf(kind);
-            if (st == null || !fp.equals(st.fp)) {
+            if (st == null || !verify.isFresh(st.fp)) {
                 return List.of();   // 未验证 / 已过期：需先在「特征验证」视图重跑
             }
             feats.add(toFeat(st));
@@ -910,12 +922,12 @@ public class OptimizeService {
     private void doRun(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo, List<String> onlyIds) {
         runThread.set(Thread.currentThread());   // 记下本轮线程：新请求会直接打断它
         // 只重算被改动的算法（onlyIds）：其余算法直接沿用上次结果里的行 —— 同一批样本 / 产物、同一份比对矩阵、
-        // 权重又没变，重算只会得到一模一样的数值，省下时间的同时界面也不必把它们标成「等待刷新」
+        // 权重又没变，重算只会得到一模一样的数值，省下时间的同时界面也不必把它们标成「等待重算」
         String sig = sigOf(algos);
         Map<String, Map<String, Object>> prevRows = new HashMap<>();
         Result prev = result;
         if (prev != null && prev.finished && prev.error == null && prev.algos != null
-                && prev.fp != null && prev.fp.equals(verify.fingerprint()) && sig.equals(prev.sig)) {
+                && verify.isFresh(prev.fp) && sig.equals(prev.sig)) {
             for (Map<String, Object> row : prev.algos) {
                 prevRows.put(String.valueOf(row.get("id")), row);
             }
@@ -1142,6 +1154,7 @@ public class OptimizeService {
         int improved = 0;
         int combos = 0;       // 「随机组合尝试」阶段被采纳的次数（也计入 improved，这里单列交代多少改善来自大范围随机）
         int comboDone = 0;    // 已走完随机组合尝试的算法数
+        int algoIdx = 0;      // 已开始处理的算法数：进度行按「第 N/M 个算法」交代当前算法
         int repeats = 0;
         int simplified = 0;   // 第 4 轮四舍五入微调里被换成更简单值的权重个数（两率一点没变才换）
         int retryCost = TUNE_RETRY_TRIALS * sn;   // 追加的一遍只跑随机轮：TUNE_RETRY_TRIALS 个随机值 × 样本张数，追加一遍就多这一份
@@ -1157,9 +1170,14 @@ public class OptimizeService {
             double[] y = cur.get(a.id);
             double[] y0 = y.clone();
             r.stage = "自动调整参数";
+            r.tunePhase = 2;             // 阶段 2/2 逐个权重随机尝试（下面若要走随机组合会临时改成 1）
             r.cur = a.name;
+            r.algoNo = ++algoIdx;        // 进度行按「第 N/M 个算法」交代当前算法（M = 全部算法，含单一特征那种不参与调参的）
+            r.algoTotal = algos.size();
             r.tuneKind = null;
             r.trialRound = null;
+            r.roundNo = 0;
+            r.roundTotal = 0;
             r.trial = 0;
             r.trialY = null;
             r.total = weightsTotal;
@@ -1179,10 +1197,13 @@ public class OptimizeService {
             //    （逐个权重只能一次动一个），随机范围更大、不易停在局部最优。采纳口径同下（正确率上升或无法区分率下降）。
             if (a.features.size() >= 2) {
                 r.stage = "随机组合尝试";
+                r.tunePhase = 1;             // 阶段 1/2 逐个算法随机尝试（整段没有轮次，roundNo / roundTotal 归零）
                 r.total = comboAlgos;
                 r.done = ++comboDone;
                 r.tuneKind = null;
                 r.tunePass = 0;
+                r.roundNo = 0;
+                r.roundTotal = 0;
                 r.trialRound = "随机组合";
                 r.trials = TUNE_COMBO_TRIALS;
                 int nf = a.features.size();
@@ -1243,8 +1264,11 @@ public class OptimizeService {
                 r.comboKinds = List.of();
                 r.comboYs = List.of();
                 r.stage = "自动调整参数";                      // 回到逐个权重阶段：阶段文案与计数口径换回来
+                r.tunePhase = 2;                              // 阶段 2/2：逐个权重随机尝试
                 r.total = weightsTotal;
                 r.done = done;
+                r.roundNo = 0;
+                r.roundTotal = 0;
                 r.trial = 0;
                 r.trialRound = null;
                 r.trialY = null;
@@ -1275,6 +1299,8 @@ public class OptimizeService {
                                 : TUNE_RETRY_TRIALS;                                // 追加的遍换成 TUNE_RETRY_TRIALS 个随机值
                         r.trials = trials;
                         r.trialRound = round == 0 ? "随机" : round == 1 ? "网格" : round == 2 ? "微调" : "四舍五入";
+                        r.roundNo = round + 1;          // 这一遍走到第几轮（第一遍四轮：随机 / 网格 / 微调 / 四舍五入）
+                        r.roundTotal = rounds;          // 追加的遍只跑随机轮，所以是 1 轮
                         r.trial = 0;
                         r.trialY = null;
                         double pickY = Double.NaN;
@@ -1368,6 +1394,9 @@ public class OptimizeService {
         r.stage = "算法评估";
         r.total = algos.size();
         r.done = 0;
+        r.tunePhase = 0;              // 调参的两个阶段都已走完：进度行回到「第 N/M 个算法」口径
+        r.roundNo = 0;
+        r.roundTotal = 0;
         r.tuneKind = null;
         r.tunePass = 0;
         r.trialRound = null;
@@ -1413,7 +1442,7 @@ public class OptimizeService {
         t.combos = combos;
         t.repeats = repeats;
         t.simplified = simplified;
-        t.file = weightsFile().toString();
+        t.file = storage.classifyFile(WEIGHTS_FILE);   // 只记相对运行目录的位置：本机绝对路径不该进产物
         t.fp = env.fp();
         t.sig = res.sig;
         t.algos = summary;
@@ -2098,9 +2127,10 @@ public class OptimizeService {
     }
 
     /** 结果 / 摘要是否过期：记录时的指纹对不上（已标注 / 汇总分析有变动），或算法组合口径对不上
-     *  （特征验证结果不齐 → live 为空；或代码里改了算法定义）。 */
-    private static boolean staleOf(String fp, String sig, String curFp, String live) {
-        return fp == null || !fp.equals(curFp) || !live.equals(sig == null ? "" : sig);
+     *  （特征验证结果不齐 → live 为空；或代码里改了算法定义）。{@code fpFresh} 由 {@link VerifyService#isFresh}
+     *  给出；记录里本来就没有指纹时同样是 false（照样算过期）。 */
+    private static boolean staleOf(boolean fpFresh, String sig, String live) {
+        return !fpFresh || !live.equals(sig == null ? "" : sig);
     }
 
     /** 首次访问时从 resource/summary/opt-result.json 完整恢复上次结果与「自动调整参数」摘要（幂等，失败只记日志）。
