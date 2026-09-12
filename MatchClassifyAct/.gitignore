@@ -1,18 +1,8 @@
-capture/
-!**/src/main/**/capture/
-!**/src/test/**/capture/
-
-classify/
-!**/src/main/**/classify/
-!**/src/test/**/classify/
-
-summary/
-!**/src/main/**/summary/
-!**/src/test/**/summary/
-
-runtime/
-!**/src/main/**/runtime/
-!**/src/test/**/runtime/
+# 运行数据：四个分区统一收纳在 resource/ 下（见 README 第二节）
+resource/capture/
+resource/classify/
+resource/summary/
+resource/runtime/
 
 *.exe
 *.json

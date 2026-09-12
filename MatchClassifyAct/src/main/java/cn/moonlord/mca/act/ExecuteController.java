@@ -25,8 +25,8 @@ import java.util.Map;
  *   <li>{@code GET  /api/execute/latest} —— 最近一次识别结果快照；</li>
  *   <li>{@code GET  /api/execute/frame} —— 最近快照对应的画面 PNG（供 <img> 展示）；</li>
  *   <li>{@code POST /api/execute/act} —— 触发执行：直接按最近一次识别结果的动作/坐标发送鼠标点击（不重新截图识别）；</li>
- *   <li>{@code POST /api/execute/save-to-capture} —— 把当前画面另存为 capture/ 的原始截图
- *       （未标注，供切回标注模式人工精确标注/修正坐标）。保存前与 capture/ + classify/ 全部
+ *   <li>{@code POST /api/execute/save-to-capture} —— 把当前画面另存为 resource/capture/ 的原始截图
+ *       （未标注，供切回标注模式人工精确标注/修正坐标）。保存前与 resource/capture/ + resource/classify/ 全部
  *       同尺寸 PNG 全尺寸逐像素比对、统计不一致像素点占比（阈值
  *       {@code capture.diff-threshold-manual-percent}）：与任意一张占比 ≤ 阈值即判为
  *       重复，拒绝另存并返回 kind=dup（含 diffPercent / threshold）。</li>
@@ -87,7 +87,7 @@ public class ExecuteController {
     }
 
     /** 快速标记：把最近一次识别画面另存为指定分类的新样本（识别错了 → 立即纠正，减少后续误判）。
-     *  保存前与 capture/ + classify/ 全部同尺寸 PNG 全尺寸逐像素比对、统计不一致像素点占比（阈值
+     *  保存前与 resource/capture/ + resource/classify/ 全部同尺寸 PNG 全尺寸逐像素比对、统计不一致像素点占比（阈值
      *  {@code capture.diff-threshold-manual-percent}）：与任意一张占比 ≤ 阈值即拒绝
      *  （kind=dup，含 diffPercent / threshold）。 */
     @PostMapping("/mark")
@@ -95,7 +95,7 @@ public class ExecuteController {
         return executionService.markFrameAsSample(body == null ? null : body.get("state"));
     }
 
-    /** 把最近一次识别画面另存为 capture/ 下的原始截图（未标注）：需人工精确标注 / 修正坐标时，
+    /** 把最近一次识别画面另存为 resource/capture/ 下的原始截图（未标注）：需人工精确标注 / 修正坐标时，
      *  先放入截图区，再到「标注模式 → 未标注」按正常流程标注。 */
     @PostMapping("/save-to-capture")
     public Map<String, Object> saveToCapture() {

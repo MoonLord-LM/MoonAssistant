@@ -35,11 +35,11 @@ import java.util.stream.Stream;
 /**
  * 控制台标注接口。图片按三个阶段分目录存放：
  * <pre>
- *   capture/   原始截图（未标注）
- *   classify/  已标注样本：PNG + 归属 json（仅 {state}）；同目录 data.json = 分类定义中心表（动作/坐标，每分类一份）
- *   summary/   汇总分析产物（见 ThinkService）
+ *   resource/capture/   原始截图（未标注）
+ *   resource/classify/  已标注样本：PNG + 归属 json（仅 {state}）；同目录 data.json = 分类定义中心表（动作/坐标，每分类一份）
+ *   resource/summary/   汇总分析产物（见 ThinkService）
  * </pre>
- * 列表接口合并 capture/ 与 classify/ 两处（同一文件名优先取 classify/，即已标注版本）。
+ * 列表接口合并 resource/capture/ 与 resource/classify/ 两处（同一文件名优先取 resource/classify/，即已标注版本）。
  *
  * <p>页面入口：{@code http://localhost:8080/annotate}（静态页 <code>static/index.html</code>）。</p>
  *
@@ -82,7 +82,7 @@ public class AnnotateController {
 
     @GetMapping("/images")
     public List<ImageItem> listImages() throws IOException {
-        // 同一文件名可能跨目录，优先取 classify/（已标注）；capture/ 只在无同名时兜底
+        // 同一文件名可能跨目录，优先取 resource/classify/（已标注）；resource/capture/ 只在无同名时兜底
         Map<String, Path> byName = new TreeMap<>();
         for (Path p : listPngs(storage.classify())) {
             byName.put(p.getFileName().toString(), p);
@@ -100,7 +100,7 @@ public class AnnotateController {
             Integer attnLeft = null;
             Integer attnTop = null;
             boolean marked = false;
-            // classify/ 下的样本：动作与坐标以中心表定义为准（样本 json 只存 state 归属）
+            // resource/classify/ 下的样本：动作与坐标以中心表定义为准（样本 json 只存 state 归属）
             if (png.startsWith(storage.classify())) {
                 CaptureMark m = classifyStore.readSample(e.getKey());
                 if (m != null) {
@@ -170,7 +170,7 @@ public class AnnotateController {
         if (png == null) {
             return ResponseEntity.notFound().build();
         }
-        // 合成读取：样本 json 的 state + 中心表动作坐标；capture/（未标注）无 json 时返回空标注
+        // 合成读取：样本 json 的 state + 中心表动作坐标；resource/capture/（未标注）无 json 时返回空标注
         CaptureMark result = classifyStore.readSample(name);
         return ResponseEntity.ok(result != null ? result : new CaptureMark());
     }
@@ -178,14 +178,14 @@ public class AnnotateController {
     /**
      * 保存标注（分类定义表驱动）：
      * <ul>
-     *   <li>样本 json 只记录分类归属 {@code {state}}，动作与坐标收敛到 classify/data.json 中心表；</li>
+     *   <li>样本 json 只记录分类归属 {@code {state}}，动作与坐标收敛到 resource/classify/data.json 中心表；</li>
      *   <li>该分类<b>尚无定义</b> → 以本次提交的 action/left/top 建立定义（首次固定，成为该分类唯一动作）；</li>
      *   <li>该分类<b>已有定义且仍存在样本</b> → 本图只登记归属，动作坐标一律以定义为准（提交的动作/坐标会被定义覆盖）；</li>
      *   <li>该分类<b>仅残留空定义（历史样本已删光）</b> → 界面上已无该分类的图，等同全新分类，允许按本次提交重新定义；</li>
      *   <li>对<b>已标注图</b>改自己的分类的动作/坐标（state 不变）→ 视为<b>重定义该分类</b>，同步到全组样本；</li>
      *   <li>带 {@code ?redefine=true}（前端已弹确认）→ 未标注图 / 换了分类名时也按本次提交覆盖该分类定义。</li>
      * </ul>
-     * 若截图还在 capture/（未标注），写入成功后整体移到 classify/（进入“已标注”数据集）。
+     * 若截图还在 resource/capture/（未标注），写入成功后整体移到 resource/classify/（进入“已标注”数据集）。
      *
      * @param redefine 前端确认过的“重定义该分类”授权：true 时按提交内容覆盖已有定义
      *                 （未标注图 / 换分类名同样生效，动作与坐标对全组样本同步）
@@ -280,7 +280,7 @@ public class AnnotateController {
         try {
             classifyStore.saveSample(name, state);
             if (!alreadyClassified) {
-                // 样本 json 已落盘 classify/，再把原始截图从 capture/ 移入 classify/
+                // 样本 json 已落盘 resource/classify/，再把原始截图从 resource/capture/ 移入 resource/classify/
                 try {
                     Files.createDirectories(storage.classify());
                     Files.move(png, storage.classify().resolve(png.getFileName()));
@@ -291,12 +291,12 @@ public class AnnotateController {
                     }
                     log.error("标注文件已写入但截图迁移失败，已回滚 {}: {}", png, e.toString());
                     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body("标注数据已写入但截图移入 classify/ 失败，已自动回滚，请重试：" + e.getMessage());
+                        .body("标注数据已写入但截图移入 resource/classify/ 失败，已自动回滚，请重试：" + e.getMessage());
                 }
                 log.debug("标注完成，截图 {}/ → {}/", storage.capture(), storage.classify());
             }
             thinkService.requestRecompute();   // 样本集合已变化：后台自动补齐/刷新该分类对照图（无需进入汇总分析页）
-            // 样本从旧分类改归其它分类：若旧分类已无任何样本则清理其空定义与 summary/ 残留产物
+            // 样本从旧分类改归其它分类：若旧分类已无任何样本则清理其空定义与 resource/summary/ 残留产物
             if (alreadyClassified && oldState != null && !oldState.isEmpty() && !oldState.equals(state)) {
                 cleanupVacantState(oldState);
             }
@@ -309,9 +309,9 @@ public class AnnotateController {
     }
 
     /**
-     * 清除标注：若截图在 classify/ 下先把 PNG 移回 capture/（位置还原为“未标注”数据集），
+     * 清除标注：若截图在 resource/classify/ 下先把 PNG 移回 resource/capture/（位置还原为“未标注”数据集），
      * 再删除同名 .json。先移后删，移动失败时标注文件原样保留、整体保持原状，
-     * 避免出现“标注已删、截图却仍留在 classify/”的半清除态。
+     * 避免出现“标注已删、截图却仍留在 resource/classify/”的半清除态。
      */
     @DeleteMapping("/mark/{name:.+}")
     public ResponseEntity<?> deleteMark(@PathVariable String name) {
@@ -334,7 +334,7 @@ public class AnnotateController {
                     Files.delete(mark);
                 }
             } catch (IOException e) {
-                // 标注文件删除失败：把已移走的截图挪回 classify/，与标注重新成对，保持清除前原状
+                // 标注文件删除失败：把已移走的截图挪回 resource/classify/，与标注重新成对，保持清除前原状
                 if (movedBack != null) {
                     try {
                         Files.move(movedBack, png);
@@ -358,7 +358,7 @@ public class AnnotateController {
 
     // ------------------------------------------------------------------ 空分类清理
 
-    /** 已标注样本当前归属分类：png 在 classify/ 且样本 json 可读才返回其 state（读不到返回 null） */
+    /** 已标注样本当前归属分类：png 在 resource/classify/ 且样本 json 可读才返回其 state（读不到返回 null） */
     private String currentState(String name, Path png) {
         if (png == null || !png.startsWith(storage.classify())) {
             return null;
@@ -371,7 +371,7 @@ public class AnnotateController {
         return st == null ? "" : st.trim();
     }
 
-    /** 样本全部移出某分类后的残留清理：若该分类样本已清零，删 data.json 空定义 + summary/ 残留产物目录 */
+    /** 样本全部移出某分类后的残留清理：若该分类样本已清零，删 data.json 空定义 + resource/summary/ 残留产物目录 */
     private void cleanupVacantState(String state) {
         String st = state == null ? "" : state.trim();
         if (st.isEmpty() || classifyStore.sampleCount(st) > 0) {
@@ -387,7 +387,7 @@ public class AnnotateController {
 
     /**
      * 分类标注整体改名：中心表 data.json 的 key 与全部使用该分类的样本 json 的 state 一并改为新名，
-     * 该分类旧的汇总分析产物目录也随改名整体迁移为 summary/&lt;to&gt;（画面像素未变，无需后台重建）。
+     * 该分类旧的汇总分析产物目录也随改名整体迁移为 resource/summary/&lt;to&gt;（画面像素未变，无需后台重建）。
      * 目标名称若已有分类定义或被其它图片使用则拒绝（合并请先处理，避免动作语义混乱）。
      */
     @PostMapping("/rename")
@@ -431,7 +431,7 @@ public class AnnotateController {
 
     /**
      * 把整张截图（PNG + 同名标注 .json）移入系统回收站，控制台不再显示该图。
-     * 截图可能位于 capture/（未标注）或 classify/（已标注），两个目录都能删除。
+     * 截图可能位于 resource/capture/（未标注）或 resource/classify/（已标注），两个目录都能删除。
      */
     @PostMapping("/delete")
     public ResponseEntity<?> deleteImage(@RequestBody Map<String, String> body) {
@@ -504,12 +504,12 @@ public class AnnotateController {
         return null;
     }
 
-    /** 校验图片名只落在 classify/ 或 capture/ 内且是 .png，返回其绝对路径；非法返回 null */
+    /** 校验图片名只落在 resource/classify/ 或 resource/capture/ 内且是 .png，返回其绝对路径；非法返回 null */
     private Path safePng(String name) {
         if (name == null || name.isEmpty()) {
             return null;
         }
-        // 已标注优先（若两个目录意外出现同名，classify/ 版本为准）
+        // 已标注优先（若两个目录意外出现同名，resource/classify/ 版本为准）
         Path hit = within(storage.classify(), name);
         if (hit == null) {
             hit = within(storage.capture(), name);

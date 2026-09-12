@@ -101,10 +101,10 @@ import java.util.stream.Stream;
  * 历史旧目录产物不全，重算后补齐）
  * 才参与汇总分析 / 特征验证 / 算法调优
  * （见 {@link cn.moonlord.mca.act.FrameClassifier}）；算法调优跑完会把综合最佳算法用到的那几种 kind
- * 复制一份到 {@code runtime/}，执行识别只认那份副本（见 {@link RuntimeService}）。两套方框交集图都不参与独有区互比，
+ * 复制一份到 {@code resource/runtime/}，执行识别只认那份副本（见 {@link RuntimeService}）。两套方框交集图都不参与独有区互比，
  * 也没有 -unique 版本。</p>
  *
- * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
+ * <p>产物统一放在 {@code resource/summary/<分类标注>/} 目录下（{@code resource/} 下的四分区布局见
  * {@link StoragePaths}），基础图使用固定文件名：
  * {@code same100.png / same100-unique.png / same90.png / same90-unique.png / same80.png /
  * same80-unique.png / same70.png / same70-unique.png / same60.png / same60-unique.png / same50.png /
@@ -121,8 +121,8 @@ import java.util.stream.Stream;
  * 写入同目录 {@code info.json}。产物只被汇总分析 / 特征验证 / 算法调优读取、不参与标注样本的修改，
  * 画面标签一律以控制台的人工标注为准。</p>
  *
- * <p>样本截图只读 classify/（已标注的截图 + .json）；单图智能建议的目标图（未标注）
- * 只读 capture/。</p>
+ * <p>样本截图只读 resource/classify/（已标注的截图 + .json）；单图智能建议的目标图（未标注）
+ * 只读 resource/capture/。</p>
  *
  * <p>截图来自同一窗口同一坐标系，画面位置固定，只需逐像素同位比较，无需平移匹配。</p>
  */
@@ -254,7 +254,7 @@ public class ThinkService {
 
     private final StoragePaths storage;
     private final ClassifyStore classifyStore;
-    /** 运行时算法（runtime/，算法调优选出的「综合最佳算法」）：智能建议直接走它做比对，
+    /** 运行时算法（resource/runtime/，算法调优选出的「综合最佳算法」）：智能建议直接走它做比对，
      *  保证与执行模式同算法、同口径、同缓存 */
     private final RuntimeService runtimeService;
     private final ExecuteProperties executeProperties;
@@ -296,7 +296,7 @@ public class ThinkService {
     /* ---------------------------------------------------------------- 对外 API */
 
     /**
-     * 分析全部待分析的组合并写入/刷新 `summary/<分类标注>/` 下产物。
+     * 分析全部待分析的组合并写入/刷新 `resource/summary/<分类标注>/` 下产物。
      *
      * @param force true = 无视已有产物全部重算
      */
@@ -312,11 +312,11 @@ public class ThinkService {
     }
 
     /**
-     * 一键重建（前端「重新生成全部对照图」按钮）：先清空 `summary/` 下全部产物目录，再全量重跑一轮分析。
+     * 一键重建（前端「重新生成全部对照图」按钮）：先清空 `resource/summary/` 下全部产物目录，再全量重跑一轮分析。
      *
-     * <p>等价于“手动删掉整个 summary/ 再触发自动生成”，但删除动作放进本服务的串行计算池执行，
+     * <p>等价于“手动删掉整个 resource/summary/ 再触发自动生成”，但删除动作放进本服务的串行计算池执行，
      * 不会与自动重算 / 其它手动分析互踩；清场同时带走历史遗留文件（旧命名、孤儿图）。
-     * 产物由 classify/ 已标注样本派生，删除不影响原始截图与标注。
+     * 产物由 resource/classify/ 已标注样本派生，删除不影响原始截图与标注。
      */
     public String startRebuild() {
         if (tasks.size() > 32) {
@@ -400,12 +400,12 @@ public class ThinkService {
     }
 
     /**
-     * 标注样本 / 分类定义（classify/）或产物（summary/）发生变化后调用：**立刻**按最新状态重跑一轮后台
+     * 标注样本 / 分类定义（resource/classify/）或产物（resource/summary/）发生变化后调用：**立刻**按最新状态重跑一轮后台
      * 汇总分析，把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算；正在跑的旧任务
      * （输入已经过期）当场作废让出计算池 —— 没有防抖延迟，也没有排队等待。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
-     * 只要样本或分类定义（动作/注意点/点击点坐标）变化，summary/ 下的对照图（15 张基础合成图
+     * 只要样本或分类定义（动作/注意点/点击点坐标）变化，resource/summary/ 下的对照图（15 张基础合成图
      * + 15 张 -unique 独有区图 + 12 张注意区交集图 + 12 张点击区交集图）就会自动保持与最新样本一致，
      * 供执行模式随时取用。
      */
@@ -413,7 +413,7 @@ public class ThinkService {
         submitAnalyze("自动重算", new Task("auto", false));   // 自动任务不进 tasks map（无需前端轮询）
     }
 
-    /* ---------------------------------------------------------------- 智能建议（未标注图 × runtime/ 综合最佳算法） */
+    /* ---------------------------------------------------------------- 智能建议（未标注图 × resource/runtime/ 综合最佳算法） */
 
     /** 单图智能建议任务：把一张未标注截图交给运行时算法（{@link RuntimeService}）与各分类产物比对 */
     public static class SuggestTask {
@@ -483,7 +483,7 @@ public class ThinkService {
             if (!runtimeService.ready()) {
                 t.status = "error";
                 t.message = "还没有可用于推荐的运行时算法：请先到「算法调优」完成一轮（「刷新算法特征」或"
-                        + "「自动调整参数」），把综合最佳算法落地到 runtime/ 后，这里才会按它给出推荐分类。";
+                        + "「自动调整参数」），把综合最佳算法落地到 resource/runtime/ 后，这里才会按它给出推荐分类。";
                 return;
             }
             BufferedImage target = ImageIO.read(png.toFile());
@@ -539,7 +539,7 @@ public class ThinkService {
         t.message = "已切换到最新一张截图，本轮建议已作废";
     }
 
-    /** 建议结果签名：目标图 + runtime/（算法定义 algorithm.json + 综合最佳算法用到的各分类产物）全部文件的
+    /** 建议结果签名：目标图 + resource/runtime/（算法定义 algorithm.json + 综合最佳算法用到的各分类产物）全部文件的
      *  尺寸与修改时间（重跑算法调优 / 产物刷新即失效） */
     private String suggestSig(Path png, BufferedImage target) {
         StringBuilder sb = new StringBuilder();
@@ -569,7 +569,7 @@ public class ThinkService {
         return sb.toString();
     }
 
-    /** 校验目标截图名：必须是 capture/（未标注原始截图）下 img_*.png 且已写完 */
+    /** 校验目标截图名：必须是 resource/capture/（未标注原始截图）下 img_*.png 且已写完 */
     private Path suggestPng(String file) {
         if (file == null || file.isEmpty()) {
             return null;
@@ -583,7 +583,7 @@ public class ThinkService {
     }
 
     /**
-     * 单图智能建议：把目标截图交给<b>运行时算法</b>（{@code runtime/}，算法调优落地的「综合最佳算法」，
+     * 单图智能建议：把目标截图交给<b>运行时算法</b>（{@code resource/runtime/}，算法调优落地的「综合最佳算法」，
      * 见 {@link RuntimeService#classify}）识别，结果口径与执行模式完全一致——算法由若干特征
      * （产物 kind + 基础分 X + 权重 Y）组成，逐特征同尺度逐像素比对出各分类的匹配值，先放弃「最高匹配值被
      * ≥2 个分类并列」的打平特征，再按 Σ「匹配值 × X × Y」÷ Σ「X × Y」算出各分类匹配度；
@@ -749,11 +749,11 @@ public class ThinkService {
     }
 
     /**
-     * 组合总览：枚举 classify/（已标注截图 + .json）里全部「分类标注（state）+ 动作」组合，
+     * 组合总览：枚举 resource/classify/（已标注截图 + .json）里全部「分类标注（state）+ 动作」组合，
      * 附样本数、产物目录、是否已分析（该组基础合成图已生成）及覆盖率。
      *
      * <p>另在列表<b>固定首位</b>插入一个不属于任何分类标注的「全部」汇总组（{@code all=true}，
-     * 目录 {@link #ALL_DIR}）：不做分类分组，取 classify/ 全部已标注截图合成 12 张产物
+     * 目录 {@link #ALL_DIR}）：不做分类分组，取 resource/classify/ 全部已标注截图合成 12 张产物
      * （交集图六档 6 张（100% 档公共部分 + 90/80/70/60/50 档稳定区）、多数 / 均值 / 去重均值 3 张代表图 +
      * 这 3 族「与代表图差异最大的一张原图」，见 {@link #computeAllGroup()}）。
      * 它不参与列表排序、不作为识别比对样本，仅供整体目检。</p>
@@ -863,7 +863,7 @@ public class ThinkService {
                 boolean ruleChanged = !Integer.valueOf(ART_RULE_VERSION).equals(info.get("artVer"));
                 // 「原分类内重定义动作/点击点/注意点」不改变样本数量，样本数与 artVer 都发现不了：
                 // 只有产物 info.json 记录的坐标与当前中心表定义（commonPoint/commonAct 按样本实时合成）不一致时才判 stale，
-                // 使 requestRecompute 重算刷新 summary/ 产物——否则执行模式将一直按 info.json 里的旧坐标处理。
+                // 使 requestRecompute 重算刷新 resource/summary/ 产物——否则执行模式将一直按 info.json 里的旧坐标处理。
                 boolean defChanged = infoClick(info.get("clickLeft")) != cc[0]
                         || infoClick(info.get("clickTop")) != cc[1]
                         || infoClick(info.get("actLeft")) != ac[0]
@@ -927,7 +927,7 @@ public class ThinkService {
     }
 
     /**
-     * 「全部」汇总组（列表固定第一条，{@code all=true}）：不做分类标注分组，取 classify/ 全部已标注
+     * 「全部」汇总组（列表固定第一条，{@code all=true}）：不做分类标注分组，取 resource/classify/ 全部已标注
      * 截图合成 12 张产物（交集图六档 6 张 + 多数 / 均值 / 去重均值 3 张代表图 +
      * 这 3 族「与代表图差异最大的一张原图」，见 {@link #computeAllGroup()}）。
      *
@@ -1034,7 +1034,7 @@ public class ThinkService {
         try {
             if (t.rebuild) {
                 wipeSummary(t);
-                log.info("一键重建：summary/ 已清空，开始全量重建全部对照图");
+                log.info("一键重建：resource/summary/ 已清空，开始全量重建全部对照图");
             }
             List<Map<String, Object>> groups = groups(t);
             List<Map<String, Object>> todo = new ArrayList<>();
@@ -1485,7 +1485,7 @@ public class ThinkService {
         d.put("updatedAt", LocalDateTime.now().format(TS_FORMAT));
         atomicWriteJson(info, d);
         pruneObsoleteGroupDirs(state, action, dir);
-        log.info("汇总分析 分类 [{}|{}] 完成：{} 张样本，公共像素覆盖率（覆盖>90% 一致）{}% ，产物 → summary/{}/",
+        log.info("汇总分析 分类 [{}|{}] 完成：{} 张样本，公共像素覆盖率（覆盖>90% 一致）{}% ，产物 → resource/summary/{}/",
             trim(state), action, S, Math.round(coverage * 10000) / 100.0d, dir);
     }
 
@@ -1709,14 +1709,14 @@ public class ThinkService {
             }
             tierTxt.append(SAME_TIERS.get(t)).append(' ').append(pct(tierCnt[t], n)).append('%');
         }
-        log.info("汇总分析「全部」完成：{} 张截图（跳过 {} 张），交集六档覆盖率 {} ，{} 张产物 → summary/{}/",
+        log.info("汇总分析「全部」完成：{} 张截图（跳过 {} 张），交集六档覆盖率 {} ，{} 张产物 → resource/summary/{}/",
             S, skipped, tierTxt, ArtifactKind.allKinds().size(), ALL_DIR);
     }
 
     /* ----------------------------------------------- -unique 独有区图（15 张基础图各一张 = 15 张） */
 
     /**
-     * 刷新「classify/ 中当前有样本（≥ 1 张）的全部分组」的各 -unique 独有区图
+     * 刷新「resource/classify/ 中当前有样本（≥ 1 张）的全部分组」的各 -unique 独有区图
      * （交集六档 same100/90/80/70/60/50 与多数/均值/去重均值/8·32 块族共 15 张基础图各一张，
      * 全部参与识别比对）。
      *
@@ -1730,7 +1730,7 @@ public class ThinkService {
      * 都生成完毕，本方法才真正开始计算；任一分组基础图尚未齐备（本轮新增样本的分组还没轮到、
      * 或该分组本轮生成失败留下残图），整轮直接跳过，等下一轮补齐后再算——不允许在“分类集合不完整”
      * 的状态下过早生成。
-     * 互比对象以 classify/ 有样本的分组为准，而非简单枚举 summary/ 磁盘目录（历史遗留的孤儿目录不参与现行分类判定）。
+     * 互比对象以 resource/classify/ 有样本的分组为准，而非简单枚举 resource/summary/ 磁盘目录（历史遗留的孤儿目录不参与现行分类判定）。
      *
      * <p>尺寸不同的分组无法逐像素对齐，彼此不参与比较；同一尺寸类按“各成员 15 张基础图 mtime 序列签名”
      * 增量更新——自身或任一其它分类的基础图更新过、或任一 -unique 图缺失 / 无独有覆盖率字段时才真正重算
@@ -1982,7 +1982,7 @@ public class ThinkService {
 
     /* ---------------------------------------------------------------- 产物工具 */
 
-    /** 产物子目录完整路径：summary/&lt;dir&gt;/ */
+    /** 产物子目录完整路径：resource/summary/&lt;dir&gt;/ */
     private Path groupDir(String dir) {
         return storage.summary().resolve(dir).normalize();
     }
@@ -2131,7 +2131,7 @@ public class ThinkService {
         return s;
     }
 
-    /** 汇总 classify/ 中所有已标注图片的分类标注 → 该标注用到的动作集合（判断是否混用） */
+    /** 汇总 resource/classify/ 中所有已标注图片的分类标注 → 该标注用到的动作集合（判断是否混用） */
     private Map<String, Set<String>> stateActions() {
         Map<String, Set<String>> map = new HashMap<>();
         for (Path p : annotatedPngs()) {
@@ -2167,7 +2167,7 @@ public class ThinkService {
         }
     }
 
-    /** 某分类样本已清零时清理其 summary/ 下全部残留产物目录（按 info.json 的 state 匹配）；仍有样本则不动作 */
+    /** 某分类样本已清零时清理其 resource/summary/ 下全部残留产物目录（按 info.json 的 state 匹配）；仍有样本则不动作 */
     public void removeGroupArtifacts(String state) {
         String st = trim(state);
         Path sum = storage.summary();
@@ -2191,7 +2191,7 @@ public class ThinkService {
                 }
             }
         } catch (IOException e) {
-            log.warn("枚举 summary/ 失败，跳过分类 {} 的残留清理: {}", st, e.toString());
+            log.warn("枚举 resource/summary/ 失败，跳过分类 {} 的残留清理: {}", st, e.toString());
         }
     }
 
@@ -2200,7 +2200,7 @@ public class ThinkService {
     }
 
     /**
-     * 分类标注整体改名后调用：把 summary/ 下该分类的产物目录整体迁名为新名，并把 info.json 的 state 改为新名。
+     * 分类标注整体改名后调用：把 resource/summary/ 下该分类的产物目录整体迁名为新名，并把 info.json 的 state 改为新名。
      * 样本画面未变，15 张基础图内容不变；-unique 独有区图按像素互比、与目录名无关，均无需重算——
      * 改名即刻对执行模式生效，不再出现「删旧产物 + 后台重建」期间对照图不全的半成品目录被识别到而报红字。
      * 产物不齐 / 目录名不是标准同名目录 / 迁移失败的旧目录删除，交由后台按新名重建补齐。
@@ -2221,7 +2221,7 @@ public class ThinkService {
         try (Stream<Path> s = Files.list(sum)) {
             dirs = s.filter(Files::isDirectory).toList();
         } catch (IOException e) {
-            log.warn("枚举 summary/ 失败，跳过产物目录改名: {}", e.toString());
+            log.warn("枚举 resource/summary/ 失败，跳过产物目录改名: {}", e.toString());
             return new RenameArtifactsResult(0, 0);
         }
         int moved = 0;
@@ -2429,7 +2429,7 @@ public class ThinkService {
         return bi;
     }
 
-    /** classify/ 下 IMG_*.png：已标注数据集（保存标注时完整移入；写入端统一 .tmp→原子改名，半成品按后缀天然排除） */
+    /** resource/classify/ 下 IMG_*.png：已标注数据集（保存标注时完整移入；写入端统一 .tmp→原子改名，半成品按后缀天然排除） */
     private List<Path> annotatedPngs() {
         List<Path> pngs = new ArrayList<>();
         Path dir = storage.classify();
@@ -2439,13 +2439,13 @@ public class ThinkService {
                  .sorted(Comparator.comparing(p -> p.getFileName().toString()))
                  .forEach(pngs::add);
             } catch (IOException e) {
-                log.warn("枚举 classify/ 目录失败: {}", e.toString());
+                log.warn("枚举 resource/classify/ 目录失败: {}", e.toString());
             }
         }
         return pngs;
     }
 
-    /** capture/（未标注）截图：命名规范且非空即可读。写入端是「.png.tmp → 原子改名 .png」，
+    /** resource/capture/（未标注）截图：命名规范且非空即可读。写入端是「.png.tmp → 原子改名 .png」，
      *  `.png` 出现即完整落盘（写入中的 .png.tmp 不符合 img_*.png 命名），无需时间等待 */
     private boolean isCapturedPng(Path p) {
         return pngShape(p) && nonEmpty(p);
@@ -2505,7 +2505,7 @@ public class ThinkService {
         }
     }
 
-    /** 递归删除整个 `summary/` 产物目录（一键重建前清场；单个文件删除失败仅告警，不中断后续重建）。
+    /** 递归删除整个 `resource/summary/` 产物目录（一键重建前清场；单个文件删除失败仅告警，不中断后续重建）。
      *  {@code t != null} 时逐项回报删除进度，前端右栏显示「正在清理旧产物：1200/3226 张（same100.png）（已耗时 N 分 M 秒）」 */
     private void wipeSummary(Task t) {
         Path root = storage.summary();
@@ -2517,7 +2517,7 @@ public class ThinkService {
         try (Stream<Path> s = Files.walk(root)) {
             s.forEach(all::add);
         } catch (IOException e) {
-            log.warn("清理 summary/ 前枚举目录失败：{}", e.toString());
+            log.warn("清理 resource/summary/ 前枚举目录失败：{}", e.toString());
         }
         if (t != null) {
             t.stage = 0;
@@ -2533,7 +2533,7 @@ public class ThinkService {
             try {
                 Files.deleteIfExists(p);
             } catch (IOException e) {
-                log.warn("清理 summary/ 时无法删除 {}（保留并随重建覆盖，不影响运行）：{}", p, e.toString());
+                log.warn("清理 resource/summary/ 时无法删除 {}（保留并随重建覆盖，不影响运行）：{}", p, e.toString());
             }
             if (t != null) {
                 t.prepDone = ++done;
@@ -2549,7 +2549,7 @@ public class ThinkService {
     public static class Task {
         public final String taskId;
         public final boolean force;
-        /** true = 一键重建：开始前先清空整个 summary/ 再全量分析 */
+        /** true = 一键重建：开始前先清空整个 resource/summary/ 再全量分析 */
         public final boolean rebuild;
         public volatile String status = "running";
         public volatile String message = "";
@@ -2558,7 +2558,7 @@ public class ThinkService {
         public volatile int errors;
         /** 正在处理的分类展示文案 */
         public volatile String current = "";
-        /** 当前阶段：0 = 准备（一键重建先逐张清场 summary/，再逐分类统计待分析组合）；1 = 逐分类生成 15 张基础对照图
+        /** 当前阶段：0 = 准备（一键重建先逐张清场 resource/summary/，再逐分类统计待分析组合）；1 = 逐分类生成 15 张基础对照图
          *  （交集六档 + 多数/均值/去重均值/8·32 块族）；2 = 生成各分类 15 张 -unique 独有区图 */
         public volatile int stage = 1;
         /** 准备阶段（stage=0）正在做的事：清场时的「清理旧产物」/ 统计时的「统计待分析组合」 */

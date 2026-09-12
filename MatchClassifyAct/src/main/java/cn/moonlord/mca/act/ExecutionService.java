@@ -35,10 +35,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 执行模式的运行主轴：周期性截取目标窗口画面（必要时先 resize 对齐到与标注样本相同的尺寸），
- * 按<b>运行时算法</b>（{@code runtime/}，算法调优选出的「综合最佳算法」，见 {@link RuntimeService}）
+ * 按<b>运行时算法</b>（{@code resource/runtime/}，算法调优选出的「综合最佳算法」，见 {@link RuntimeService}）
  * 识别当前状态，并把结果连同动作 / 点击坐标发布成 Snapshot 供控制台页展示与执行。
  *
- * <p>没有 runtime/ 落地物（还没跑过算法调优、或整目录被删）时不识别，直接给「先完成算法调优」的提示；
+ * <p>没有 resource/runtime/ 落地物（还没跑过算法调优、或整目录被删）时不识别，直接给「先完成算法调优」的提示；
  * 无法区分（最高匹配度被 ≥2 个分类并列）时同样不动作，并把并列的分类名称交代给页面。
  *
  * <p>与「标注模式的截图循环」是同一层截图 / 调窗机制，但触发方式不同：这里每一轮识别都由控制台页按需触发
@@ -61,9 +61,9 @@ public class ExecutionService {
     /** 等待「在途识别轮」完成的上限（毫秒）：超过则不再等，直接返回当前已有快照 */
     private static final long BUSY_WAIT_MS = 4000;
 
-    /** 没有 runtime/ 落地物时的提示：本轮不识别，让用户先完成算法调优 */
+    /** 没有 resource/runtime/ 落地物时的提示：本轮不识别，让用户先完成算法调优 */
     private static final String NO_RUNTIME_HINT = "还没有可用于执行的运行时算法：请先到「算法调优」完成一轮"
-            + "（「刷新算法特征」或「自动调整参数」），把综合最佳算法落地到 runtime/ 后，执行与智能推荐会自动按它识别。";
+            + "（「刷新算法特征」或「自动调整参数」），把综合最佳算法落地到 resource/runtime/ 后，执行与智能推荐会自动按它识别。";
 
     private final WindowFinder windowFinder;
     private final ScreenCaptureService screenCaptureService;
@@ -303,7 +303,7 @@ public class ExecutionService {
                 candidates = oc.candidates;
             }
 
-            // 动作 / 点击坐标直接取自命中分类（runtime/algorithm.json 与标注同源）
+            // 动作 / 点击坐标直接取自命中分类（resource/runtime/algorithm.json 与标注同源）
             if (oc.recognized) {
                 recognized = true;
                 state = oc.bestState;
@@ -418,7 +418,7 @@ public class ExecutionService {
 
     /* ================================================================ 快速标记 ========== */
 
-    /** classify/ 下唯一样本名的时间戳格式（到毫秒，极端同毫秒冲突追加序号）。 */
+    /** resource/classify/ 下唯一样本名的时间戳格式（到毫秒，极端同毫秒冲突追加序号）。 */
     private static final DateTimeFormatter SAMPLE_TS = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
     /**
@@ -517,7 +517,7 @@ public class ExecutionService {
     /* ================================================================ 另存为待标注截图 ===== */
 
     /**
-     * 把当前识别画面另存为 capture/ 下的原始截图（未标注，不写标注数据）：执行画面本身不落盘，
+     * 把当前识别画面另存为 resource/capture/ 下的原始截图（未标注，不写标注数据）：执行画面本身不落盘，
      * 这里以「另存」方式与截图循环产物同目录、同命名，需要人工精确标注 / 修正坐标时再走「标注模式」。
      *
      * <p>保存前执行与自动截图循环同一套去重判定（{@link ScreenCaptureService#duplicateReference}），
@@ -573,14 +573,14 @@ public class ExecutionService {
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(tmp, png, StandardCopyOption.REPLACE_EXISTING);
             }
-            log.info("执行模式把画面 {}x{} 另存为 capture/ 待标注截图：{}", s.imageWidth(), s.imageHeight(), name);
+            log.info("执行模式把画面 {}x{} 另存为 resource/capture/ 待标注截图：{}", s.imageWidth(), s.imageHeight(), name);
             res.put("ok", true);
             res.put("name", name);
             res.put("imageWidth", s.imageWidth());
             res.put("imageHeight", s.imageHeight());
             return res;
         } catch (Exception e) {
-            log.error("执行模式另存画面到 capture/ 失败：{}", e.toString());
+            log.error("执行模式另存画面到 resource/capture/ 失败：{}", e.toString());
             res.put("ok", false);
             res.put("message", "保存失败：" + e.getMessage());
             return res;
@@ -603,8 +603,8 @@ public class ExecutionService {
         return s;
     }
 
-    /** 生成 capture/ 下不冲突的新截图文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒追加 _2、_3…；
-     *  并避开 classify/ 同名——两目录同名时标注列表会以已标注版本为准，避免保存了却看不到）。 */
+    /** 生成 resource/capture/ 下不冲突的新截图文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒追加 _2、_3…；
+     *  并避开 resource/classify/ 同名——两目录同名时标注列表会以已标注版本为准，避免保存了却看不到）。 */
     private String uniqueCaptureName() {
         String base = "IMG_" + SAMPLE_TS.format(LocalDateTime.now());
         Path cap = storage.capture(), cls = storage.classify();
@@ -615,7 +615,7 @@ public class ExecutionService {
         return name;
     }
 
-    /** 在 classify/ 下生成一个不冲突的样本文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒时追加 _2、_3…）。 */
+    /** 在 resource/classify/ 下生成一个不冲突的样本文件名（IMG_yyyyMMdd_HHmmss_SSS.png，同毫秒时追加 _2、_3…）。 */
     private String uniqueSampleName(Path dir) {
         String base = "IMG_" + SAMPLE_TS.format(LocalDateTime.now());
         String name = base + ".png";

@@ -47,7 +47,7 @@ public class VerifyMatrixCache {
 
     private final StoragePaths storage;
 
-    /** 缓存文件名（放 summary/ 根，与产物目录并列：可手删、随 *.json 一并被 git 忽略）。 */
+    /** 缓存文件名（放 resource/summary/ 根，与产物目录并列：可手删、随 *.json 一并被 git 忽略）。 */
     public static final String CACHE_FILE = "verify-matrix.json";
 
     /** 比对口径版本：算分逻辑（compareKind / 裁剪 / 是否跳过等）变了要 +1，否则旧数值会被当新口径复用。 */
@@ -141,7 +141,7 @@ public class VerifyMatrixCache {
 
     // ---------------------------------------------------------------- 对外
 
-    /** 缓存文件：summary/verify-matrix.json。 */
+    /** 缓存文件：resource/summary/verify-matrix.json。 */
     public Path file() {
         return storage.summary().resolve(CACHE_FILE);
     }

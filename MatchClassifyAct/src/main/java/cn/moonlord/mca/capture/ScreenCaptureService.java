@@ -88,7 +88,7 @@ public class ScreenCaptureService {
 
     /** 一次去重判定命中：{@code name} = 与之重复的那张已保存截图 / 标注样本的文件名（可直接向用户指出「和哪一张重复」）；
      *  {@code diffPercent} = 两者不一致像素点占比（%，两位舍入，必然 ≤ {@code threshold}）；
-     *  {@code refState} = 参考图为 classify/ 已标注样本时的分类标注，capture/ 未标注参考图为 null。 */
+     *  {@code refState} = 参考图为 resource/classify/ 已标注样本时的分类标注，resource/capture/ 未标注参考图为 null。 */
     public record DuplicateMatch(String name, double diffPercent, double threshold, String refState) {
     }
 
@@ -101,10 +101,10 @@ public class ScreenCaptureService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
-     * 画面去重基准 = capture/（原始截图）与 classify/（已标注样本）两目录下的<b>全部</b> PNG，
+     * 画面去重基准 = resource/capture/（原始截图）与 resource/classify/（已标注样本）两目录下的<b>全部</b> PNG，
      * key = 绝对路径，value 只含路径与尺寸（判定口径见 {@link #duplicateReference(BufferedImage, double)}）。
      *
-     * <p>以磁盘全集为准而非「内存只保留最近 N 帧」：截图被标注移入 classify/、程序重启后仍能与历史任意一张对上。</p>
+     * <p>以磁盘全集为准而非「内存只保留最近 N 帧」：截图被标注移入 resource/classify/、程序重启后仍能与历史任意一张对上。</p>
      */
     private final Map<String, Reference> referenceCache = new LinkedHashMap<>(256, 0.75f, true);
 
@@ -114,7 +114,7 @@ public class ScreenCaptureService {
     /** 保护 {@link #referenceCache}：预热写入 / 判定读写 / 保存后注册共用 */
     private final Object referenceLock = new Object();
 
-    /** 上次全量枚举时 capture/ 与 classify/ 两个基准目录的修改时间：目录文件集合（增/删/移入）未变则跳过磁盘全量枚举 */
+    /** 上次全量枚举时 resource/capture/ 与 resource/classify/ 两个基准目录的修改时间：目录文件集合（增/删/移入）未变则跳过磁盘全量枚举 */
     private long lastCapDirMtime = Long.MIN_VALUE;
     private long lastClsDirMtime = Long.MIN_VALUE;
 
@@ -281,7 +281,7 @@ public class ScreenCaptureService {
                 long startedAt = System.currentTimeMillis();
                 // 先置进行态快照：页面据此在扫描期间显示一直刷新的进度（含已耗时）
                 startupDedupProgress = new StartupDedupProgress(startedAt, 0, 0, "", 0, 0, 0, 0L, true);
-                log.info("启动历史重复清理：开始检查 capture/ + classify/ 的全部历史截图重复"
+                log.info("启动历史重复清理：开始检查 resource/capture/ + resource/classify/ 的全部历史截图重复"
                         + "（不一致像素点占比 ≤ 阈值 {}% 即视为重复删除，逐像素全尺寸比对；"
                         + "文件名 + 修改时间都没变过的组合直接复用上次的比对结果）", threshold);
                 DedupResult result = dedupeHistoryLocked(threshold, startedAt);
@@ -300,10 +300,10 @@ public class ScreenCaptureService {
                                 pctText(result.minDiff()))
                         : "，无可比对的同尺寸图";
                 if (result.removed() > 0) {
-                    log.info("启动历史重复清理：按不一致像素点占比 ≤ 阈值 {}% 判据检查 capture/ + classify/ 全部截图，删除重复 {} 张{}",
+                    log.info("启动历史重复清理：按不一致像素点占比 ≤ 阈值 {}% 判据检查 resource/capture/ + resource/classify/ 全部截图，删除重复 {} 张{}",
                             threshold, result.removed(), cmpTxt);
                 } else {
-                    log.info("启动历史重复清理：capture/ + classify/ 共 {} 张，未发现不一致像素点占比 ≤ {}% 的重复截图{}",
+                    log.info("启动历史重复清理：resource/capture/ + resource/classify/ 共 {} 张，未发现不一致像素点占比 ≤ {}% 的重复截图{}",
                             scanned, threshold, cmpTxt);
                 }
                 // 保留列表即最新基准全集：直接用它重建基准缓存，与运行期逐帧去重共用同一基准
@@ -384,10 +384,10 @@ public class ScreenCaptureService {
      * @return 保存后的文件路径
      */
     public Path savePng(BufferedImage image, WindowInfo window) throws IOException {
-        Path directory = storage.capture();   // 原始截图固定写入 capture/
+        Path directory = storage.capture();   // 原始截图固定写入 resource/capture/
         Files.createDirectories(directory);
 
-        // 毫秒时间戳命名；重名时追加 _2、_3…（与 classify/ 重名则标注列表以已标注版本为准，避免保存了却看不到）
+        // 毫秒时间戳命名；重名时追加 _2、_3…（与 resource/classify/ 重名则标注列表以已标注版本为准，避免保存了却看不到）
         String base = LocalDateTime.now().format(FILE_TIME_FORMAT);
         String name = base + ".png";
         for (int i = 2; Files.exists(directory.resolve(name))
@@ -525,7 +525,7 @@ public class ScreenCaptureService {
     }
 
     /**
-     * 在 {@link #referenceLock} 内执行：重新枚举 capture/ + classify/ 顶层 PNG 作为基准集，
+     * 在 {@link #referenceLock} 内执行：重新枚举 resource/capture/ + resource/classify/ 顶层 PNG 作为基准集，
      * 清理目录中已删除文件的缓存项，并补齐缺失的参考（只读 PNG 头部拿尺寸、不解码像素）。
      */
     private void scanAndLoadMissingLocked() {
@@ -616,17 +616,17 @@ public class ScreenCaptureService {
     }
 
     /**
-     * 启动时对 capture/（未标注原始截图）+ classify/（已标注样本）的历史截图做一次重复清理
+     * 启动时对 resource/capture/（未标注原始截图）+ resource/classify/（已标注样本）的历史截图做一次重复清理
      * （须在 {@link #referenceLock} 内调用）：按保留优先级排序后逐张判定，每张只与前面已保留的图比较。
      *
      * <ul>
-     *   <li>保留优先级：classify/ 已标注样本在前（有标注价值），capture/ 次之；同目录内较早的优先；</li>
+     *   <li>保留优先级：resource/classify/ 已标注样本在前（有标注价值），resource/capture/ 次之；同目录内较早的优先；</li>
      *   <li>判定口径与运行期完全一致（见 {@link #duplicateReference(BufferedImage, double)}），
      *       目的是清掉早期未开去重时堆积的重复；</li>
      *   <li>比对结果按「两张图的文件名 + 最后修改时间」记进 {@link DedupCache}：四元组没变过的组合下次
      *       启动直接复用（一个像素都不用读），因此全量重扫过一遍后重启几乎瞬时完成；缓存的是<b>差异值</b>
      *       而非「是否重复」，判定仍拿本次阈值去比，改阈值也不会用错结果；</li>
-     *   <li>删除 classify/ 样本时连带删除同名 .json，中心表 data.json 的分类定义不动。</li>
+     *   <li>删除 resource/classify/ 样本时连带删除同名 .json，中心表 data.json 的分类定义不动。</li>
      * </ul>
      *
      * @param threshold 差异阈值（不一致像素点百分比，&gt;0 才被调用）
@@ -777,7 +777,7 @@ public class ScreenCaptureService {
         }
     }
 
-    /** 把刚保存成功的帧立即登记进去重基准（文件此刻已落盘，与下一轮从 capture/ 扫入等效，只存路径与尺寸） */
+    /** 把刚保存成功的帧立即登记进去重基准（文件此刻已落盘，与下一轮从 resource/capture/ 扫入等效，只存路径与尺寸） */
     private void rememberReference(Path file, int srcW, int srcH) {
         if (file == null || srcW <= 0 || srcH <= 0) {
             return;
@@ -824,7 +824,7 @@ public class ScreenCaptureService {
         return s.endsWith(".") ? s.substring(0, s.length() - 1) : s;
     }
 
-    /** 参考图为 classify/ 已标注样本时读旁 json 的分类标注；capture/ 或 json 缺失/无 state 返回 null */
+    /** 参考图为 resource/classify/ 已标注样本时读旁 json 的分类标注；resource/capture/ 或 json 缺失/无 state 返回 null */
     private String refStateOf(Path png) {
         if (png.getParent() == null || !png.getParent().equals(storage.classify())) {
             return null;

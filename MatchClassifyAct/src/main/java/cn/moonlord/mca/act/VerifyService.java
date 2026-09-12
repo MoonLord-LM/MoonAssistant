@@ -33,7 +33,7 @@ import java.util.stream.Stream;
 /**
  * 特征验证：对每一种「汇总图算法」（kind 产物，与识别参与比对的全套 kind 一致）做自回归评分。
  *
- * <p>按某一种算法生成了每个分类的汇总图后，把 classify/ 的全部已标注原图逐张与【全部分类】的
+ * <p>按某一种算法生成了每个分类的汇总图后，把 resource/classify/ 的全部已标注原图逐张与【全部分类】的
  * 同 kind 汇总图按识别同口径逐点比对（复用 {@link FrameClassifier} 的产物/原图缓存与比对桥接），
  * 统计五个评价指标（对外顺序 A → E，内部字段对应见下）：
  * <ul>
@@ -56,11 +56,11 @@ import java.util.stream.Stream;
  * 跳过这些分类及其原图的枚举。
  * 按算法逐 kind 独立计算、完成后按「当前样本/产物指纹」缓存结果并标记是否过期（样本或产物有
  * 改动后需重新验证）。独立后台任务线程跑，一次完整跑完后把全部 kind 的结果（五种指标 + 分类级明细
- * + 逐图明细）<b>完整落盘到 summary/verify.json</b>；另外把每个 kind 逐图比对的原始分值
+ * + 逐图明细）<b>完整落盘到 resource/summary/verify.json</b>；另外把每个 kind 逐图比对的原始分值
  * （「哪张原图 × 哪个分类的产物」的不匹配占比）按各图自己的大小 / 修改时间记进
- * <b>summary/verify-matrix.json</b>（见 {@link VerifyMatrixCache}）：没变过的图下次验证与算法调优
+ * <b>resource/summary/verify-matrix.json</b>（见 {@link VerifyMatrixCache}）：没变过的图下次验证与算法调优
  * 直接取用、不必重比。进程启动后首次访问本服务时若缓存文件还在且
- * 「classify/ 已标注 + summary/ 产物」的指纹与缓存里记录的一致，则直接恢复上次结果（界面显示「已计算」，
+ * 「resource/classify/ 已标注 + resource/summary/ 产物」的指纹与缓存里记录的一致，则直接恢复上次结果（界面显示「已计算」，
  * 无需重算）；指纹变了则恢复出来的结果一律标记为过期（界面「需重算」并提示重新验证）。
  */
 @Slf4j
@@ -96,7 +96,7 @@ public class VerifyService {
     private volatile long fpAt;
     private volatile String fpLast;
 
-    /** 结果缓存文件名（放 summary/ 根，与产物目录并列：可手删、随 *.json 一并被 git 忽略）。 */
+    /** 结果缓存文件名（放 resource/summary/ 根，与产物目录并列：可手删、随 *.json 一并被 git 忽略）。 */
     private static final String CACHE_FILE = "verify.json";
 
     /** 指纹不统计的非产物数据文件（本服务缓存 + 逐图比对缓存 + 其它模块的缓存 / 权重 / 去重数据）：
@@ -203,14 +203,14 @@ public class VerifyService {
         }
     }
 
-    /** summary/ 下的一个有效分类目录（产物目录 = 分类标注）：attnLeft/attnTop = 注意点
+    /** resource/summary/ 下的一个有效分类目录（产物目录 = 分类标注）：attnLeft/attnTop = 注意点
      *  （注意区图框心，未设 = 屏幕中心），actLeft/actTop = 鼠标点击点（点击区图框心，仅 click 分类有）。 */
     private record Ctx(int idx, String state, String dir, int w, int h,
                        String action, Integer attnLeft, Integer attnTop,
                        Integer actLeft, Integer actTop) {
     }
 
-    /** classify/ 下的一张已标注原图（归属某分类目录）；mtime / size = 原图文件自身的大小与修改时间
+    /** resource/classify/ 下的一张已标注原图（归属某分类目录）；mtime / size = 原图文件自身的大小与修改时间
      *  （逐图比对结果的缓存键：图被换掉就能识别出来，没换过的那一行直接复用）。 */
     private record Smp(Path png, Ctx own, long mtime, long size) {
     }
@@ -387,7 +387,7 @@ public class VerifyService {
         // 结果从缓存文件恢复（本进程）与缓存文件名：界面据此提示「已加载上次结果 / 结果落在哪」
         out.put("cached", cacheRestored);
         out.put("cacheFile", CACHE_FILE);
-        // 逐图比对结果缓存（summary/verify-matrix.json）：界面提示「省掉了多少重算」与缓存规模
+        // 逐图比对结果缓存（resource/summary/verify-matrix.json）：界面提示「省掉了多少重算」与缓存规模
         out.putAll(matrix.status());
         int staleCount = 0;
         List<Map<String, Object>> kinds = new ArrayList<>();
@@ -523,9 +523,9 @@ public class VerifyService {
         }
     }
 
-    // ---------------------------------------------------------------- 落盘缓存（summary/verify.json）
+    // ---------------------------------------------------------------- 落盘缓存（resource/summary/verify.json）
 
-    /** 缓存文件：summary/verify.json（完整缓存 = 五种指标 + 分类级明细 + 「查看详细」的逐图明细）。 */
+    /** 缓存文件：resource/summary/verify.json（完整缓存 = 五种指标 + 分类级明细 + 「查看详细」的逐图明细）。 */
     public Path cacheFile() {
         return storage.summary().resolve(CACHE_FILE);
     }
@@ -643,7 +643,7 @@ public class VerifyService {
 
     // ---------------------------------------------------------------- 计算
 
-    /** 枚举 summary/ 有效分类目录（有 state 且尺寸有效），按目录名排序。 */
+    /** 枚举 resource/summary/ 有效分类目录（有 state 且尺寸有效），按目录名排序。 */
     private List<Ctx> scanGroups() {
         List<Ctx> out = new ArrayList<>();
         Path sum = storage.summary();
@@ -684,7 +684,7 @@ public class VerifyService {
         return out;
     }
 
-    /** 枚举 classify/ 原图并归属到其 state 对应的分类目录（无对应目录的原图不参与验证）。 */
+    /** 枚举 resource/classify/ 原图并归属到其 state 对应的分类目录（无对应目录的原图不参与验证）。 */
     private List<Smp> scanSamples(List<Ctx> groups) {
         Map<String, Ctx> byState = new LinkedHashMap<>();
         for (Ctx c : groups) {

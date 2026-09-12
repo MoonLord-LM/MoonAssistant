@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const ACT_LABEL = { none:"无动作", click:"鼠标点击", other:"其它" };
 const SHORT = n => (n.match(/^IMG_(\d{8})_(\d{6})/) || []).slice(1).join(" ") || n.replace(/\.png$/,"");
 
-/* 分类标注将作为汇总分析产物目录名（summary/）：不允许文件系统非法符号（新输入时直接剔除），也不能以 . 结尾 */
+/* 分类标注将作为汇总分析产物目录名（resource/summary/）：不允许文件系统非法符号（新输入时直接剔除），也不能以 . 结尾 */
 const BAD_LABEL = /[\\/:*?"<>|\x00-\x1f]/;
 const cleanLabel = s => s.replace(/[\\/:*?"<>|\x00-\x1f]/g, "");
 const labelOk = s => !BAD_LABEL.test(s) && !/\.$/.test(s);
@@ -508,7 +508,7 @@ function startRenameTag(from, chip){
   inp.select();
 }
 
-/* 提交改名：后端批量更新该分类全部标注 json 的 state，并把旧 summary/ 产物目录整体迁名为新名 */
+/* 提交改名：后端批量更新该分类全部标注 json 的 state，并把旧 resource/summary/ 产物目录整体迁名为新名 */
 async function commitRename(from, inp){
   const chip = renChip;
   const to = inp.value.trim();
@@ -1375,7 +1375,7 @@ async function clearCurrent(){
   try{
     const resp = await fetch(markUrl(item.name), { method:"DELETE" });
     if(!resp.ok) throw new Error("HTTP " + resp.status);
-    // 后端已把该图从 classify/ 移回 capture/（位置还原为“未标注”），此处同步视图状态
+    // 后端已把该图从 resource/classify/ 移回 resource/capture/（位置还原为“未标注”），此处同步视图状态
     item.marked = false; item.state=null; item.action=null; item.left=null; item.top=null;
     item.attnLeft=null; item.attnTop=null;
     dirty = false;
@@ -1496,7 +1496,7 @@ function renderCapBtn(){
   b.disabled = capBusy;
   const per = fmtCapInterval(capIntervalMs);
   b.title = capPaused
-    ? "截图未开启：点击后开始后台周期截图（原始截图保存到 capture/）"
+    ? "截图未开启：点击后开始后台周期截图（原始截图保存到 resource/capture/）"
     : "截图运行中（每 " + (per || "按配置间隔") + " 截取一帧" +
       (capDiffThreshold > 0 ? "，与每张已保存图不一致像素占比均 > " + capDiffThreshold + "% 才保存" : "") +
       "）：点击暂停（不再截图保存，控制台其余功能不受影响）";
@@ -1545,7 +1545,7 @@ async function toggleCap(){
 }
 
 /* 手动采集（「未标注」空列表中间按钮）：请求后端立即截一帧并做与执行模式同一套全尺寸逐像素去重
-   （与 capture/、classify/ 全部同尺寸图比对，差异须 > 手动保存阈值），通过即插入待标注列表并打开标注 */
+   （与 resource/capture/、resource/classify/ 全部同尺寸图比对，差异须 > 手动保存阈值），通过即插入待标注列表并打开标注 */
 async function capManualShot(){
   const b = $("capManualBtn");
   if(!b || b.disabled) return;
@@ -2002,7 +2002,7 @@ const THINK_EMPTY = "没有分类标注";
   每个分类另含 12 张注意区交集图 attn8/32-same100/90/80/70/60/50（以关注点为中心，未设 = 屏幕中心），
   鼠标点击分类再加 12 张点击区交集图 click8/32-same100/90/80/70/60/50（以鼠标点击点为中心）
   （均为 1/8、1/32 方框 × 各交集档）。
-  识别不再读这里的整批产物：改成只认【算法调优】落地在 runtime/ 的「综合最佳算法」
+  识别不再读这里的整批产物：改成只认【算法调优】落地在 resource/runtime/ 的「综合最佳算法」
   （综合分 =（1 − 无法区分率）× 匹配正确率 最高的那一种），算法用到哪几个 kind 就只比哪几个；
   差异度 = 100 − 加权匹配度，加权匹配度 = Σ「匹配值 × X × Y」÷ Σ「X × Y」（X 特征基础分、Y 权重），
   先放弃「最高匹配值被 ≥2 个分类并列」的特征（并列只在有有效产物的分类之间数）；
@@ -2655,7 +2655,7 @@ async function pollAnalyze(id, label){
       // 进度文案统一走 progLine()（「正在<做什么>：<第几项>/<共几项> <单位>（<当前对象>）（已耗时 N 秒）」模板，
       // 与其它长任务同款），已耗时逐秒走动 →
       // 长计算能一眼看出仍在推进，而不是一句看不出在干什么、也不知道进度到哪的「正在准备…」。
-      // 任务分 3 个阶段：0 = 准备（一键重建先逐张清场 summary/，再逐分类统计待分析组合，prepAct/prepDone/prepTotal/prepCur 计数）、
+      // 任务分 3 个阶段：0 = 准备（一键重建先逐张清场 resource/summary/，再逐分类统计待分析组合，prepAct/prepDone/prepTotal/prepCur 计数）、
       // 1 = 逐分类生成 15 张基础对照图（processed/total 计数）、2 = 生成各分类 15 张 -unique 独有区图（current 带 i/15）。
       // 进行中：进度画在汇总分析右栏 vtBar 同款进度条上（准备 / 基础轮按占比、第 2 轮按图种内 i/15 占比），
       // 中间过程不逐步写历史日志（任务开始 / 结束由 toast 各入库一条）；
@@ -2721,16 +2721,16 @@ async function thinkStart(){
   await startAnalyzeIfNeeded("分析");   // 与自动路径同入口：后端按提交序增量生成，进度显示在右栏进度条
 }
 
-/* 「重新生成全部对照图」：先清空 summary/ 全部产物，再全量重建。删除在后台计算线程内串行执行，
-   不会与自动重算/其它分析互踩；产物由 classify/ 已标注样本派生，删除不影响原始截图与标注 */
+/* 「重新生成全部对照图」：先清空 resource/summary/ 全部产物，再全量重建。删除在后台计算线程内串行执行，
+   不会与自动重算/其它分析互踩；产物由 resource/classify/ 已标注样本派生，删除不影响原始截图与标注 */
 async function rebuildThink(){
   if(thinkBusy){ toast("已有任务在跑：已当场作废它，按最新样本重新生成全部对照图。", "warn"); }
-  if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类适用的对照图（15 张基础合成图：交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图，各带 1 张独有区图共 15 张；每个分类另含 12 张注意区交集图（以关注点为中心，未设 = 屏幕中心），鼠标点击分类再加 12 张点击区交集图（以点击点为中心），全部参与识别）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
+  if(!confirm("将清空 resource/summary/ 下全部对照图产物，并从 resource/classify/ 已标注样本重新生成每个分类适用的对照图（15 张基础合成图：交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图，各带 1 张独有区图共 15 张；每个分类另含 12 张注意区交集图（以关注点为中心，未设 = 屏幕中心），鼠标点击分类再加 12 张点击区交集图（以点击点为中心），全部参与识别）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
   thinkRun = { keys: GROUPS.filter(g => g.canAnalyze).map(gkey), stage: 1, processed: 0 };  // 全量重建：所有有样本的组合都在本轮队列
   thinkBusy = true; renderThinkList();
   thinkButtonsBusy(true);       // 任务期间「开始分析 / 重新生成全部」置灰
   setThinkTabBusy(true);        // 左上角「汇总分析」标签立即转琥珀（一提交就显示在处理）
-  thinkBusyDock("正在全量重建全部对照图…（将先清空 summary/ 旧产物）");
+  thinkBusyDock("正在全量重建全部对照图…（将先清空 resource/summary/ 旧产物）");
   try{
     const r = await fetch("/api/annotate/think/rebuild", { method:"POST" });
     if(!r.ok){ let m="HTTP "+r.status; try{ const j=await r.json(); if(j&&j.error)m=j.error; }catch(_){} throw new Error(m); }
@@ -2908,10 +2908,10 @@ function pollSuggest(seq, file, taskId){
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——只按 runtime/ 里【算法调优】落地的「综合最佳算法」打分
+/* 渲染智能建议：与执行模式同一口径——只按 resource/runtime/ 里【算法调优】落地的「综合最佳算法」打分
    （差异度 diffPercent = 100 − 加权匹配度，加权匹配度 = Σ「匹配值 × X × Y」÷ Σ「X × Y」，
    X 特征基础分、Y 权重，先放弃「最高匹配值被 ≥2 个分类并列」的特征（并列只在有有效产物的分类之间数）；产物无任何有效像素的空图
-   判完全不匹配、按满值计入、照常参与加权），越小越像；无 runtime/ 时后端直接回
+   判完全不匹配、按满值计入、照常参与加权），越小越像；无 resource/runtime/ 时后端直接回
    「请先完成算法调优」的提示（status=error），不给出候选 */
 function renderSuggest(list){
   const comp = (list && list.length) ? list : [];
@@ -3566,13 +3566,13 @@ function vkTaskUi(j){
   const btn = $("btnVerifyStart"), stat = $("vkStat"), ver = $("vkVerdict");
   let base = "样本库：" + j.samples + " 张原图 · " + j.groups + " 个分类\n已算 " + (doneCount + staleCount) + "/" + total + " 种";
   if(doneCount || staleCount) base += "（已计算 " + doneCount + " · 需重算 " + staleCount + "）";   // 与列表 chip 同口径
-  // 结果来自 summary/verify.json（完整缓存）：已标注与汇总分析的数据没变就直接用上次的，不必重算
-  if(j.cached && (doneCount || staleCount)) base += "\n已从 summary/" + (j.cacheFile || "verify.json") + " 恢复上次结果（数据没变即可直接用）。";
-  // 逐图比对结果缓存（summary/verify-matrix.json）：每张原图与每个分类产物各按自己的大小 / 修改时间记账，
+  // 结果来自 resource/summary/verify.json（完整缓存）：已标注与汇总分析的数据没变就直接用上次的，不必重算
+  if(j.cached && (doneCount || staleCount)) base += "\n已从 resource/summary/" + (j.cacheFile || "verify.json") + " 恢复上次结果（数据没变即可直接用）。";
+  // 逐图比对结果缓存（resource/summary/verify-matrix.json）：每张原图与每个分类产物各按自己的大小 / 修改时间记账，
   // 没变过的整表 / 整行连 PNG 都不解码；算法调优用同一份，跨重启也能接着复用。
   // 这里**只报文件名**（用户 2026-09-13 指定）：已载入的特征数 / 样本行数由运行中的进度行（vkTaskLine 的
   // 「已缓存 N 个特征，已缓存 M 条样本比对行」）给出，不在统计块里再重复一遍
-  const mx = "summary/" + (j.matrixFile || "verify-matrix.json");
+  const mx = "resource/summary/" + (j.matrixFile || "verify-matrix.json");
   if(j.matrixRows || j.matrixBytes) base += "\n逐图比对结果缓存：" + mx + "。";
   if(staleCount) base += "\n注意：已标注 / 汇总分析的数据有变动，需重新验证（" + staleCount + " 种）。";
   // 本轮运行期间数据被改过（标注保存 / 汇总分析自动重算产物…）：本轮算的是变动前的数据、跑完必被标成
@@ -4437,7 +4437,7 @@ function optSyncRunBtn(){
     : optLock ? "正在提交…"
     : run ? "正在跑一轮（跑完自动恢复可用）；若期间数据发生变动，跑完会提示「结果已过期 · 需重算」—— 按提示先到「特征验证」视图重跑一次，再回来点这里"
     : synced ? "特征验证的值没有变化：当前结果就是按它算出来的，无需刷新（若之后特征验证的值变了，本按钮会重新变亮）"
-    : "按最新特征验证结果重新组合算法与特征（含基础分 X），再按当前权重 Y 重新计算全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；改完权重 Y 会自动重算（只重算被改动的那个算法）";
+    : "按最新特征验证结果重新组合算法与特征（含基础分 X），再按当前权重 Y 重新计算全部算法的分类匹配正确率（resource/classify/ 全部已标注原图 × 全部分类）；改完权重 Y 会自动重算（只重算被改动的那个算法）";
   const ab = $("optAutoBtn");
   if(!ab) return;
   ab.disabled = optLock || run || !(OPT && OPT.tunable);   // 运行中置灰：这一轮跑完自动恢复可用
@@ -4456,7 +4456,7 @@ function optSyncRunBtn(){
       + "　　第 3 轮：最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1 逐个走一遍）\n"
       + "　　第 4 轮：四舍五入微调 3 档（0.01 / 0.1 / 1，重算后结果没变就换成更简单的值）\n"
       + "　　第 5 轮：额外说明：某个权重在前三轮里，如果采纳过更好的值，就再跑 0~10 范围内取值，随机取 300 次（最多追加 3 遍）\n"
-      + "只有匹配正确率上升、或无法区分率下降才采纳；新权重保存到 classify/opt-weights.json（界面权重框随更新）；单一特征算法的权重固定 1、不参与调整";
+      + "只有匹配正确率上升、或无法区分率下降才采纳；新权重保存到 resource/classify/opt-weights.json（界面权重框随更新）；单一特征算法的权重固定 1、不参与调整";
 }
 
 /* 权重改完（输入框失焦 / 回车）立刻重算：只重算被改动的那个算法（onlyId=算法 id），其余算法的数值不动、
@@ -4692,7 +4692,7 @@ async function checkAppVersion(){
       for(let i = 0; i < shotLog.length; i++){
         const s = shotLog[i];
         const saved = s.kind === "saved";
-        // dup：参考图是 classify/ 已标注样本时带出分类，capture/ 未标注图则只报文件名
+        // dup：参考图是 resource/classify/ 已标注样本时带出分类，resource/capture/ 未标注图则只报文件名
         const fname = s.name || "参考图";
         const refWho = s.refState ? "「" + s.refState + "」分类的截图「" + fname + "」" : "截图「" + fname + "」";
         const txt = saved
@@ -4707,7 +4707,7 @@ async function checkAppVersion(){
     const maxSeq = Number(j && j.shotMaxSeq) || 0;
     if(maxSeq > 0 && lastShotLogSeq > maxSeq) lastShotLogSeq = -1;
     // 启动历史重复清理结果：后端每次启动按两个启用阈值中较低者逐像素比对重扫
-    // capture/ + classify/ 全部截图，不一致像素占比 ≤ 阈值即删（近似但不重复的画面一律保留）。
+    // resource/capture/ + resource/classify/ 全部截图，不一致像素占比 ≤ 阈值即删（近似但不重复的画面一律保留）。
     // 不论是否删除了图片都右下角提示一次清理完成
     // 启动历史重复清理进行态（startupDedup）：开始 → 一条「开始检查」消息；进行中 → 一条一直刷新的进度消息
     // （逗号风格：已判定 / 待判定张数，当前文件名，逐秒走动的已耗时，逐像素比对 / 复用历史比对结果个数，见 dedupProgText()）；
@@ -4718,7 +4718,7 @@ async function checkAppVersion(){
       if(dp.running){
         if(dpAt !== lastDedupProgAt){                 // 首次见到本次启动的清理：先提示一条「开始检查」
           lastDedupProgAt = dpAt;
-          showShotTip("启动重复清理：开始检查 capture/ 与 classify/ 的历史截图是否重复，"
+          showShotTip("启动重复清理：开始检查 resource/capture/ 与 resource/classify/ 的历史截图是否重复，"
             + "逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除，"
             + "文件名与修改时间都没变过的组合直接复用上次的比对结果、不再重复比对，请稍候…", "");
         }
@@ -4962,7 +4962,7 @@ function renderExecAll(){
   // 尚无可展示画面且不是已确认的失败：识别一轮在途，或后端只是“还没产生过结果”（占位快照）→ 属等待态
   const idleWait = execPending || String(j.error || "").indexOf("尚未产生识别结果") === 0;
 
-  // 「匹配分类」= 识别命中的分类标注（state）：动作 / 点击坐标都取自该分类（summary/<分类>/info.json）。
+  // 「匹配分类」= 识别命中的分类标注（state）：动作 / 点击坐标都取自该分类（resource/summary/<分类>/info.json）。
   // 产物目录常规与分类标注同名（一个分类 = 一个比对分组）；仅在二者确不相同（历史数据同分类
   // 多动作遗留的“<分类>_<action>”目录）时把目录名挂到悬停提示上，不放行宽、不在面板重复出现。
   // 匹配分类 = 差异分值最低的最近似分类；分值仅作参考、不设识别阈值，不再区分“已识别/未识别”
@@ -5082,7 +5082,7 @@ function renderExecSaveCap(j){
   }
 }
 
-/* 把当前画面另存为 capture/ 原始截图（未标注）：切到「标注模式 → 未标注」即可定位并按正常流程精确标注 / 修正坐标（自动识别中也允许保存） */
+/* 把当前画面另存为 resource/capture/ 原始截图（未标注）：切到「标注模式 → 未标注」即可定位并按正常流程精确标注 / 修正坐标（自动识别中也允许保存） */
 async function execSaveToCapture(){
   const b = $("execSaveCap");
   if(!b || b.disabled) return;
@@ -5092,7 +5092,7 @@ async function execSaveToCapture(){
   const j = await execGet("/api/execute/save-to-capture", { method:"POST" });
   if(j && j.ok){
     if(execShownAt === at0) execShownStored = true;   // 同帧保存成功：候选「存入分类」联动置灰
-    toast("已把当前画面存入 capture/（" + j.name + "）。切到「标注模式 → 未标注」即可定位并精确标注（含匹配动作与关注点坐标）。", "ok");
+    toast("已把当前画面存入 resource/capture/（" + j.name + "）。切到「标注模式 → 未标注」即可定位并精确标注（含匹配动作与关注点坐标）。", "ok");
   } else if(j && j.kind === "dup"){
     // 与某张历史画面差异 ≤ 手动阈值被拦截（非系统错误）：用琥珀「跳过」样式提示，文案与重复参考由后端给出
     toast(j.message || "当前画面与某张已保存截图几乎重复（不一致像素占比 ≤ 手动阈值），本次未另存", "skip");
@@ -5139,7 +5139,7 @@ function renderExecCandidates(list){
     btn.textContent = done ? "已存入" : "存入分类";
     btn.title = done
       ? "当前画面已存入（待标注截图或某分类样本）；重新「立即识别」出新画面后可再次存入"
-      : "把当前画面登记为「" + stateTxt + "」的样本（此后重跑算法调优会把 runtime/ 刷新成新的综合最佳算法），下次识别会优先参考它";
+      : "把当前画面登记为「" + stateTxt + "」的样本（此后重跑算法调优会把 resource/runtime/ 刷新成新的综合最佳算法），下次识别会优先参考它";
     btn.addEventListener("click", () => execQuickMark(it.state, btn));
     row.appendChild(btn);
     box.appendChild(row);
@@ -5183,7 +5183,7 @@ function openKindScores(it){
       '</div>' +
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图、注意区与点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。注意区交集图是各分类以关注点（未设 = 屏幕中心）为心的 1/8、1/32 方框 × 各交集档的交集图（每个分类都有）；点击区交集图是鼠标点击分类以点击点为心的同规格交集图。分类差异度 = 100 − 加权匹配度：只有【算法调优】落地在 runtime/ 的「综合最佳算法」用到的 kind 参与，匹配值 = 100 − 不匹配点占比，先放弃「最高匹配值被 ≥2 个分类并列」的特征，再按 Σ「匹配值 × X × Y」÷ Σ「X × Y」算加权匹配度（X 特征基础分、Y 权重，只累加该分类可用特征）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与加权</div>" +
+        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图、注意区与点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。注意区交集图是各分类以关注点（未设 = 屏幕中心）为心的 1/8、1/32 方框 × 各交集档的交集图（每个分类都有）；点击区交集图是鼠标点击分类以点击点为心的同规格交集图。分类差异度 = 100 − 加权匹配度：只有【算法调优】落地在 resource/runtime/ 的「综合最佳算法」用到的 kind 参与，匹配值 = 100 − 不匹配点占比，先放弃「最高匹配值被 ≥2 个分类并列」的特征，再按 Σ「匹配值 × X × Y」÷ Σ「X × Y」算加权匹配度（X 特征基础分、Y 权重，只累加该分类可用特征）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与加权</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";

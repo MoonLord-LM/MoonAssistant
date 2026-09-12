@@ -22,12 +22,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 画面识别器（执行模式与「未标注」里的单图智能推荐）：把「当前最新截图」与<b>运行时算法</b>
- * （{@code runtime/}，算法调优跑完落地的「综合最佳算法」）做像素比对。
+ * （{@code resource/runtime/}，算法调优跑完落地的「综合最佳算法」）做像素比对。
  *
- * <p><b>匹配源</b>不是 summary/ 的整批对照图，而是算法调优选出的那一个算法：算法由若干<b>特征</b>组成，
+ * <p><b>匹配源</b>不是 resource/summary/ 的整批对照图，而是算法调优选出的那一个算法：算法由若干<b>特征</b>组成，
  * 每个特征 = 一种产物 kind（见 {@link ArtifactKind}）+ 基础分 X（越大越能把这个分类与别人分开）+ 权重 Y；
  * 该算法的<b>生效特征</b>（Y &gt; 0，见 {@link RuntimeAlgorithm#effective}）的各分类对照图产物已由算法调优
- * 搬到 {@code runtime/<分类>/}，算法定义与各分类动作 / 点击坐标写在 {@code runtime/algorithm.json}
+ * 搬到 {@code resource/runtime/<分类>/}，算法定义与各分类动作 / 点击坐标写在 {@code resource/runtime/algorithm.json}
  * （见 {@link RuntimeAlgorithm}）。于是运行时与标注 / 汇总分析过程解耦：调优跑过一次即可长期执行。</p>
  *
  * <p><b>判分口径</b>（{@link #classifyByAlgorithm}，与算法调优的评价完全一致，共四步）：
@@ -67,7 +67,7 @@ public class FrameClassifier {
 
     private final ExecuteProperties executeProperties;
 
-    /** 产物像素缓存：key = 产物文件绝对路径（特征验证读 summary/、识别读 runtime/，同一张只解一次）。
+    /** 产物像素缓存：key = 产物文件绝对路径（特征验证读 resource/summary/、识别读 resource/runtime/，同一张只解一次）。
      *  值用 SoftReference 包装：堆内存充裕时全部常驻、识别零重解码；内存吃紧时 JVM 会在 OOM 前自动回收，
      *  被回收的条目等同缓存 miss、由 loadCached 自动重解码补回（因此不必按产物规模手动上调 -Xmx）。
      *  并发读写安全，供识别与特征验证共用。 */
@@ -129,7 +129,7 @@ public class FrameClassifier {
         public String bestState;
         /** 最近似分类的差异度百分比（0~100，越低越像 = 100 − 加权匹配度）；无法区分时为并列最高那条的差异度。 */
         public double bestDiffPercent = Double.NaN;
-        /** 最近似分类在 runtime/ 下的产物子目录名（<dir>），无最近似分类时 null。 */
+        /** 最近似分类在 resource/runtime/ 下的产物子目录名（<dir>），无最近似分类时 null。 */
         public String bestFile;
         /** 命中分类定义的动作（click / none / other），来自算法调优落盘的 algorithm.json。 */
         public String action;
@@ -140,7 +140,7 @@ public class FrameClassifier {
         public Integer clickTop;
         /** 实际算出有效匹配度（至少有一个特征没被放弃、且该分类判得了）的分类数。 */
         public int scannedSamples;
-        /** runtime/algorithm.json 里的分类总数（含分辨率不符 / 特征全被放弃而跳过的）。 */
+        /** resource/runtime/algorithm.json 里的分类总数（含分辨率不符 / 特征全被放弃而跳过的）。 */
         public int totalSamples;
         /** 未参与比对（被跳过）的分类子目录名 → 跳过原因（totalSamples > scannedSamples 时才非空，供界面提示与日志排查）。 */
         public final Map<String, String> skipped = new LinkedHashMap<>();
@@ -158,7 +158,7 @@ public class FrameClassifier {
     public record KindScore(String kind, String file, int w, int h, double score) {
     }
 
-    /** 一个候选：某分类的差异度（= 100 − 加权匹配度）+ 算法各特征各自的分值明细（runtime/&lt;matchedFile&gt;/ 下的产物） */
+    /** 一个候选：某分类的差异度（= 100 − 加权匹配度）+ 算法各特征各自的分值明细（resource/runtime/&lt;matchedFile&gt;/ 下的产物） */
     public record Candidate(String state, double diffPercent, String matchedFile, List<KindScore> kinds) {
     }
 
@@ -172,9 +172,9 @@ public class FrameClassifier {
     /**
      * 按运行时算法识别一张画面（执行模式与「未标注」里的单图智能推荐统一入口）。
      *
-     * @param frame 最新一张画面截图（须与 runtime/ 产物同分辨率：窗口先经 resize 对齐，比对不做缩放）
-     * @param root  runtime/ 目录（算法调优「综合最佳算法」的落地目录）
-     * @param algo  运行时算法（{@code runtime/algorithm.json}，见 {@link RuntimeAlgorithm}）
+     * @param frame 最新一张画面截图（须与 resource/runtime/ 产物同分辨率：窗口先经 resize 对齐，比对不做缩放）
+     * @param root  resource/runtime/ 目录（算法调优「综合最佳算法」的落地目录）
+     * @param algo  运行时算法（{@code resource/runtime/algorithm.json}，见 {@link RuntimeAlgorithm}）
      * @return 识别输出（无人认可判 / 无法区分时 recognized=false；画面分辨率与全部产物都不一致时抛异常）
      */
     public synchronized Outcome classifyByAlgorithm(BufferedImage frame, Path root, RuntimeAlgorithm algo) {
@@ -352,7 +352,7 @@ public class FrameClassifier {
         return out;
     }
 
-    /** 解码 classify/ 原图全幅像素但不读写缓存（特征验证用：每张样本整轮只在首个 kind 解码一次、像素由 works
+    /** 解码 resource/classify/ 原图全幅像素但不读写缓存（特征验证用：每张样本整轮只在首个 kind 解码一次、像素由 works
      *  持有、验证结束随任务释放，避免把全部原图永久灌进常驻缓存）；尺寸与 fw×fh 不符返回 null。 */
     private CachedPx decodeRawPng(Path p, int fw, int fh) {
         BasicFileAttributes att;
@@ -766,7 +766,7 @@ public class FrameClassifier {
         return decodeArtifactPng(png, kind);
     }
 
-    /** 读 classify/ 原图全幅像素但不读写缓存（仅与 fw×fh 同分辨率，不符返回 null）：像素由验证的 works 持有、
+    /** 读 resource/classify/ 原图全幅像素但不读写缓存（仅与 fw×fh 同分辨率，不符返回 null）：像素由验证的 works 持有、
      *  整轮只解码一次，任务结束随 GC 释放。 */
     CachedPx verifySample(Path png, int fw, int fh) {
         return decodeRawPng(png, fw, fh);

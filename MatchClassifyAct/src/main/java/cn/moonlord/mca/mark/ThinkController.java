@@ -39,14 +39,14 @@ import java.util.Map;
  * 鼠标点击分类另加 12 张点击区交集图 = 54 张
  * （见 {@link FrameClassifier}；历史旧目录缺图 → 待后台重算补齐后自动恢复）。
  *
- * <p>列表首位另有一个不属于任何分类标注的固定「全部」组（{@code all=true}）：取 classify/ 全部已标注截图
+ * <p>列表首位另有一个不属于任何分类标注的固定「全部」组（{@code all=true}）：取 resource/classify/ 全部已标注截图
  * 合成 12 张专用产物 = 交集图六档 6 张（100% 档公共部分 + 90/80/70/60/50 档样本间稳定区）+ 多数 / 均值 /
  * 去重均值 3 张代表图 + 这 3 族「与代表图差异最大的一张原图」，仅供整体目检，不做分组、不参与识别比对。</p>
  *
  * <pre>
  *   GET  /api/annotate/think/groups                         分类分组总览（样本数 / 是否已分析 / 覆盖率 / 产物目录名 dir / 注意区交集图齐全标记 hasAttn / 低档齐全 hasAttnLow / 点击区齐全 hasClick 与低档 hasClickLow；首位恒为固定「全部」组，带 all=true、dir=_all_、items=12 张专用产物）
- *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 summary/&lt;分类标注&gt;/ 下各基础图与注意区/点击区图，随后补 -unique 独有区图）
- *   POST /api/annotate/think/rebuild                        一键重建：清空 summary/ 全部产物后全量重算 → {taskId}
+ *   POST /api/annotate/think/analyze                        启动异步分析 {force?} → {taskId}（重算 resource/summary/&lt;分类标注&gt;/ 下各基础图与注意区/点击区图，随后补 -unique 独有区图）
+ *   POST /api/annotate/think/rebuild                        一键重建：清空 resource/summary/ 全部产物后全量重算 → {taskId}
  *   GET  /api/annotate/think/task/{taskId}                  轮询进度（running/done/error）
  *   GET  /api/annotate/think/img/{kind}?dir=…               取对应分类产物目录（kind = 图之一：same100|same100-unique|same90|same90-unique|same80|same80-unique|same70|same70-unique|same60|same60-unique|same50|same50-unique|max|max-unique|avg|avg-unique|dedup-avg|dedup-avg-unique|major8|major8-unique|avg8|avg8-unique|dedup-avg8|dedup-avg8-unique|major32|major32-unique|avg32|avg32-unique|dedup-avg32|dedup-avg32-unique|attn8-same100|attn8-same90|attn8-same80|attn8-same70|attn8-same60|attn8-same50|attn32-same100|attn32-same90|attn32-same80|attn32-same70|attn32-same60|attn32-same50|click8-same100|click8-same90|click8-same80|click8-same70|click8-same60|click8-same50|click32-same100|click32-same90|click32-same80|click32-same70|click32-same60|click32-same50；「全部」组 dir=_all_ 另接受 same100|same90|same80|same70|same60|same50|max|avg|dedup-avg 及 max/avg/dedup-avg 的 -maxdiff；
  *                                                            dir = 分类标注的 UTF-8 再 Base64，纯 ASCII）
@@ -80,7 +80,7 @@ public class ThinkController {
         return ResponseEntity.ok(Map.of("taskId", taskId, "force", force));
     }
 
-    /** 一键重建：先清空 summary/ 全部产物再全量重算（前端「重新生成全部对照图」按钮；清场动作在串行计算池内执行） */
+    /** 一键重建：先清空 resource/summary/ 全部产物再全量重算（前端「重新生成全部对照图」按钮；清场动作在串行计算池内执行） */
     @PostMapping("/rebuild")
     public ResponseEntity<?> rebuild() {
         String taskId = thinkService.startRebuild();
@@ -98,7 +98,7 @@ public class ThinkController {
         return ResponseEntity.ok(t);
     }
 
-    /** 智能建议：把一张未标注截图交给 runtime/ 落地的「综合最佳算法」异步比对 → {taskId}，随后轮询 /suggest/task/{taskId} */
+    /** 智能建议：把一张未标注截图交给 resource/runtime/ 落地的「综合最佳算法」异步比对 → {taskId}，随后轮询 /suggest/task/{taskId} */
     @PostMapping("/suggest")
     public ResponseEntity<?> suggest(@RequestBody(required = false) Map<String, String> body) {
         String file = (body == null ? "" : String.valueOf(body.getOrDefault("file", ""))).trim();

@@ -5,7 +5,7 @@ import lombok.Data;
 /**
  * 单张截图的标注内容（API / 页面统一形状：{@code state/action/left/top/attnLeft/attnTop}）。
  *
- * <p><b>存储已中心化</b>：动作与坐标是“分类级定义”，收敛在 {@code classify/data.json}
+ * <p><b>存储已中心化</b>：动作与坐标是“分类级定义”，收敛在 {@code resource/classify/data.json}
  * （每分类一份，见 {@link ClassifyStore}）；图片旁同名 json（IMG_x.png → IMG_x.json）
  * 只记分类归属 {@code { "state": "登录页" }}。读取时由 {@link ClassifyStore#readSample(String)}
  * 以“样本 state + 中心表定义”合成本对象，因此对接口与页面保持原字段形状，数据不再逐图冗余。</p>

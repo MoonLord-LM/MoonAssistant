@@ -26,24 +26,24 @@ import java.util.stream.Stream;
  * 分类标注中心表 + 样本标注读写（分类 → 动作/坐标的单一事实来源）。
  *
  * <p><b>数据模型（schema=1）</b>：同一分类标注的动作与“鼠标点击点 / 注意点”是“分类级定义”，与具体样本无关，
- * 只在 <code>classify/data.json</code> 保存一份；每张样本图旁的 json 只记它的分类归属，不再逐张复制坐标。
+ * 只在 <code>resource/classify/data.json</code> 保存一份；每张样本图旁的 json 只记它的分类归属，不再逐张复制坐标。
  * 两个点互相独立：left/top = 鼠标点击点（仅 click 分类，执行时真正点击的位置，也是点击区交集图框心）；
  * attnLeft/attnTop = 注意点（任意分类可选，注意区图/匹配裁剪以它为中心；<b>全部分类一致的默认值
  * = 屏幕中心</b>，不再回退点击点）。汇总分析分别以注意点、点击点为框心生成两套方框交集图：</p>
  * <pre>
- * classify/data.json
+ * resource/classify/data.json
  *   { "schema": 1, "states": {
  *       "登录页": { "action": "click", "left": 640, "top": 360, "attnLeft": 640, "attnTop": 360 },
  *       "加载中": { "action": "none", "attnLeft": 640, "attnTop": 360 } } }
- * classify/IMG_x.png        样本截图
- * classify/IMG_x.json       { "state": "登录页" }        // 仅归属，动作坐标查 data.json
+ * resource/classify/IMG_x.png        样本截图
+ * resource/classify/IMG_x.json       { "state": "登录页" }        // 仅归属，动作坐标查 data.json
  * </pre>
  *
  * <p><b>读取样本</b>：{@link #readSample(String)} 以“样本 json 的 state + 中心表定义”合成完整标注，
  * 因此对 API 与页面保持原来的字段形状（state/action/left/top/attnLeft/attnTop），只是数据不再逐图冗余。</p>
  *
  * <p><b>兼容与迁移</b>：历史版本是“每张图 json 自带 action/left/top”全量写法。首次访问本服务时
- * （懒迁移）会扫描 classify/ 下的旧 json，按分类取<b>众数</b>动作/坐标归纳出 data.json
+ * （懒迁移）会扫描 resource/classify/ 下的旧 json，按分类取<b>众数</b>动作/坐标归纳出 data.json
  * （与界面“智能带入多数点”的口径一致；同分类里个别不一致的历史异位点不会带偏），
  * 之后把旧样本 json 就地瘦身为仅 {state}。读取路径始终以 data.json 为准，
  * 若某分类未建定义则回退样本 json 自带字段（兼容归纳前 / 归纳遗漏的旧文件）。
@@ -82,7 +82,7 @@ public class ClassifyStore {
         private Integer attnTop;
     }
 
-    /** classify/data.json 的结构 */
+    /** resource/classify/data.json 的结构 */
     @Data
     public static class DataFile {
         private int schema = 1;
@@ -95,7 +95,7 @@ public class ClassifyStore {
         return storage.classify().resolve(DATA_FILE);
     }
 
-    /** 样本 json 的固定位置：classify/&lt;png 名去扩展名&gt;.json（与图是否仍在 capture/ 无关） */
+    /** 样本 json 的固定位置：resource/classify/&lt;png 名去扩展名&gt;.json（与图是否仍在 resource/capture/ 无关） */
     public Path sampleJson(String imageFile) {
         String n = imageFile == null ? "" : imageFile;
         if (n.toLowerCase().endsWith(".png")) {
@@ -146,7 +146,7 @@ public class ClassifyStore {
     // ------------------------------------------------------------------ 懒迁移（旧版：每图 json 全量自带动作坐标）
 
     /**
-     * 首次使用时执行一次：classify/data.json 不存在 → 从 classify/ 旧样本 json 归纳众数定义并落盘，
+     * 首次使用时执行一次：resource/classify/data.json 不存在 → 从 resource/classify/ 旧样本 json 归纳众数定义并落盘，
      * 再把旧 json 瘦身为 {state}；之后调用为空操作。
      */
     private synchronized void migrateOnce() {
@@ -254,7 +254,7 @@ public class ClassifyStore {
             defs, slimmed, kept, failed);
     }
 
-    /** classify/ 下 IMG_*.png（已标注样本），按文件名排序 */
+    /** resource/classify/ 下 IMG_*.png（已标注样本），按文件名排序 */
     public List<Path> listClassifiedPngs() {
         List<Path> pngs = new ArrayList<>();
         Path dir = storage.classify();
@@ -268,7 +268,7 @@ public class ClassifyStore {
             }).sorted(Comparator.comparing(p -> p.getFileName().toString()))
              .forEach(pngs::add);
         } catch (IOException e) {
-            log.warn("枚举 classify/ 目录失败: {}", e.toString());
+            log.warn("枚举 resource/classify/ 目录失败: {}", e.toString());
         }
         return pngs;
     }
@@ -304,7 +304,7 @@ public class ClassifyStore {
         return m;
     }
 
-    /** 便捷：按 png 路径读取样本标注（路径目录不限，按文件名定位 classify/ 下 json） */
+    /** 便捷：按 png 路径读取样本标注（路径目录不限，按文件名定位 resource/classify/ 下 json） */
     public CaptureMark sampleOf(Path png) {
         return png == null ? null : readSample(png.getFileName().toString());
     }

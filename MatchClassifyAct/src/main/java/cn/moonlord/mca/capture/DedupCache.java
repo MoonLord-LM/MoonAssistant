@@ -25,14 +25,14 @@ import java.util.Set;
  * <b>文件名 + 最后修改时间</b>四元组存盘，下次启动的历史重复清理直接复用，同样的两张图不再重复比对。
  *
  * <p>缓存身份 = 文件名 + mtime（毫秒），与所在目录、左右顺序都无关（比对本身是对称的），
- * 因此同一张图从 capture/ 移入 classify/（{@code Files.move} 保留 mtime）也不会失效。
+ * 因此同一张图从 resource/capture/ 移入 resource/classify/（{@code Files.move} 保留 mtime）也不会失效。
  * 任一侧的<b>文件名或 mtime 变化</b>（内容被改过 / 被别的文件顶替）该条自动失效、重新比对。</p>
  *
  * <p>缓存值 = 两张图不一致像素点占比（%，与 {@link ScreenCaptureService} 判定同口径的两位舍入值），
  * 所以<b>阈值改动不需要重算</b>：判定时拿当前阈值与缓存值重新比较即可，结果与没缓存时完全一致。</p>
  *
- * <p>缓存文件存在 {@code classify/dedup-cache.json}（与已标注截图同目录，UTF-8，可随时删除、
- * 删了只是下次重算一遍；旧版放在运行目录根下的同名文件首次访问时自动搬进 classify/）。格式：</p>
+ * <p>缓存文件存在 {@code resource/classify/dedup-cache.json}（与已标注截图同目录，UTF-8，可随时删除、
+ * 删了只是下次重算一遍；旧版放在运行目录根下的同名文件首次访问时自动搬进 resource/classify/）。格式：</p>
  *
  * <pre>
  * {
@@ -54,7 +54,7 @@ import java.util.Set;
 @Component
 public class DedupCache {
 
-    /** 缓存文件名（存在 classify/ 下，与已标注截图同目录，可随时删除） */
+    /** 缓存文件名（存在 resource/classify/ 下，与已标注截图同目录，可随时删除） */
     private static final String CACHE_FILE = "dedup-cache.json";
 
     /** 文件格式版本：与代码里的常量不一致（或不是 JSON）则整份丢弃重算，下次落盘即改写为新格式 */
@@ -65,7 +65,7 @@ public class DedupCache {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** 缓存文件完整路径 = classify/dedup-cache.json（落盘前确保 classify/ 已存在） */
+    /** 缓存文件完整路径 = resource/classify/dedup-cache.json（落盘前确保 resource/classify/ 已存在） */
     private final Path file;
 
     public DedupCache(StoragePaths storage) {
@@ -171,7 +171,7 @@ public class DedupCache {
     private void save() {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         try {
-            Files.createDirectories(file.getParent());   // 还没标注过任何图时 classify/ 可能不存在
+            Files.createDirectories(file.getParent());   // 还没标注过任何图时 resource/classify/ 可能不存在
             try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
                 // 结构本身很简单（键是「文件名@mtime」、值是数字），手写 JSON 反而能完全控制排版：
                 // 每个文件组独占一行、便于直接查看与裁剪；键名统一走 jsonStr() 转义
@@ -215,7 +215,7 @@ public class DedupCache {
         }
     }
 
-    /** 旧版把缓存写在运行目录根下：新位置（classify/）还没有、根下却有时搬进去，省掉一次全量重算 */
+    /** 旧版把缓存写在运行目录根下：新位置（resource/classify/）还没有、根下却有时搬进去，省掉一次全量重算 */
     private void migrateLegacyFile() {
         if (Files.isRegularFile(file)) {
             return;

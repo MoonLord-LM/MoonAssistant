@@ -63,12 +63,12 @@ import java.util.stream.Stream;
  * <b>匹配正确率 = 命中 / (可判定样本 − 无法区分) = 命中 / (命中 + 判错)</b>（无法区分既不算命中也不算判错，
  * 不进这个分母，只回答「能给出结果的样本里判对了多少」）；<b>无法区分率 = 无法区分 / 可判定样本</b>
  * （分母含无法区分样本）。与特征验证同理：逐张按需解码算矩阵、用后即释放（常驻缓存回收交给 JVM 的 GC），
- * 但矩阵本身与特征验证共用 {@link VerifyMatrixCache}（{@code summary/verify-matrix.json}）：特征验证刚跑完
+ * 但矩阵本身与特征验证共用 {@link VerifyMatrixCache}（{@code resource/summary/verify-matrix.json}）：特征验证刚跑完
  * 就直接在内存里命中，一张都不用重比；跨进程也按「每张原图 / 每个产物自己的大小 / 修改时间」复用，没变过的部分不重算。
  *
- * <p><b>结果完整缓存到 {@code summary/opt-result.json}</b>（与特征验证的 {@code summary/verify.json} 同一套做法）：
+ * <p><b>结果完整缓存到 {@code resource/summary/opt-result.json}</b>（与特征验证的 {@code resource/summary/verify.json} 同一套做法）：
  * 一次跑完（无 error）即把全部算法的结果（含逐分类明细）+ 最近一次「自动调整参数」摘要完整落盘。缓存有效性
- * 取决于三点：<b>①已标注（{@code classify/}）、②汇总分析（{@code summary/} 产物）、③特征验证的结果</b> ——
+ * 取决于三点：<b>①已标注（{@code resource/classify/}）、②汇总分析（{@code resource/summary/} 产物）、③特征验证的结果</b> ——
  * 前两者体现为特征验证指纹 {@code fp}，第三者体现为「全部 kind 的验证结果都还是最新的（{@link #ready()}）」
  * 与「算法组合口径没变（{@code sig}）」。三者都没变时进程启动即恢复上次结果（界面「已计算」，无需重算）；
  * 任何一处有变动就把结果标记为过期，界面提示重新计算。
@@ -81,19 +81,19 @@ import java.util.stream.Stream;
  * 的固定网格逐个走一遍（{@value #TUNE_TRIALS} 个）；③在当前最好值附近微调（加法 {@value #TUNE_FINE_STEPS} 个 + 减法
  * {@value #TUNE_FINE_STEPS} 个，即 ±0.001 ~ ±0.1 逐个走一遍）；④四舍五入微调（按 0.01 / 0.1 / 1 逐档四舍五入，
  * 两率<b>一点没变</b>就换成更简单的值）。随机组合尝试与前三轮都是只要这次改动让该算法的<b>匹配正确率上升</b>或
- * <b>无法区分率下降</b>就采纳，并把最新权重保存到 {@code classify/opt-weights.json}（可手删，删了回到全 1）；
+ * <b>无法区分率下降</b>就采纳，并把最新权重保存到 {@code resource/classify/opt-weights.json}（可手删，删了回到全 1）；
  * 某个权重这一遍里采纳过更好的值，就再<b>只跑随机轮</b>做追加重试（一遍 {@value #TUNE_RETRY_TRIALS} 个随机值，
  * 最多追加 {@value #TUNE_REPEAT} 遍），避免只试一遍就停在局部最优。
  * {@link #start}（刷新算法特征）跑完同样把本次生效的权重写进同一个文件（只写这次算过的算法），
  * 所以两份任务都不会让权重只留在内存里：重启后界面与后续功能读到的就是最近一次算过的值。
- * 另有一份<b>特征选择 + 权重数值快照</b>始终保存到 {@code summary/opt-weights.json}（每次跑完覆写，
+ * 另有一份<b>特征选择 + 权重数值快照</b>始终保存到 {@code resource/summary/opt-weights.json}（每次跑完覆写，
  * 供后续功能 / 开发验证直接读取，见 {@link #snapshotFile()}）。
  *
  * <p><b>综合最佳算法落地</b>（{@link #buildRuntime}）：无论「刷新算法特征」还是「自动调整参数」，跑完都按
  * <b>综合分 = （1 − 无法区分率）× 匹配正确率</b> 最高的那种算法，把它的<b>生效特征</b>（权重 Y &gt; 0 的那些：
- * kind + 基础分 X + 权重 Y）与各分类动作 / 点击坐标 / 分辨率写进 {@code runtime/algorithm.json}，
- * 各分类对照图产物从 summary/ 复制一份到 {@code runtime/&lt;分类&gt;/}（只复制生效特征那几个 kind 的产物，
- * summary/ 原件保留，见 {@link RuntimeService}）——执行模式与「未标注」的单图智能推荐只认这份落地物、
+ * kind + 基础分 X + 权重 Y）与各分类动作 / 点击坐标 / 分辨率写进 {@code resource/runtime/algorithm.json}，
+ * 各分类对照图产物从 resource/summary/ 复制一份到 {@code resource/runtime/&lt;分类&gt;/}（只复制生效特征那几个 kind 的产物，
+ * resource/summary/ 原件保留，见 {@link RuntimeService}）——执行模式与「未标注」的单图智能推荐只认这份落地物、
  * 也只用生效特征比对与加权（见 {@link RuntimeAlgorithm#effective}），于是运行时与标注 / 汇总分析过程解耦。
  * <b>单一特征算法的权重固定 1</b>：界面不可编辑、也不参与自动调整——只有一个特征时 Y 在 Σ「X × Y」里被约掉，
  * 改它对加权平均（因而对结果）没有任何影响。评估矩阵与「刷新算法特征」共用一套，且与权重无关的部分只算一次
@@ -187,28 +187,28 @@ public class OptimizeService {
     /** 第二轮（固定网格轮）的步长：从 {@value} 起每 {@value} 一个值、到 {@value #Y_MAX} 正好 {@value #TUNE_TRIALS} 个（0.1、0.2、…、10）。 */
     private static final double TUNE_GRID_STEP = Y_MAX / TUNE_TRIALS;
 
-    /** 权重文件名（与去重缓存同放 classify/：可手删、随 *.json 一并忽略）。 */
+    /** 权重文件名（与去重缓存同放 resource/classify/：可手删、随 *.json 一并忽略）。 */
     private static final String WEIGHTS_FILE = "opt-weights.json";
 
     /** 权重文件格式版本：不认识就整份忽略（下次落盘即改写为新格式）。 */
     private static final int WEIGHTS_VERSION = 1;
 
-    /** 结果缓存文件名（放 summary/，与特征验证的 verify.json 并列：可手删、随 *.json 一并忽略）。 */
+    /** 结果缓存文件名（放 resource/summary/，与特征验证的 verify.json 并列：可手删、随 *.json 一并忽略）。 */
     private static final String RESULT_FILE = "opt-result.json";
 
-    /** 特征选择 + 权重数值快照文件名（放 summary/：每次跑完覆写一份最新的，供后续功能读取）。 */
+    /** 特征选择 + 权重数值快照文件名（放 resource/summary/：每次跑完覆写一份最新的，供后续功能读取）。 */
     private static final String SNAPSHOT_FILE = "opt-weights.json";
 
     /** 缓存 / 快照格式版本：不认识就整份忽略（下次落盘即改写为新格式）。 */
     private static final int CACHE_VERSION = 1;
 
-    /** 是否已尝试从 summary/opt-result.json 恢复（每个进程只试一次）。 */
+    /** 是否已尝试从 resource/summary/opt-result.json 恢复（每个进程只试一次）。 */
     private volatile boolean cacheTried;
 
     /** 本次进程的结果是否来自缓存文件（前端提示「已恢复上次结果」用）。 */
     private volatile boolean cacheRestored;
 
-    /** 上次结果里的算法结构（快照 summary/opt-weights.json 的 {@code algos}：特征清单 + 基础分 X + 权重 Y）。
+    /** 上次结果里的算法结构（快照 resource/summary/opt-weights.json 的 {@code algos}：特征清单 + 基础分 X + 权重 Y）。
      *  只在「特征验证结果已变旧、算法组合不出来」时随 status 下发：界面像「汇总分析」那样照常展示上次的数据
      *  （主图区算法卡片 + 左栏数值 + 结果卡），并标「已过期 · 需重算」。 */
     private volatile List<Map<String, Object>> lastAlgos = List.of();
@@ -362,13 +362,13 @@ public class OptimizeService {
     /** 验证 / 自动调整共用的一次性数据：分类、样本、参与 kind、各 kind 的比对矩阵（跑完即释放）。 */
     private record Env(List<Ctx> groups, List<Smp> samples, List<String> kinds, Map<String, Matrix> mats, String fp) { }
 
-    /** summary/ 下的一个有效分类目录（与特征验证同口径）。 */
+    /** resource/summary/ 下的一个有效分类目录（与特征验证同口径）。 */
     private record Ctx(int idx, String state, String dir, int w, int h,
                        String action, Integer attnLeft, Integer attnTop,
                        Integer actLeft, Integer actTop) {
     }
 
-    /** classify/ 下的一张已标注原图（归属某分类目录）；mtime / size = 原图文件自身的大小与修改时间
+    /** resource/classify/ 下的一张已标注原图（归属某分类目录）；mtime / size = 原图文件自身的大小与修改时间
      *  （逐图比对结果的缓存键：图被换掉就能识别出来，没换过的那一行直接复用）。 */
     private record Smp(Path png, Ctx own, long mtime, long size) {
     }
@@ -530,7 +530,7 @@ public class OptimizeService {
         out.put("cached", cacheRestored);
         out.put("cacheFile", RESULT_FILE);
         out.put("snapshotFile", SNAPSHOT_FILE);
-        // 逐图比对结果缓存（与特征验证共用 summary/verify-matrix.json）：界面提示复用规模与省下的重算
+        // 逐图比对结果缓存（与特征验证共用 resource/summary/verify-matrix.json）：界面提示复用规模与省下的重算
         out.putAll(matrix.status());
         out.put("fp", fp);
         // 当前算法组合口径（为空 = 特征验证结果不齐 → 恢复出来的结果一律算过期）
@@ -929,7 +929,7 @@ public class OptimizeService {
         }
         if (todo.isEmpty()) {
             // 点名的算法全都可直接复用（权重其实没改 / id 已不存在）：不跑评估，上次结果原样生效
-            // 特例：runtime/ 缺失（被清理过 / 还没落地过）时顺手按上次结果重建一次，
+            // 特例：resource/runtime/ 缺失（被清理过 / 还没落地过）时顺手按上次结果重建一次，
             // 免得用户点了「刷新算法特征」却仍被提示「先完成算法调优」。
             if (!runtime.ready() && prev != null && prev.algos != null) {
                 buildRuntime("verify", algos, new ArrayList<>(prev.algos), scanGroups(), 0);
@@ -1003,7 +1003,7 @@ public class OptimizeService {
         saveSnapshot(res.fp, res.sig, algos, rows);
         saveWeightsOf(rows);   // 本次算过的权重同样落盘：文件始终 = 最近一次「刷新算法特征」的生效权重
         matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
-        buildRuntime("verify", algos, rows, groups, res.costMs);   // 选出综合最佳算法落到 runtime/（执行与推荐只认它）
+        buildRuntime("verify", algos, rows, groups, res.costMs);   // 选出综合最佳算法落到 resource/runtime/（执行与推荐只认它）
 
         r.stage = "完成";
         r.finished = true;
@@ -1422,7 +1422,7 @@ public class OptimizeService {
         saveCache(res, t);
         saveSnapshot(res.fp, res.sig, algos, rows);
         matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
-        buildRuntime("tune", algos, rows, groups, res.costMs);   // 选出综合最佳算法落到 runtime/（执行与推荐只认它）
+        buildRuntime("tune", algos, rows, groups, res.costMs);   // 选出综合最佳算法落到 resource/runtime/（执行与推荐只认它）
 
         r.stage = "完成";
         r.finished = true;
@@ -1436,13 +1436,13 @@ public class OptimizeService {
     }
 
     /**
-     * 把本轮选出的「综合最佳算法」落到 {@code runtime/}：综合分 = （1 − 无法区分率）× 匹配正确率，
+     * 把本轮选出的「综合最佳算法」落到 {@code resource/runtime/}：综合分 = （1 − 无法区分率）× 匹配正确率，
      * 取最高的那一种算法（与界面「综合最佳算法」同一口径）。执行模式与「未标注」的单图智能推荐只认这份落地物
      * （见 {@link RuntimeService#classify}）：算法<b>生效特征</b>（权重 Y &gt; 0）的各分类对照图产物复制到
-     * {@code runtime/&lt;分类&gt;/}（每个分类只复制这么几个 kind：Y = 0 的特征对匹配没有贡献，不复制、也不写进定义），
-     * 特征（kind + 基础分 X + 权重 Y）与各分类动作 / 点击坐标 / 分辨率写进 {@code runtime/algorithm.json}。
+     * {@code resource/runtime/&lt;分类&gt;/}（每个分类只复制这么几个 kind：Y = 0 的特征对匹配没有贡献，不复制、也不写进定义），
+     * 特征（kind + 基础分 X + 权重 Y）与各分类动作 / 点击坐标 / 分辨率写进 {@code resource/runtime/algorithm.json}。
      *
-     * <p>落盘失败不影响本轮算法调优本身（下次跑完会再试一遍），执行与推荐继续用上一版 runtime/。
+     * <p>落盘失败不影响本轮算法调优本身（下次跑完会再试一遍），执行与推荐继续用上一版 resource/runtime/。
      *
      * @param source 这一轮是什么任务生成的（verify = 刷新算法特征 / tune = 自动调整参数）
      */
@@ -1472,7 +1472,7 @@ public class OptimizeService {
             }
         }
         if (best == null || bestRow == null) {
-            log.warn("算法调优{}完成，但没有任何算法算得出匹配正确率，跳过运行时算法落地（runtime/ 保持原样）", source);
+            log.warn("算法调优{}完成，但没有任何算法算得出匹配正确率，跳过运行时算法落地（resource/runtime/ 保持原样）", source);
             return;
         }
         List<Double> ys = weightsOf(bestRow, best.features.size());
@@ -1490,7 +1490,7 @@ public class OptimizeService {
         runtime.build(source, costMs, meta, features, states);
     }
 
-    /** summary/ 分类目录的绝对路径 → 目录名（runtime/ 下的子目录名与它同名）。 */
+    /** resource/summary/ 分类目录的绝对路径 → 目录名（resource/runtime/ 下的子目录名与它同名）。 */
     private static String dirName(String dir) {
         Path p = Path.of(dir);
         Path name = p.getFileName();
@@ -1868,7 +1868,7 @@ public class OptimizeService {
 
     // ---------------------------------------------------------------- 权重文件（自动调整参数）
 
-    /** 权重文件 = classify/opt-weights.json（与 dedup-cache.json 同目录：可手删、随 *.json 一并忽略）。 */
+    /** 权重文件 = resource/classify/opt-weights.json（与 dedup-cache.json 同目录：可手删、随 *.json 一并忽略）。 */
     private Path weightsFile() {
         return storage.classify().resolve(WEIGHTS_FILE);
     }
@@ -1947,7 +1947,7 @@ public class OptimizeService {
         }
         root.put("algos", algos);
         try {
-            Files.createDirectories(f.getParent());   // 还没标注过任何图时 classify/ 可能还不存在
+            Files.createDirectories(f.getParent());   // 还没标注过任何图时 resource/classify/ 可能还不存在
             JSON.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), root);
             Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
             saved = m;
@@ -2076,14 +2076,14 @@ public class OptimizeService {
         return m;
     }
 
-    // ---------------------------------------------------------------- 落盘缓存与快照（summary/）
+    // ---------------------------------------------------------------- 落盘缓存与快照（resource/summary/）
 
-    /** 完整结果缓存：summary/opt-result.json（结果 + 逐分类明细 + 最近一次「自动调整参数」摘要）。 */
+    /** 完整结果缓存：resource/summary/opt-result.json（结果 + 逐分类明细 + 最近一次「自动调整参数」摘要）。 */
     public Path resultFile() {
         return storage.summary().resolve(RESULT_FILE);
     }
 
-    /** 特征选择 + 权重数值快照：summary/opt-weights.json（每次跑完覆写，供后续功能 / 开发验证读取）。 */
+    /** 特征选择 + 权重数值快照：resource/summary/opt-weights.json（每次跑完覆写，供后续功能 / 开发验证读取）。 */
     public Path snapshotFile() {
         return storage.summary().resolve(SNAPSHOT_FILE);
     }
@@ -2103,7 +2103,7 @@ public class OptimizeService {
         return fp == null || !fp.equals(curFp) || !live.equals(sig == null ? "" : sig);
     }
 
-    /** 首次访问时从 summary/opt-result.json 完整恢复上次结果与「自动调整参数」摘要（幂等，失败只记日志）。
+    /** 首次访问时从 resource/summary/opt-result.json 完整恢复上次结果与「自动调整参数」摘要（幂等，失败只记日志）。
      *  恢复的内容带自己那次计算的指纹 {@code fp} 与算法签名 {@code sig}，与当前不符即判为过期（status().result.stale）。 */
     private synchronized void ensureCacheLoaded() {
         if (cacheTried) {
@@ -2269,7 +2269,7 @@ public class OptimizeService {
         root.put("fp", fp);
         root.put("sig", sig);
         root.put("note", "特征选择 features[].kind 与权重数值 weights 一一对应；每次「刷新算法特征 / 自动调整参数」"
-                + "跑完由 OptimizeService 覆写，供后续功能直接读取（界面上可调的 Y 另存 classify/opt-weights.json）");
+                + "跑完由 OptimizeService 覆写，供后续功能直接读取（界面上可调的 Y 另存 resource/classify/opt-weights.json）");
         root.put("algos", out);
         writeJson(snapshotFile(), root, "特征选择与权重快照");
         // 同时留一份在内存里：三处数据变动（特征验证结果变旧 → 算法组合不出来）时随 status 下发，
@@ -2314,7 +2314,7 @@ public class OptimizeService {
 
     // ---------------------------------------------------------------- 工具
 
-    /** 枚举 summary/ 有效分类目录（有 state 且尺寸有效），按目录名排序。 */
+    /** 枚举 resource/summary/ 有效分类目录（有 state 且尺寸有效），按目录名排序。 */
     private List<Ctx> scanGroups() {
         List<Ctx> out = new ArrayList<>();
         Path sum = storage.summary();
@@ -2356,7 +2356,7 @@ public class OptimizeService {
         return out;
     }
 
-    /** 枚举 classify/ 原图并归属到其 state 对应的分类目录（无对应目录的原图不参与）。 */
+    /** 枚举 resource/classify/ 原图并归属到其 state 对应的分类目录（无对应目录的原图不参与）。 */
     private List<Smp> scanSamples(List<Ctx> groups) {
         Map<String, Ctx> byState = new LinkedHashMap<>();
         for (Ctx c : groups) {

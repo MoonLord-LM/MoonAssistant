@@ -360,8 +360,8 @@ public class WindowCaptureTask implements ApplicationRunner {
         return ManualShotResult.of("resize-fail");
     }
 
-    /** 手动采集结果：kind = saved（已存 capture/）/ dup（与 name 这张已存图差异 diffPercent% ≤ threshold% 被拦截，
-     *  refState 为其所属分类，capture/ 未标注图为 null）/ window-not-found / minimized / capture-fail /
+    /** 手动采集结果：kind = saved（已存 resource/capture/）/ dup（与 name 这张已存图差异 diffPercent% ≤ threshold% 被拦截，
+     *  refState 为其所属分类，resource/capture/ 未标注图为 null）/ window-not-found / minimized / capture-fail /
      *  resize-fail / save-fail / busy / error。 */
     public static final class ManualShotResult {
 
@@ -459,7 +459,7 @@ public class WindowCaptureTask implements ApplicationRunner {
             return;
         }
         nextSkipLogTime = now + SKIP_LOG_INTERVAL;
-        log.info("画面与去重基准（capture/ + classify/ 全部 PNG）中某张的不一致像素点占比 ≤ {}%（须与每一张都 > 阈值才保存），本轮不保存；"
+        log.info("画面与去重基准（resource/capture/ + resource/classify/ 全部 PNG）中某张的不一致像素点占比 ≤ {}%（须与每一张都 > 阈值才保存），本轮不保存；"
                         + "近 {} 秒内已丢弃 {} 张几乎重复的截图（自动截图去重阈值可用启动参数覆盖，"
                         + "如 --capture.diff-threshold-percent=10）",
                 properties.getDiffThresholdPercent(),
@@ -512,7 +512,7 @@ public class WindowCaptureTask implements ApplicationRunner {
         public final String kind;
         public final String name;
         public final double diffPercent;
-        /** dup：参考图所属分类（classify/ 已标注样本），capture/ 未标注参考图或 saved 为 null */
+        /** dup：参考图所属分类（resource/classify/ 已标注样本），resource/capture/ 未标注参考图或 saved 为 null */
         public final String refState;
         /** dup：本次判重阈值（%），saved 为 0 */
         public final double threshold;

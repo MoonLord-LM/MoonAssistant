@@ -48,9 +48,9 @@ public class CaptureControlController {
         return Map.of("ok", true, "paused", false);
     }
 
-    /** 立即手动采集一帧：截取目标窗口画面，与 capture/ + classify/ 全部同尺寸 PNG 逐像素比对做去重
+    /** 立即手动采集一帧：截取目标窗口画面，与 resource/capture/ + resource/classify/ 全部同尺寸 PNG 逐像素比对做去重
      *  （不一致像素占比须 &gt; {@code capture.diff-threshold-manual-percent}，同执行模式
-     *  「存到待标注」），通过则存为 capture/ 新截图返回文件名（供「未标注」列表直接标注）；被拦 /
+     *  「存到待标注」），通过则存为 resource/capture/ 新截图返回文件名（供「未标注」列表直接标注）；被拦 /
      *  失败返回对应 kind 与 message。与右上角「自动采集」开关独立，暂停中也能点采一帧。 */
     @PostMapping("/manual")
     public Map<String, Object> manual() {

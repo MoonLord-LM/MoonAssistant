@@ -25,17 +25,17 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * 运行时算法（{@code runtime/}）的生成与取用。
+ * 运行时算法（{@code resource/runtime/}）的生成与取用。
  *
  * <p>算法调优每跑完一轮（刷新算法特征 / 自动调整参数），由 {@link OptimizeService} 调 {@link #build}
  * 把它选出的「综合最佳算法」落地：把算法<b>生效特征</b>（权重 Y &gt; 0，见
- * {@link RuntimeAlgorithm#effective}）的对照图产物从 summary/ <b>复制</b>一份到
- * {@code runtime/&lt;分类&gt;/}（内容没变的不重复复制；Y = 0 的特征对匹配没有贡献，既不复制产物、
+ * {@link RuntimeAlgorithm#effective}）的对照图产物从 resource/summary/ <b>复制</b>一份到
+ * {@code resource/runtime/&lt;分类&gt;/}（内容没变的不重复复制；Y = 0 的特征对匹配没有贡献，既不复制产物、
  * 也不写进算法定义），各分类多余 / 不再被引用的旧产物清掉，
- * 最后写 {@code runtime/algorithm.json}（先复制图后写定义：定义出现即代表这一份是完整的）。
- * <b>复制而不是物理搬走</b>：summary/ 那份还要留给汇总分析 / 特征验证 / 人工目检用，
+ * 最后写 {@code resource/runtime/algorithm.json}（先复制图后写定义：定义出现即代表这一份是完整的）。
+ * <b>复制而不是物理搬走</b>：resource/summary/ 那份还要留给汇总分析 / 特征验证 / 人工目检用，
  * 搬走会被判成「产物缺失」而让整库需重算、算法调优也没法再跑；
- * 于是 {@code runtime/} 自成一份、执行与推荐只读它（summary/ 改删都不影响执行）。
+ * 于是 {@code resource/runtime/} 自成一份、执行与推荐只读它（resource/summary/ 改删都不影响执行）。
  *
  * <p>执行模式与「未标注」的单图智能推荐统一走 {@link #classify}：没有运行时算法（从没跑过算法调优、
  * 或整目录被删）返回 null，调用方据此提示「先到算法调优完成一轮」。
@@ -46,7 +46,7 @@ import java.util.stream.Stream;
 @Component
 public class RuntimeService {
 
-    /** 算法定义文件名（runtime/ 下） */
+    /** 算法定义文件名（resource/runtime/ 下） */
     public static final String FILE_ALGO = "algorithm.json";
 
     private static final ObjectMapper JSON = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
@@ -62,7 +62,7 @@ public class RuntimeService {
         this.classifier = classifier;
     }
 
-    /** runtime/ 目录（算法调优的落地目录，可整目录删除后重跑算法调优重建） */
+    /** resource/runtime/ 目录（算法调优的落地目录，可整目录删除后重跑算法调优重建） */
     public Path dir() {
         return storage.runtime();
     }
@@ -106,14 +106,14 @@ public class RuntimeService {
     }
 
     /**
-     * 生成 / 刷新 runtime/（算法调优每跑完一轮调用）。
+     * 生成 / 刷新 resource/runtime/（算法调优每跑完一轮调用）。
      *
      * @param source   这一轮是什么任务生成的（verify = 刷新算法特征 / tune = 自动调整参数）
      * @param costMs   这一轮算法调优的耗时（与统计行首行同一次）
      * @param meta     综合最佳算法的 id / 名称 / 两率 / 综合分（其余字段由本方法补）
      * @param features 算法特征（kind + 基础分 X + 调优后的权重 Y）；只有权重 Y &gt; 0 的<b>生效特征</b>会落地
-     * @param states   各分类（files 留空，本方法按 kind 去 summary/&lt;dir&gt;/ 找产物）
-     * @return 落地后的算法；失败返回 null（runtime/ 保持原样，执行与推荐仍用上一版）
+     * @param states   各分类（files 留空，本方法按 kind 去 resource/summary/&lt;dir&gt;/ 找产物）
+     * @return 落地后的算法；失败返回 null（resource/runtime/ 保持原样，执行与推荐仍用上一版）
      */
     public synchronized RuntimeAlgorithm build(String source, long costMs, RuntimeAlgorithm meta,
                                                List<RuntimeAlgorithm.Feature> features,
@@ -169,7 +169,7 @@ public class RuntimeService {
                     copied, reused, missing);
             return algo;
         } catch (Exception e) {
-            log.warn("运行时算法生成失败（runtime/ 保持原样）: {}", e.toString());
+            log.warn("运行时算法生成失败（resource/runtime/ 保持原样）: {}", e.toString());
             return null;
         }
     }
@@ -217,7 +217,7 @@ public class RuntimeService {
                 }
             }
         } catch (IOException e) {
-            log.debug("runtime/ 旧产物清理失败（不影响执行）: {}", e.toString());
+            log.debug("resource/runtime/ 旧产物清理失败（不影响执行）: {}", e.toString());
         }
     }
 
@@ -227,7 +227,7 @@ public class RuntimeService {
                 Files.deleteIfExists(p);
             }
         } catch (IOException e) {
-            log.debug("runtime/ 旧分类目录删除失败 {}: {}", dir, e.toString());
+            log.debug("resource/runtime/ 旧分类目录删除失败 {}: {}", dir, e.toString());
         }
     }
 

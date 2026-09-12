@@ -11,10 +11,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class ExecuteProperties {
 
     /**
-     * 差异度参考阈值（百分比，0~100）。识别只按【算法调优】落地在 {@code runtime/} 的
+     * 差异度参考阈值（百分比，0~100）。识别只按【算法调优】落地在 {@code resource/runtime/} 的
      * <b>综合最佳算法</b>（综合分 =（1 − 无法区分率）× 匹配正确率 最高的那一种）比对：
      * 算法 = 若干特征（产物 kind + 基础分 X + 权重 Y），逐特征把当前画面与该分类在
-     * {@code runtime/&lt;分类&gt;/} 下对应的那张对照图同尺度逐点比对得不匹配点占比，
+     * {@code resource/runtime/&lt;分类&gt;/} 下对应的那张对照图同尺度逐点比对得不匹配点占比，
      * 匹配值 = 100 − 不匹配点占比；先放弃「最高匹配值被 ≥2 个分类并列」的特征（并列只在有有效产物的分类间数），
      * 再算加权匹配度 = Σ「匹配值 × X × Y」÷ Σ「X × Y」（只累加该分类可用的特征），
      * 分类差异度 = 100 − 加权匹配度。产物无任何有效像素的空图（独有区图无独有点等）
