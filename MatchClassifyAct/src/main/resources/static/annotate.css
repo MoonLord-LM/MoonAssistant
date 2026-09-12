@@ -374,7 +374,6 @@
   .smartbar .spin{width:13px;height:13px;flex:none;border:2px solid #33405e;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .smartbar .sb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
-  .smartbar .sug b{color:var(--green);font-weight:600}
   .smartbar .cand b{color:#ffd24d}
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
   .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}

@@ -2915,7 +2915,7 @@ function pollSuggest(seq, file, taskId){
    「请先完成算法调优」的提示（status=error），不给出候选 */
 function renderSuggest(list){
   const comp = (list && list.length) ? list : [];
-  // 候选：对照图候选（前 3）按差异分值由小到大排序，最小那行就是顶部建议与按钮选中的分类
+  // 取差异度最小的前 3 个当候选：排第一的就是建议分类标注
   const diffOf = g => (typeof g.diffPercent === "number") ? g.diffPercent : Number.MAX_VALUE;
   const items = comp.slice(0, 3);
   if(!items.length){
@@ -2925,27 +2925,19 @@ function renderSuggest(list){
     return;
   }
   items.sort((a, b) => diffOf(a) - diffOf(b));
-  const top = items[0];
-  const pct = (typeof top.diffPercent === "number") ? top.diffPercent.toFixed(2) + "%" : "—";
-  // 识别已不设阈值门槛（与执行模式一致）：差异度仅作相近程度参考，不再按阈值区分「已识别 / 未识别」
-  const actTxt = (top.action && top.action !== "none") ? "（" + escHtml(actLabel(top.action)) + "）" : "";
-  // 候选按差异度升序存一份名字：提示条上每个「填入」按钮都按序号回填（0 = 顶部建议）
+  // 按差异度升序存一份名字：每个「填入」按钮都按序号回填（0 = 排在最前的建议）
   sugCandStates = items.map(g => g.state);
-  // 每个候选都带自己的「填入」：不必只认顶部建议，点哪个就填哪一个
+  /* 一行【建议分类标注（差异分值越小越好）：<分类> <差异度> [填入] · …】按差异度升序列出前几名，
+     每个后面跟自己的「填入」——点哪个填哪个，排第一的就是建议（不再单列建议行、也不另设主按钮）。
+     识别不设阈值门槛（与执行模式一致）：差异度仅作相近程度参考，不按阈值区分「已识别 / 未识别」 */
   const fmtItem = (g, i) => '<b>「' + escHtml(g.state) + '」</b> ' +
     (typeof g.diffPercent === "number" ? g.diffPercent.toFixed(2) + "%" : "—") +
     '<button class="sb-btn mini" type="button" data-sugadopt="' + i + '" title="把这一个填成分类标注（含该分类统一的动作与关注点）">填入</button>';
-  const cands = items.map(fmtItem).join('　·　');
-  const candBlock = '<span class="cand">候选（差异分值由小到大）：' + cands + '</span>';
-  sugRender(
-    SUG_TITLE +
-    '<span class="sug">建议分类标注：<b>「' + escHtml(top.state) + '」</b>' + actTxt +
-      ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
-    candBlock +
-    '<button class="sb-btn" type="button" data-sugadopt="0">填入此分类标注</button>');
+  sugRender(SUG_TITLE +
+    '<span class="cand">建议分类标注（差异分值越小越好）：' + items.map(fmtItem).join('　·　') + '</span>');
 }
 
-/* 回填提示条上的第 i 个候选（0 = 顶部建议，也是建议行那个主按钮）：带入该分类统一的动作与关注点坐标 */
+/* 回填提示条上的第 i 个候选（0 = 顶部建议）：带入该分类统一的动作与关注点坐标 */
 function adoptSug(i){
   const state = sugCandStates[i];
   if(!state) return;
@@ -2955,8 +2947,13 @@ function adoptSug(i){
 }
 
 /* ---------------- 事件绑定 ---------------- */
-/* 智能分析提示条标题后的「!」：点开详细说明弹窗 —— 提示条内容每轮都会重渲染，故用委托监听 */
-$("smartBar").addEventListener("click", e => { if(e.target.closest("[data-sughelp]")) openSugHelp(); });
+/* 智能分析提示条上的点击：标题后的「!」点开详细说明弹窗；候选行每个「填入」按钮都按序号回填对应分类
+   （提示条内容每轮都会重渲染，故统一用委托监听，不再逐次绑定） */
+$("smartBar").addEventListener("click", e => {
+  if(e.target.closest("[data-sughelp]")){ openSugHelp(); return; }
+  const a = e.target.closest("[data-sugadopt]");
+  if(a) adoptSug(Number(a.dataset.sugadopt));
+});
 
 /* dockX：收起当前未标注图的智能分析提示（该图之后不再自动弹出，方便完整查看 / 点选整张图取坐标） */
 $("dockX").addEventListener("click", ()=>{
