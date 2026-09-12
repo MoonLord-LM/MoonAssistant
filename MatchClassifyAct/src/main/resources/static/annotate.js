@@ -1623,7 +1623,7 @@ function askExitConfirm(){
     ov.innerHTML =
       '<div class="xcard">' +
         '<div class="xt2">退出程序</div>' +
-        '<div class="msg">将停止控制台服务与后台截图（录屏）任务，并自动关闭本页。确定退出？</div>' +
+        '<div class="msg">将停止后台服务，并自动关闭本页。确定退出？</div>' +
         '<div class="xrow">' +
           '<button class="btn" id="exitCancel" type="button">取消</button>' +
           '<button class="btn danger" id="exitOK" type="button">确定退出</button>' +

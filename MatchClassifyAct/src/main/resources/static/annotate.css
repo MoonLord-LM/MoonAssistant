@@ -540,6 +540,10 @@
   #xCloseAsk .modalX:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
   .xrow{display:flex;gap:10px;justify-content:center;margin-top:6px}
   .xrow .btn{min-width:96px}
+  /* 退出确认弹窗的「取消」：.btn 默认描边是 --border（#262e40），落在 #121a2a 卡片上几乎与底色融为一片，
+     提到 --border-strong 才看得出是个按钮（右侧「确定退出」保留自己的 danger 红描边，两者刚好一灰一红） */
+  #exitConfirm #exitCancel{border-color:var(--border-strong)}
+  #exitConfirm #exitCancel:hover{border-color:var(--text)}
   #exitScreen .xrow,#exitingScreen .xrow{margin-top:10px}
   /* 历史日志弹窗：右下角出现过的全部消息全量保存、支持回溯查看 */
   #logModal .xcard{max-width:760px;width:min(94vw,760px);height:min(76vh,640px);padding:0;display:flex;flex-direction:column;text-align:left;overflow:hidden;background:#121a2a;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.35)}
