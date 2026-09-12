@@ -121,8 +121,7 @@ import java.util.stream.Stream;
  * 画面标签一律以控制台的人工标注为准。</p>
  *
  * <p>样本截图只读 classify/（已标注的截图 + .json）；单图智能建议的目标图（未标注）
- * 只读 capture/。旧版单目录布局 captures/（含 sum/、think/ 与标注混排）已由
- * {@code config/LegacyStorageMigrator} 启动时自动迁移，本服务不再处理。</p>
+ * 只读 capture/。</p>
  *
  * <p>截图来自同一窗口同一坐标系，画面位置固定，只需逐像素同位比较，无需平移匹配。</p>
  */

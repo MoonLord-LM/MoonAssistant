@@ -271,8 +271,8 @@ public class ScreenCaptureService {
 
     /**
      * 在独立后台线程执行「历史重复清理 → 去重基准预热」，由 {@link StartupDedupCleaner}
-     * 在应用就绪（ApplicationReadyEvent，晚于全部 ApplicationRunner，含旧版单目录
-     * LegacyStorageMigrator 的迁移）后调用。任务不阻塞启动；截图去重判定会在开启截图前
+     * 在应用就绪（ApplicationReadyEvent，晚于全部 ApplicationRunner）后调用。
+     * 任务不阻塞启动；截图去重判定会在开启截图前
      * 经 {@link #referenceSeeded} 等待本次任务完成，因此不会与清理阶段的文件删除并发。
      */
     void runStartupDedupAndSeedInBackground() {

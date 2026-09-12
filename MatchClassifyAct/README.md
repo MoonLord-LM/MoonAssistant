@@ -53,8 +53,6 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 { "state": "登录页" }
 ```
 
-旧版单目录 `captures/`（截图/标注/汇总混排）若存在，启动时自动迁移到上述三分区，之后不再读写。
-
 ---
 
 ## 三、控制台使用
@@ -182,7 +180,6 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `capture.resize-width` `capture.resize-height` | `1280` `720` | 强制截图目标尺寸，不符自动调窗重截；任一设 `0` = 关闭尺寸校验（此时需目标程序内分辨率与此一致，否则画面可能拉伸） |
 | `capture.capture-timeout-ms` | `5000` | 采集器内部抓帧超时 |
 | `capture.capture-dir` `classify-dir` `summary-dir` | `capture` `classify` `summary` | 三分区目录名（相对运行目录） |
-| `capture.output-dir` | `captures` | 旧版单目录，仅启动迁移用 |
 | `capture.diff-threshold-percent` | `5` | 自动截图去重阈值（%）：与历史 PNG 全尺寸逐像素比对、统计不一致像素点占比，与任一图占比 ≤ 它即判重复不保存；`0` = 关闭 |
 | `capture.diff-threshold-manual-percent` | `0.5` | 手动「存入分类 / 存到待标注」去重阈值（%）：口径同自动截图但阈值更严，与任一图占比 ≤ 它即拒绝保存；`0` = 关闭。启动历史清理按两个启用阈值中较低者执行 |
 | `ui.auto-open` | `true` | 启动后自动打开控制台应用窗口（找不到 Edge/Chrome 则回退系统浏览器） |
@@ -202,7 +199,7 @@ MatchClassifyAct/
 └─ src/main/java/cn/moonlord/mca/
    ├─ MatchClassifyActApplication      入口（非 headless + Per-Monitor DPI + @EnableScheduling）
    ├─ config/                          CaptureProperties / ExecuteProperties / StoragePaths /
-   │                                   WebServerConfig(UTF-8) / LegacyStorageMigrator(旧目录迁移)
+   │                                   WebServerConfig(UTF-8)
    ├─ ui/BrowserLauncher               启动后自动开控制台网页
    ├─ capture/                         截图层：WindowFinder（找窗）→ ScreenCaptureService
    │                                   （调采集器、原子落盘、去重）→ WindowResizer（尺寸不符

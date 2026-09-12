@@ -56,13 +56,6 @@ public class CaptureProperties {
     private String summaryDir = "summary";
 
     /**
-     * 旧版单目录布局（截图/标注/汇总同根，如 captures/）：
-     * 仅用于启动时一次性迁移到 captureDir / classifyDir / summaryDir 新布局，之后不再读写。
-     */
-    @Deprecated
-    private String outputDir = "captures";
-
-    /**
      * 传给 WindowsCapture 采集器内部的抓帧超时（毫秒）。
      */
     private long captureTimeoutMs = 5000;
