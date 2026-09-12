@@ -3348,7 +3348,7 @@ function renderVerifyDetail(){
             + "按被误判到的分类分组，每行「命中 x% · 自家 y%」＝ 与误判分类生成图／与自家生成图的匹配占比；"
             + "这些样本只进 D 的分母、不进 D 的分子")
         + '</td>' +
-      // 匹配正确分类的个数 = 命中 / 能给出结果（D 的分母）
+      // 匹配正确分类的个数 = 匹配正确 / 可给出结果（D 的分母）
       '<td class="nu">' + (ok && r.hit != null ? r.hit + " / " + (decidedN != null ? decidedN : "—") : dash) + '</td>' +
       // E：无法区分率（最高分被 ≥2 个分类并列 → 分不出该选哪一类），越低越好；分母 = 全部可匹配样本
       // →「查看详细」只列无法区分（既不算命中也不算判错：进 E 的分母、不进 D 的分母）
@@ -3532,6 +3532,84 @@ let optWSig = "";      // 后端保存的权重签名（「自动调整参数」
 let OPT_STALE_SEEN = ""; // 已提示过「需重新计算」的指纹（三处数据再变动才会再提示一次）
 let optCnt = null;     // 算法个数（顶栏「算法调优(N)」用：启动即预取一次、进本视图轮询刷新，与 vkCnt 同一套做法）
 let optCntBusy = false;// 预取去重（上一轮未返回时不叠发）
+let optLock = false;   // 已按改后的权重提交重算：按钮 / 输入框立刻锁上，原先算出的数值尾随「（等待刷新）」等新结果
+let optRecalc = null;  // 改权重触发的自动重算：{ prev }（改动前各算法的两率快照），跑完发「变化 xxx -> xxx，用时 xxx」后清掉
+let optPrevW = null;   // 上一次「已参与计算」的权重快照（键 = 算法id|特征序号）：改完权重时给出「xxx -> xxx」；null = 下次按结果重建
+
+/* 「等待刷新」= 已按新权重开始重算、数值还没换新（改完立刻锁界面并重算，跑完自动换新值） */
+function optWait(){ return !!(OPT && (optLock || OPT.running)); }
+function optWaitTag(){ return optWait() ? '<span style="color:var(--amber)">（等待刷新）</span>' : ""; }
+function optWaitTxt(){ return optWait() ? "（等待刷新）" : ""; }
+
+/* ---- 改权重触发的自动重算：开始 / 结束各一条提示（toast → 历史日志，见 pushLog） ---- */
+/* 权重草稿快照：键 = 算法id|特征序号 → { 算法名, 特征名, 是否启用, 生效权重 Y（未启用 = 0） }。
+   单一特征算法的权重固定 1、没有编辑框，不参与比对 */
+function optWeightMap(){
+  const m = new Map();
+  for(const a of ((OPT && OPT.algos) || [])){
+    if(!a.features || a.features.length <= 1) continue;
+    const d = optY[a.id] || optYof(a);
+    for(let i = 0; i < a.features.length; i++){
+      m.set(a.id + "|" + i, { an:a.name || a.id, fn:vkInfo(a.features[i].kind).name,
+        en:!!d.en[i], y:(d.en[i] ? d.vals[i] : 0) });
+    }
+  }
+  return m;
+}
+/* 基准快照 = 「上一次真参与计算」的权重：优先取结果里的 weights（那才是算过的值），没结果才退回当前草稿 */
+function optBaseWeights(){
+  const m = optWeightMap();
+  const rows = (OPT && OPT.result && OPT.result.algos) || [];
+  for(const r of rows){
+    const arr = Array.isArray(r.weights) ? r.weights : [];
+    for(let i = 0; i < arr.length; i++){
+      const it = m.get(r.id + "|" + i);
+      if(it){ const y = Number(arr[i]); it.y = isNaN(y) ? 0 : y; it.en = it.y > 0; }
+    }
+  }
+  return m;
+}
+/* 本次改动描述：["「单一最佳+90+%正确率特征」的「交集图 90%」权重 Y 1 -> 1.5"]（勾选变化补「（取消勾选）」） */
+function optWeightDiffs(prev, now){
+  const out = [];
+  if(!prev) return out;
+  for(const [k, n] of now){
+    const p = prev.get(k);
+    if(!p || p.y === n.y) continue;
+    out.push("「" + n.an + "」的「" + n.fn + "」权重 Y " + fmtY(p.y) + " -> " + fmtY(n.y) +
+      (p.en === n.en ? "" : (n.en ? "（重新勾选）" : "（取消勾选）")));
+  }
+  return out;
+}
+/* 开始提示：1 处直接列，多处带处数一起列 */
+function optStartMsg(diffs){
+  if(!diffs.length) return "权重 Y 无实质变化，仍按当前权重重新计算。";
+  return diffs.length === 1
+    ? "修改 " + diffs[0] + "，开始重新计算。"
+    : "修改 " + diffs.length + " 处权重 Y（" + diffs.join("；") + "），开始重新计算。";
+}
+/* 改动前各算法的两率快照（键 = 算法 id → { acc, tie }）：重算结束后给「xxx -> xxx」用 */
+function optResSnap(){
+  const m = new Map();
+  for(const r of ((OPT && OPT.result && OPT.result.algos) || [])) m.set(r.id, { acc:r.accuracy, tie:r.tieRate });
+  return m;
+}
+/* 结束提示：只列真变了的算法（两率各给「改动前 -> 改动后」），其余一笔带过，末尾跟用时 */
+function optDoneMsg(prev, res, costMs){
+  const rows = (res && res.algos) || [];
+  const parts = [];
+  let same = 0;
+  for(const r of rows){
+    const p = prev ? prev.get(r.id) : null;
+    if(p && p.acc === r.accuracy && p.tie === r.tieRate){ same++; continue; }
+    parts.push("「" + ((optAlgo(r.id) || {}).name || r.id) + "」匹配正确率 " + (p ? fmtV(p.acc) : "—") + " -> " + fmtV(r.accuracy) +
+      "、无法区分率 " + (p ? fmtV(p.tie) : "—") + " -> " + fmtV(r.tieRate));
+  }
+  const cm = Number(costMs);
+  return "重新计算完成，匹配正确率/无法区分率的变化——" + (parts.length ? parts.join("；") : "各算法都没变") +
+    (parts.length && same ? "，其余 " + same + " 个算法没变" : "") +
+    (cm > 0 ? "，用时 " + durTxt(Math.round(cm / 1000)) : "") + "。";
+}
 
 /* 算法特征顺序签名：特征集合变了才把该算法的权重草稿重置为默认 */
 function optFeatSig(a){ return ((a && a.features) || []).map(f => f.kind).join(","); }
@@ -3594,6 +3672,9 @@ function enterOpt(){
   optResSig = "";
   optWSig = "";
   optY = {};
+  optLock = false;
+  optRecalc = null;
+  optPrevW = null;
   $("optPane").style.display = "block";
   renderOptList();
   optPoll();
@@ -3612,6 +3693,7 @@ function exitOpt(){
   optResSig = "";
   optWSig = "";
   optY = {};
+  optLock = false;
 }
 
 /* 左栏：算法列表（点一行滚到主图区对应卡片；chip = 最近一次验证的匹配正确率） */
@@ -3653,7 +3735,7 @@ function renderOptList(){
       '<div class="r2">' + (j.ready
         ? a.features.length + ' 个特征'
           + ' · 匹配正确率 ' + (acc == null ? "—" : '<span class="' + vkBC(acc) + '">' + fmtV(acc) + '</span>')
-          + ' · 无法区分率 ' + (tieRate == null ? "—" : '<span class="' + vkE(tieRate) + '">' + fmtV(tieRate) + '</span>')
+          + ' · 无法区分率 ' + (tieRate == null ? "—" : '<span class="' + vkE(tieRate) + '">' + fmtV(tieRate) + '</span>') + optWaitTag()
         : '未计算 · ' + ((j.verify && j.verify.running) ? '特征验证运行中…' : '先完成「特征验证」，算法与特征会自动组合')) +
         (a.note ? ' · <span style="color:var(--amber)">' + escHtml(a.note) + '</span>' : '') + '</div>';
     li.addEventListener("click", ()=>{ const el = $("optA" + a.id); if(el) el.scrollIntoView({ behavior:"smooth", block:"center" }); });
@@ -3707,7 +3789,7 @@ function optEnsureMain(){
           '<td' + (single ? ' class="nu"' : "") + '>' + (single
             ? '<span id="optYv-' + a.id + '-' + i + '" title="单一特征算法：权重固定 1、只展示不可编辑（只有一个特征时 Y 在加权平均里被约掉），也不参与「自动调整参数」">' + fmtY(d.vals[i]) + '</span>'
             : '<input type="number" class="optYin" data-a="' + a.id + '" data-i="' + i + '" min="0" max="' + OPT_Y_MAX + '" step="0.001" value="' + d.vals[i] +
-              '" title="该特征在本算法里的权重 Y（0~' + OPT_Y_MAX + '，默认 1，步进 0.001，上下箭头 / 手输都按 0.001 收齐）；点右上角「验证所有算法」生效">') + '</td>' +
+              '" title="该特征在本算法里的权重 Y（0~' + OPT_Y_MAX + '，默认 1，步进 0.001，上下箭头 / 手输都按 0.001 收齐）；改完（回车 / 点别处）立刻锁住本视图控件并按新权重重新验证全部算法，旧数值期间标「（等待刷新）」；重算的开始（修改 xxx -> xxx）与结束（两率变化 + 用时）各有一条提示写进「历史日志」">') + '</td>' +
           '<td class="nu" id="optEff-' + a.id + '-' + i + '">' + fmtX(eff) + '</td>' +
         '</tr>';
     }
@@ -3738,11 +3820,14 @@ function optEnsureMain(){
       d.vals[i] = isNaN(v) ? 1 : Math.round(Math.max(0, Math.min(OPT_Y_MAX, v)) * 1000) / 1000;
       const cell = $("optEff-" + inp.dataset.a + "-" + i);
       if(cell) cell.textContent = fmtX(d.en[i] ? d.vals[i] * optXof(inp.dataset.a, i) : 0);
+      inp.dataset.dirty = "1";    // 记下「值真的改过」：失焦 / 回车时据此决定要不要立刻重算
       optSyncRunBtn();
     });
-    inp.addEventListener("change", ()=>{      // 失焦 / 回车后把截断后的值写回输入框
+    inp.addEventListener("change", ()=>{      // 失焦 / 回车：写回截断后的值，改过就立刻按新权重重新验证
       const d = optY[inp.dataset.a];
-      if(d) inp.value = d.vals[Number(inp.dataset.i)];
+      if(!d) return;
+      inp.value = d.vals[Number(inp.dataset.i)];
+      if(inp.dataset.dirty){ delete inp.dataset.dirty; optApplyWeights(); }
     });
   });
   p.querySelectorAll(".optYen").forEach(cb => {
@@ -3754,6 +3839,7 @@ function optEnsureMain(){
       const cell = $("optEff-" + cb.dataset.a + "-" + i);
       if(cell) cell.textContent = fmtX(d.en[i] ? d.vals[i] * optXof(cb.dataset.a, i) : 0);
       optSyncRunBtn();
+      optApplyWeights();                        // 勾选变化也是权重改动（等价 Y=0）：同样立刻重算
     });
   });
 }
@@ -3771,7 +3857,7 @@ function optResCard(r){
   let trs = "";
   for(const x of rows){
     trs += '<tr><td>' + escHtml(x.state) + '</td>' +
-      '<td style="color:var(--muted)">' + escHtml(x.action || "") + '</td>' +
+      '<td style="color:var(--muted)">' + escHtml(actLabel(x.action || "none")) + '</td>' +
       '<td class="nu">' + x.samples + '</td>' +
       '<td class="nu">' + x.hit + ' / ' + optDecided(x) + '</td>' +
       '<td class="nu ' + (x.tieRate == null ? "" : vkE(x.tieRate)) + '">' + (x.tie || 0) + '</td>' +
@@ -3781,7 +3867,7 @@ function optResCard(r){
   const w = Array.isArray(r.weights) ? r.weights : [];
   const eCls = r.tieRate == null ? "" : vkE(r.tieRate);
   return '<div class="vcard">' +
-    '<div class="vcap">匹配正确率</div>' +
+    '<div class="vcap">匹配正确率' + optWaitTag() + '</div>' +
     '<div class="vval' + (r.accuracy == null ? "" : " " + vkBC(r.accuracy)) + '">' + fmtV(r.accuracy) + '</div>' +
     // 口径与「特征验证」的匹配正确率（D）一致：命中 = 自家匹配度唯一最高；打平不算命中、不算判错、不进分母
     '<div class="vsub" title="命中 = 该样本的自家匹配度是全场唯一最高（并列不算命中）。无法区分 = 放弃分不开的特征后，' +
@@ -3790,7 +3876,7 @@ function optResCard(r){
       '命中 ' + r.hit + ' / ' + optDecided(r) + '（判错 ' + miss(r) + '）' +
       (r.tie ? ' · 无法区分 ' + r.tie + ' 张（' + fmtV(r.tieRate) + '，不计入正确率）' : '') +
       (r.skipped ? ' · 跳过 ' + r.skipped + ' 张（归属分类无有效产物）' : '') + ' · 耗时 ' + vkCost(r.costMs) + '</div>' +
-    '<div class="vcap" style="margin-top:8px">无法区分率</div>' +
+    '<div class="vcap" style="margin-top:8px">无法区分率' + optWaitTag() + '</div>' +
     '<div class="vval' + (eCls ? " " + eCls : "") + '">' + fmtV(r.tieRate) + '</div>' +
     '<div class="vsub">最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类）的样本占比：' +
       (r.tie || 0) + ' / ' + r.samples + ' 张（分母 = 可判定样本、含无法区分；正确率的分母不含它，' +
@@ -3799,7 +3885,7 @@ function optResCard(r){
     (w.length ? '<div class="vsub">权重 Y：' + w.map(fmtY).join(" / ") + '</div>' : '') +
     '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看各分类匹配正确率与无法区分率</summary>' +
       '<div class="optTblWrap" style="max-height:32vh;margin-top:6px"><table class="optTbl"><thead><tr>' +
-        '<th>分类</th><th>动作</th><th>样本</th><th>命中/能给出结果</th><th>无法区分</th><th>匹配正确率</th><th>无法区分率</th>' +
+        '<th>分类</th><th>动作</th><th>样本</th><th>匹配正确/给出结果</th><th>无法区分</th><th>匹配正确率</th><th>无法区分率</th>' +
       '</tr></thead><tbody>' + (trs || '<tr><td colspan="7" style="color:var(--muted)">无数据</td></tr>') + '</tbody></table></div>' +
     '</details>' +
   '</div>';
@@ -3817,7 +3903,7 @@ function optVerdict(res){
   const miss = r => (r.miss == null ? (r.samples - r.hit - (r.tie || 0)) : r.miss);
   // 最终结论 = 无法区分：最高正确率的算法下，全部可判定样本都分不出唯一一类（没一张能给出结果 → accuracy 为 null）
   if(top.accuracy == null && top.tie > 0){
-    return '<div class="optcard"><h4>结论</h4><div class="ocap">' +
+    return '<div class="optcard"><h4>结论' + optWaitTag() + '</h4><div class="ocap">' +
       '<b style="color:var(--text)">无法区分</b>：' + escHtml(top.name) + ' 下 ' + top.tie + ' / ' + top.samples +
       ' 张样本全部无法区分——最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类），没有任何一张能判出唯一一类' +
       '（该算法的匹配正确率因此无从计算，卡片里显示「——」）。' +
@@ -3828,7 +3914,7 @@ function optVerdict(res){
       '</div></div>';
   }
   const tie = list.length > 1 && list[1].accuracy === top.accuracy;
-  return '<div class="optcard"><h4>结论</h4><div class="ocap">' +
+  return '<div class="optcard"><h4>结论' + optWaitTag() + '</h4><div class="ocap">' +
     (tie ? '各算法匹配正确率并列最高：' + fmtV(top.accuracy) + '。'
          : '匹配正确率最高：<b style="color:var(--text)">' + escHtml(top.name) + '</b> ' + fmtV(top.accuracy) +
            '（命中 ' + top.hit + ' / 能给出结果 ' + optDecided(top) + ' · 判错 ' + miss(top) + '）。') +
@@ -3846,6 +3932,7 @@ function optVerdict(res){
 function optRender(){
   const j = OPT;
   if(!j) return;
+  if(!optPrevW) optPrevW = optBaseWeights();   // 基准快照（结果里的 weights = 上次真算过的值）：改完权重时给「xxx -> xxx」用
   const algos = Array.isArray(j.algos) ? j.algos : [];
   const run = !!j.running;
   const t = j.task || null;
@@ -3856,10 +3943,10 @@ function optRender(){
   const meta = $("optMeta");
   if(meta) meta.textContent = "样本 " + j.samples + " 张 · 分类 " + j.groups + " 个 · " +
     (run ? (tuning ? "自动调整参数中" : "验证运行中") : ("算法 " + algos.length + " 个" + (j.ready ? "" : "（未计算：缺少特征验证结果）")));
-  // 运行中禁用输入；单一特征算法的权重固定 1（结构里本来就带 disabled），这里不能把它解除
+  // 运行中（或已按改后的权重提交重算）禁用输入；单一特征算法的权重固定 1（结构里本来就带 disabled），这里不能把它解除
   document.querySelectorAll("#optPane .optYin, #optPane .optYen").forEach(el => {
     const a = optAlgo(el.dataset.a);
-    el.disabled = run || !a || a.features.length <= 1;
+    el.disabled = run || optLock || !a || a.features.length <= 1;
   });
 
   const taskBox = $("optTask"), fill = $("optFill"), tStat = $("optTaskStat"), tTxt = $("optTaskTxt"), stat = $("optStat");
@@ -3910,7 +3997,7 @@ function optRender(){
         stat.textContent = "上次验证完成" + fmtCostSuffix(Number(res.costMs)) + "：样本 " + res.samples + " 张 · 分类 " + res.groups + " 个" +
           (best ? "\n最高匹配正确率：" + best.name + " " + fmtV(best.accuracy) + "（命中 " + best.hit + "/" + optDecided(best)
             + " · 判错 " + (best.miss == null ? (best.samples - best.hit - (best.tie || 0)) : best.miss)
-            + (best.tie ? " · 无法区分 " + best.tie + "（" + fmtV(best.tieRate) + "）" : "") + "）" : "") +
+            + (best.tie ? " · 无法区分 " + best.tie + "（" + fmtV(best.tieRate) + "）" : "") + "）" + optWaitTxt() : "") +
           // 结果来自 summary/opt-result.json（完整缓存）：三处数据都没变就直接用上次的，不必重算
           (j.cached ? "\n已从 summary/" + (j.cacheFile || "opt-result.json") + " 恢复上次结果（数据没变即可直接用）。" : "") +
           (res.stale ? "\n注意：已标注 / 汇总分析 / 特征验证的数据已变动，结果可能过期，建议重新计算。" : "") +
@@ -3924,7 +4011,7 @@ function optRender(){
             ? "\n逐图比对结果缓存：summary/" + (j.matrixFile || "verify-matrix.json") + "（与特征验证共用，没变过的图不必重比"
               + (j.matrixRows ? "，已载入 " + j.matrixRows + " 条样本行" : "") + "）。"
             : "");
-      }else stat.textContent = "已组合 " + algos.length + " 个算法，点右上角「验证所有算法」开始。";
+      }else stat.textContent = "已组合 " + algos.length + " 个算法，点右上角「验证所有算法」开始（之后改权重 Y 会自动重算）。";
     }
   }
 
@@ -3951,7 +4038,8 @@ function optRender(){
     if(dirty && !first) toast("已应用后端保存的权重 Y（自动调整参数 / 权重文件）。", "ok");
   }
 
-  const resSig = (j.ready ? "R|" : "P|") + (res
+  // 签名里带上「等待刷新」态：改完权重锁界面的那一刻就要把标记写进结果卡（数值本身没变也要重建）
+  const resSig = (j.ready ? "R|" : "P|") + (optWait() ? "wait|" : "") + (res
     ? res.algos.map(r => [r.id, r.accuracy, r.tieRate, r.hit, r.tie, r.miss, r.decided, r.samples, r.skipped, r.costMs, (r.weights || []).join(",")].join("|")).join(";") + (res.stale ? "|stale" : "")
     : "none");
   if(resSig !== optResSig){
@@ -3962,7 +4050,7 @@ function optRender(){
       const r = res ? (res.algos || []).find(x => x.id === a.id) : null;
       box.innerHTML = r ? optResCard(r)
         : '<div class="ocap" style="margin:0">未计算' + (j.ready
-            ? '（点右上角「验证所有算法」）。如需调整特征权重 Y，改完再点验证。'
+            ? '（点右上角「验证所有算法」）。改完特征权重 Y（回车 / 点别处）会自动重算，不必再点按钮。'
             : '：先到「特征验证」视图完成一次验证，算法、特征与基础分 X 会自动组合。') + '</div>';
     }
   }
@@ -4000,6 +4088,7 @@ async function optPoll(){
   if(FILTER !== "opt") return;
   const prevRun = OPT ? !!OPT.running : false;
   OPT = j;
+  if(optLock && !j.running) optLock = false;   // 本次重算已结束（或没启动起来）：解锁，数值随新结果一起刷新
   const nAlgo = Array.isArray(j.algos) ? j.algos.length : null;
   if(nAlgo != null) optCnt = nAlgo;    // 顶栏「算法调优(N)」：下面的 renderOptList → setSegState 会写进按钮
   // 已标注 / 汇总分析 / 特征验证的数据一有变动（指纹或算法口径变了）就提示一次重新计算；数据回一致后再变动会再提示
@@ -4017,9 +4106,12 @@ async function optPoll(){
   if(prevRun && !j.running){
     const err = j.task ? j.task.error : (j.result ? j.result.error : null);
     const isTune = !!(j.task && j.task.mode === "tune");
+    const rc = optRecalc; optRecalc = null;   // 本轮由改权重触发：结束提示换成「两率变化 + 用时」那条
+    optPrevW = null;                          // 结果已对上当前权重：基准快照下次按结果里的 weights 重建
     if(err) toast((isTune ? "自动调整参数中断：" : "算法验证中断：") + err, "err");
     else if(isTune) toast("自动调整参数已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "：采纳 "
       + ((j.tune && j.tune.improved) || 0) + " 处权重调整，新权重已保存并应用到界面。", "ok");
+    else if(rc) toast(optDoneMsg(rc.prev, j.result, Number(j.task && j.task.costMs)), "ok");
     else toast("算法验证已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "，可在主图区查看各算法分类匹配正确率。", "ok");
   }
 }
@@ -4045,14 +4137,15 @@ function optSyncRunBtn(){
   const ready = !!(OPT && OPT.ready) && algos.length > 0;
   let any = false;
   for(const a of algos){ const d = optY[a.id]; if(d && d.en.some(Boolean)) any = true; }
-  b.disabled = run || !ready || !any;
+  b.disabled = run || optLock || !ready || !any;
   b.title = !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
     : !any ? "每个算法至少要启用一个特征"
-    : "按当前特征组合与权重 Y 验证全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动";
+    : (run || optLock) ? "已按改后的权重 Y 开始重新验证，等它结束（结果与新数值会一起刷新）"
+    : "按当前特征组合与权重 Y 验证全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；改完权重 Y 会自动重算，运行中不可再次启动";
   const ab = $("optAutoBtn");
   if(!ab) return;
-  ab.disabled = run || !(OPT && OPT.tunable);
-  ab.title = run ? "正在跑任务，等它结束"
+  ab.disabled = run || optLock || !(OPT && OPT.tunable);
+  ab.title = (run || optLock) ? "正在跑任务，等它结束"
     : !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
     : !(OPT && OPT.tunable) ? "请先点「验证所有算法」并等它跑完（结果要能对上当前的样本 / 产物），之后才能自动调整参数"
     : "对每个可调的权重 Y 先整段随机试 100 次、再在当前最优值附近按 ±0.001~±0.1 微调 100 次（步进 0.001）：" +
@@ -4060,18 +4153,40 @@ function optSyncRunBtn(){
       "单一特征算法的权重固定 1、不参与调整";
 }
 
-async function optStartRun(){
+/* 权重改完（输入框失焦 / 回车、勾选变化）立刻重算：先把按钮与输入框锁上、原先算出的数值标「（等待刷新）」，再提交这次验证 */
+function optApplyWeights(){
   if(OPT && OPT.running) return;
   if(!OPT || !OPT.ready){ toast("请先在「特征验证」视图完成验证。", "err"); return; }
+  let any = false;
+  for(const a of ((OPT && OPT.algos) || [])){ const d = optY[a.id]; if(d && d.en.some(Boolean)) any = true; }
+  if(!any){ toast("每个算法至少要启用一个特征", "err"); return; }
+  // 开头一条「修改 xxx -> xxx，开始重新计算」：改动值对比基准 = 上一次真参与计算的权重（结果里的 weights）
+  const nowW = optWeightMap();
+  const diffs = optWeightDiffs(optPrevW || optBaseWeights(), nowW);
+  optPrevW = nowW;
+  optRecalc = { prev: optResSnap() };            // 改动前的两率快照：跑完跟新结果一并写进结束提示
+  toast(optStartMsg(diffs), "ok");
+  optLock = true;
+  optSyncRunBtn();                          // 两个按钮立刻禁用（不等 1 秒轮询）
+  document.querySelectorAll("#optPane .optYin, #optPane .optYen").forEach(el => { el.disabled = true; });
+  optRender();                              // 旧数值立刻标上「（等待刷新）」
+  renderOptList();
+  optStartRun();
+}
+
+async function optStartRun(){
+  if(OPT && OPT.running) return;
+  if(!OPT || !OPT.ready){ toast("请先在「特征验证」视图完成验证。", "err"); optLock = false; optRecalc = null; optPoll(); return; }
   try{
     const r = await fetchT("/api/optimize/start", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights: optCollect() }) }, 9000);
     const j = r && r.ok ? await r.json().catch(()=>null) : null;
-    if(j && j.started) toast("开始验证全部算法的分类匹配正确率…", "ok");
-    else toast("启动失败：" + ((j && j.error) || "请求失败"), "err");
-  }catch(e){ toast("启动失败：请求异常", "err"); }
+    // 改权重触发的重算已有「修改 xxx -> xxx，开始重新计算」那条，不再叠发这条通用的
+    if(j && j.started){ if(!optRecalc) toast("开始验证全部算法的分类匹配正确率…", "ok"); }
+    else { optLock = false; optRecalc = null; toast("启动失败：" + ((j && j.error) || "请求失败"), "err"); }
+  }catch(e){ optLock = false; optRecalc = null; toast("启动失败：请求异常", "err"); }
   optPoll();
 }
-$("optRunBtn").addEventListener("click", optStartRun);
+$("optRunBtn").addEventListener("click", ()=>{ optRecalc = null; optStartRun(); });   // 手动跑：这条不带「改权重」的对比提示
 
 /* 把某算法的权重草稿写回界面控件（同步后端保存的权重时用：值 / 勾选 / 生效 X × Y 一起写） */
 function syncOptRow(id){
@@ -4121,6 +4236,7 @@ function optTuneCard(t){
 async function optAutoStart(){
   if(OPT && OPT.running) return;
   if(!OPT || !OPT.tunable){ toast("请先点「验证所有算法」并等它跑完，再自动调整参数。", "err"); return; }
+  optRecalc = null;                        // 自动调整参数有自己的完成提示，不带「改权重」的对比
   try{
     const r = await fetchT("/api/optimize/auto", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights: optCollect() }) }, 9000);
     const j = r && r.ok ? await r.json().catch(()=>null) : null;

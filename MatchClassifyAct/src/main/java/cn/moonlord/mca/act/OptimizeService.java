@@ -33,14 +33,15 @@ import java.util.stream.Stream;
 /**
  * 算法调优（第 6 视图）：建立在「特征验证」结果之上，把若干特征（kind 产物）组合成匹配算法并验证分类匹配正确率。
  *
- * <p>内置四种算法，特征集合由验证结果自动组合（见 {@link #buildAlgos}）：
+ * <p>内置五种算法，特征集合由验证结果自动组合（见 {@link #buildAlgos}）：
  * <ol>
  * <li><b>单一最佳匹配特征</b>：取「(生成成功率 A − 无法区分率 E) × 匹配正确率 D」最大的一个特征，只用它判定
  * （A 按能不能生成有效产物打折、E 扣掉分不出结果的那部分，再乘 D）；</li>
  * <li><b>单一最佳+100%正确率特征</b>：取上面那个最佳特征，再加全部 D = 100% 的特征；若它们的判定不能覆盖
  * 所有分类，则对每个缺失分类补入「该分类匹配正确率最高」的特征，直到每个分类都至少有一个特征能判定；</li>
  * <li><b>单一最佳+90+%正确率特征</b>：同上的「最佳特征 + 补满」口径，种子换成 D ≥ 90%（含 100%）的全部特征；</li>
- * <li><b>单一最佳+80+%正确率特征</b>：同上，种子换成 D ≥ 80%（含 100%）的全部特征。补不满时给出界面提示。</li>
+ * <li><b>单一最佳+80+%正确率特征</b>：同上，种子换成 D ≥ 80%（含 100%）的全部特征。补不满时给出界面提示；</li>
+ * <li><b>单一最佳+70+%正确率特征</b>：同上，种子换成 D ≥ 70%（含 100%）的全部特征。补不满时给出界面提示。</li>
  * </ol>
  *
  * <p>每个特征的基础分 {@code X = B（自分类平均匹配值）− C（其它分类平均匹配值）}；界面权重 Y ∈ [0, 2]，默认 1。
@@ -544,8 +545,13 @@ public class OptimizeService {
     private static final String ALGO4_DESC = "取「单一最佳匹配特征」+ 全部匹配正确率 ≥ 80%（含 100%）的特征；"
             + "补满口径与「单一最佳+100%正确率特征」完全一致：若它们的判定不能覆盖所有分类，则对每个缺失分类"
             + "补入该分类正确率最高的特征，直到每个分类至少有一个特征能判定。";
+    private static final String ALGO5_ID = "algo5";
+    private static final String ALGO5_NAME = "单一最佳+70+%正确率特征";
+    private static final String ALGO5_DESC = "取「单一最佳匹配特征」+ 全部匹配正确率 ≥ 70%（含 100%）的特征；"
+            + "补满口径与「单一最佳+100%正确率特征」完全一致：若它们的判定不能覆盖所有分类，则对每个缺失分类"
+            + "补入该分类正确率最高的特征，直到每个分类至少有一个特征能判定。";
 
-    /** 「单一最佳匹配特征」的入选依据文案（后三个算法都把同一个最佳特征作为种子带上）。 */
+    /** 「单一最佳匹配特征」的入选依据文案（后四个算法都把同一个最佳特征作为种子带上）。 */
     private static final String BEST_WHY = "单一最佳匹配特征（(生成成功率 A − 无法区分率 E) × 匹配正确率 D 最大）";
 
     /** 特征验证结果缺失时同样下发全部算法的骨架（特征为空，前端结果显示「未计算」）。 */
@@ -553,7 +559,8 @@ public class OptimizeService {
         return List.of(new Algo(ALGO1_ID, ALGO1_NAME, ALGO1_DESC, null, List.of()),
                 new Algo(ALGO2_ID, ALGO2_NAME, ALGO2_DESC, null, List.of()),
                 new Algo(ALGO3_ID, ALGO3_NAME, ALGO3_DESC, null, List.of()),
-                new Algo(ALGO4_ID, ALGO4_NAME, ALGO4_DESC, null, List.of()));
+                new Algo(ALGO4_ID, ALGO4_NAME, ALGO4_DESC, null, List.of()),
+                new Algo(ALGO5_ID, ALGO5_NAME, ALGO5_DESC, null, List.of()));
     }
 
     /** 按当前特征验证结果组合算法；验证未完成 / 已过期时返回空列表。 */
@@ -598,7 +605,7 @@ public class OptimizeService {
         return new Feat(st.kind, st.a, st.b, st.c, st.e, st.other, catC, catValid);
     }
 
-    /** 组合四种内置算法（都先把「单一最佳匹配特征」算出来，后三个再按正确率档位往里加种子）。 */
+    /** 组合五种内置算法（都先把「单一最佳匹配特征」算出来，后四个再按正确率档位往里加种子）。 */
     private List<Algo> buildAlgos(List<Feat> feats, List<String> states) {
         Feat best = bestSingle(feats);
         List<Algo> out = new ArrayList<>();
@@ -612,6 +619,9 @@ public class OptimizeService {
         out.add(buildBestSingleWith(feats, states, best, ALGO4_ID, ALGO4_NAME, ALGO4_DESC,
                 80.0, Double.POSITIVE_INFINITY, "匹配正确率 ≥80%",
                 "除「单一最佳匹配特征」外没有匹配正确率 ≥80% 的特征，其判定已改为按各分类正确率最高的特征逐个补满。"));
+        out.add(buildBestSingleWith(feats, states, best, ALGO5_ID, ALGO5_NAME, ALGO5_DESC,
+                70.0, Double.POSITIVE_INFINITY, "匹配正确率 ≥70%",
+                "除「单一最佳匹配特征」外没有匹配正确率 ≥70% 的特征，其判定已改为按各分类正确率最高的特征逐个补满。"));
         return out;
     }
 
