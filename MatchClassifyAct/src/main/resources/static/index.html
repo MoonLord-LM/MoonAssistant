@@ -207,10 +207,12 @@
   <div id="edOpt" style="display:none">
     <div class="edHead">
       <h3 style="margin:0;font-size:14px">算法调优</h3>
-      <button type="button" class="btn" id="optAutoBtn" style="margin-left:auto;font-size:12px"
-        title="自动调整参数：对每个可调的权重 Y 在 0~1 之间随机试 10 次（精确到 0.001），只要匹配正确率上升、或无法区分率下降就采纳，并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；需先点「验证所有算法」并等它跑完；单一特征算法只有一个特征、权重固定 1，不参与调整">自动调整参数</button>
+      <button type="button" class="hbtn" id="optHelpBtn"
+        title="算法调优 · 详细说明（算法怎么组合 · 基础分 X 与权重 Y · 匹配度与打平口径 · 自动调整参数 · 缓存与过期）">!</button>
+      <button type="button" class="btn amber" id="optAutoBtn" style="margin-left:auto;font-size:12px"
+        title="自动调整参数：对每个可调的权重 Y 先整段随机试 100 次、再在当前最优值附近按 ±0.001~±0.1 就近微调 100 次（精确到 0.001），只要匹配正确率上升、或无法区分率下降就采纳，并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；需先点「验证所有算法」并等它跑完；单一特征算法只有一个特征、权重固定 1，不参与调整">自动调整参数</button>
       <button type="button" class="btn green" id="optRunBtn" style="font-size:12px"
-        title="按当前特征组合与权重 Y 验证全部算法的分类准确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动">验证所有算法</button>
+        title="按当前特征组合与权重 Y 验证全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动">验证所有算法</button>
     </div>
     <div id="optStat" style="margin-top:10px;font-size:12px;line-height:1.8;white-space:pre-line;color:var(--text)">正在读取状态…</div>
     <div id="optTask" style="display:none;margin-top:10px">
@@ -219,17 +221,26 @@
       <div id="optTaskTxt" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
     </div>
     <div id="optVerdict" style="margin-top:12px"></div>
-    <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
-      <div>算法调优建立在<b style="color:var(--text)">特征验证</b>结果之上：先「汇总分析」生成各分类产物，再到「特征验证」算出每个特征的 A/B/C/D/E，本视图据此自动组合算法。</div>
-      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,1]</b> 默认 1 可改（步进 <b style="color:var(--text)">0.001</b>，上下箭头 / 手输都按 0.001 收齐）。</div>
+    <!-- 算法调优 · 详细说明弹窗：右栏不再常驻这一大段介绍（一进本视图就被长篇说明淹没），改成标题后的「!」按钮点开才显示。
+         与 #vkDetailModal / #capStopModal 同一套版式（.modal-ov + .xcard + 标题 + 说明段 + 知道了）：点遮罩 / 知道了 / Esc 关闭 -->
+    <div class="modal-ov" id="optHelpModal" style="display:none">
+      <div class="xcard">
+        <div class="xt2">算法调优 · 详细说明</div>
+        <div class="sub">本视图把「特征验证」算出的 A/B/C/D/E 自动组合成匹配算法，再用权重 Y 调优；下面按「算法怎么来 → 怎么判定 → 打平怎么办 → 自动调整参数 → 缓存与过期」依次说明。</div>
+        <div class="hlist">
+          <div>算法调优建立在<b style="color:var(--text)">特征验证</b>结果之上：先「汇总分析」生成各分类产物，再到「特征验证」算出每个特征的 A/B/C/D/E，本视图据此自动组合算法。</div>
+      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,2]</b> 默认 1 可改（步进 <b style="color:var(--text)">0.001</b>，上下箭头 / 手输都按 0.001 收齐）。</div>
       <div style="margin-top:6px">某分类匹配度 = Σ「(100 − 不匹配占比) × X × Y」÷ Σ「X × Y」（加权平均，只累加该分类有有效产物的特征），匹配度<b style="color:var(--text)">唯一最高</b>的分类即判定结果，与样本归属分类一致即命中。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">打平（并列）处理</b>：逐张样本先看每个特征——某特征的最高匹配值被 <b style="color:var(--text)">≥2 个分类并列</b>（分值一样、分不出该选哪一类）即视为该特征有问题，这张样本的加权平均里<b style="color:var(--text)">整张放弃该特征</b>；放弃后重新加权，若最高匹配度<b style="color:var(--text)">仍然并列</b>（或本张样本的可用特征被全部放弃、无从判定），则给出<b style="color:var(--text)">无法区分</b>的最终结论：既不算命中也不算判错，单列「无法区分率」（分母 = 可判定样本、含无法区分，与特征验证的 E 同口径）；它<b style="color:var(--text)">也不进「匹配正确率」的分母</b>（正确率 = 命中 /（可判定样本 − 无法区分）= 命中 /（命中 + 判错），与特征验证的 D 同口径），故正确率 + 无法区分率不一定等于 100%。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">自动调整参数</b>：先「验证所有算法」并等它跑完（结果要能对上当前样本 / 产物）才能点。它逐算法逐权重把 Y 在 <b style="color:var(--text)">0~1 之间随机试 10 次</b>（精确到 0.001），只要这次改动让该算法的<b style="color:var(--text)">匹配正确率上升</b>或<b style="color:var(--text)">无法区分率下降</b>就采纳（10 个候选里取「正确率更高、再比无法区分率更低」的那个，一次都没改善就保持原值），采纳后立即把当前权重写入 <b style="color:var(--text)">classify/opt-weights.json</b>（可随时手删，删了回到默认全 1）；全部调完再用最终权重重算一遍全部算法，界面的权重框、结果卡与结论随新权重刷新。界面上的权重框也以这份文件为起点（改了文件刷新页面即生效）。</div>
-      <div style="margin-top:6px">单一特征算法只有一个特征，权重 Y 在 Σ「X × Y」里被约掉、改它对加权平均没有任何影响，因此<b style="color:var(--text)">权重固定 1、不可编辑、也不参与「自动调整参数」</b>（勾选框同样锁上，后端也不把它写进权重文件）。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">自动调整参数</b>（琥珀色按钮，位于本视图右上角）：先「验证所有算法」并等它跑完（结果要能对上当前样本 / 产物）才能点。它逐算法逐权重把 Y 分<b style="color:var(--text)">两轮各试 100 次</b>（精确到 0.001）：<b style="color:var(--text)">第一轮在 0~2 之间整段随机</b>，<b style="color:var(--text)">第二轮在第一轮定下来的值附近按 ±0.001 ~ ±0.1 就近微调</b>；每个权重的试探次数 = 2 轮 × 100 次（<b style="color:var(--text)">5 个特征的算法即 5 × 2 × 100 = 1000 次评分</b>，张数越多越慢）；每一轮都只要这次改动让该算法的<b style="color:var(--text)">匹配正确率上升</b>或<b style="color:var(--text)">无法区分率下降</b>就采纳（本轮 100 个候选里取「正确率更高、再比无法区分率更低」的那个，一轮都没改善就保持该轮起点），采纳后立即把当前权重写入 <b style="color:var(--text)">classify/opt-weights.json</b>（可随时手删，删了回到默认全 1）；全部调完再用最终权重重算一遍全部算法，界面的权重框、结果卡与结论随新权重刷新。界面上的权重框也以这份文件为起点（改了文件刷新页面即生效）。</div>
+      <div style="margin-top:6px">单一特征算法只有一个特征，权重 Y 在 Σ「X × Y」里被约掉、改它对加权平均没有任何影响，因此<b style="color:var(--text)">权重固定 1、只展示数值不给编辑框（勾选框同样锁上）、也不参与「自动调整参数」</b>（后端也不把它写进权重文件）。</div>
       <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 4 个：单一最佳匹配特征 / 单一最佳+100%正确率特征 / 单一最佳+90+%正确率特征 / 单一最佳+80+%正确率特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/opt-result.json</b>（各算法结果 + 逐分类明细 + 最近一次「自动调整参数」摘要），下次打开本页自动恢复上次结果 ——「<b style="color:var(--text)">已标注（classify/）、汇总分析（summary/ 产物）、特征验证（各特征的五种指标）</b>三处数据都没变」就直接用上次的，不必重算；只要其中任何一处有变动（含特征验证被重算后特征口径变了），结果立即标记过期：右栏统计行给出提示、并提示一次重新计算，结论卡 / 权重卡里也会标黄说明。另外<b style="color:var(--text)">特征选择 + 权重数值每次跑完都会覆写一份最新的快照</b>到 <b style="color:var(--text)">summary/opt-weights.json</b>（每个算法：特征 kind 清单 + 基础分 X + 权重 Y + 当时指标），方便后续功能 / 开发验证直接读取，不必解析界面状态。</div>
       <div style="margin-top:6px">本视图的比对矩阵与特征验证<b style="color:var(--text)">共用同一份缓存</b>（<b style="color:var(--text)">summary/verify-matrix.json</b>）：特征验证刚跑完就直接在内存里命中 —— 换一组权重、再来一次「验证所有算法」或「自动调整参数」都不必重新逐图比对；跨重启也按每张图的大小与修改时间复用没变过的部分，右栏统计行会给出复用规模。</div>
       <div style="margin-top:6px;color:var(--amber)">验证期间建议先停掉「特征验证」与执行模式自动识别（两者都会长时间占用 CPU 与磁盘 IO）。</div>
+        </div>
+        <div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="optHelpOk">知道了</button></div>
+      </div>
     </div>
   </div>
 

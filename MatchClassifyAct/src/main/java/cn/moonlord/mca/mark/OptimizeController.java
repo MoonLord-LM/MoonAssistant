@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 算法调优（把特征组合成匹配算法并验证分类准确率）：状态 / 启动一次「全部算法」验证 / 启动一次「自动调整参数」。
+ * 算法调优（把特征组合成匹配算法并验证分类匹配正确率）：状态 / 启动一次「全部算法」验证 / 启动一次「自动调整参数」。
  */
 @RestController
 @RequestMapping("/api/optimize")

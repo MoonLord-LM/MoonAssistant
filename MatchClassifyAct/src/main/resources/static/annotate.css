@@ -114,6 +114,9 @@
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .btn.primary:hover{filter:brightness(1.08)}
   .btn.green{background:var(--green);border-color:var(--green);color:#fff}
+  /* 「自动调整参数」按钮：琥珀底色，和绿主按钮区分开、更显眼 */
+  .btn.amber{background:var(--amber);border-color:var(--amber);color:#201503;font-weight:600}
+  .btn.amber:hover{filter:brightness(1.08)}
   .btn.ghost{background:transparent}
   .btn:disabled{opacity:.45;cursor:not-allowed}
   /* 无当前图（列表空 / 全部标记完成）时右侧编辑输入与单选一并置灰 */
@@ -263,7 +266,9 @@
   #adot.on{box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 0 6px rgba(47,191,113,.45)}
   #imgarea{position:relative}
   #optPane{position:absolute;inset:0;overflow:auto;height:100%;box-sizing:border-box;padding:12px}
-  /* 算法调优主图区：特征组合表 / 算法结果卡 / 各分类准确率明细 */
+  /* 算法调优左栏每行固定三项（N 个特征 · 匹配正确率 · 无法区分率）：允许折行，避免窄栏把最后一项截成省略号 */
+  #imgList li.optlistrow .r2{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.6}
+  /* 算法调优主图区：特征组合表 / 算法结果卡 / 各分类匹配正确率明细 */
   #optPane .optWrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
   .optTop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
   .optTop .ot{font-size:18px;font-weight:700;letter-spacing:.3px}
@@ -284,7 +289,7 @@
   /* 算法调优：特征权重 Y 输入 / 结果卡 */
   /* 默认态就要看得清边框：原来 border 用 --border（#262e40）比它所在的表底（--panel2）还暗、又和自身底色同深，
      输入框轮廓几乎看不见；这里默认改用 --border-strong，并给出 hover / focus 两级反馈 */
-  #optPane .optTbl input[type=number]{width:66px;padding:3px 6px;border:1px solid var(--border-strong);background:var(--panel);color:var(--text);border-radius:6px;font:inherit;font-variant-numeric:tabular-nums;text-align:center;transition:border-color .15s,box-shadow .15s}
+  #optPane .optTbl input[type=number]{width:84px;padding:3px 8px;border:1px solid var(--border-strong);background:var(--panel);color:var(--text);border-radius:6px;font:inherit;font-variant-numeric:tabular-nums;text-align:center;transition:border-color .15s,box-shadow .15s}
   #optPane .optTbl input[type=number]:hover{border-color:var(--accent)}
   #optPane .optTbl input[type=number]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
   #optPane .optTbl input[type=number]:disabled{opacity:.5}
@@ -444,6 +449,13 @@
   #vkDetailModal .row img{width:58px;height:33px;object-fit:contain;background:#0b0f18;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;flex:none}
   #vkDetailModal .row .f{flex:1;min-width:0;word-break:break-all;color:var(--muted)}
   #vkDetailModal .row .s{flex:none;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* 算法调优 · 详细说明弹窗：与 #vkDetailModal 同一套版式，但正文是一整篇说明（长、可内部滚动） */
+  #optHelpModal{background:rgba(2,4,9,.92)}
+  #optHelpModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:760px;width:100%;text-align:left;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #optHelpModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #optHelpModal .sub{color:var(--muted);font-size:11.5px;line-height:1.9;margin:2px 0 10px}
+  #optHelpModal .hlist{max-height:min(62vh,560px);overflow:auto;padding-right:6px;font-size:12px;color:var(--muted);line-height:1.9}
+  #optHelpModal .hlist b{font-weight:600}
   /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */
   .vkwarn{color:var(--amber)}
   .vkbad{color:var(--danger)}
@@ -471,6 +483,9 @@
   #imgLightbox #lbClose:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
   .edHead{display:flex;align-items:center;gap:8px}
   .edHead h3{margin:0;font-size:14px}
+  /* 算法调优标题后的「!」说明按钮：点开详细说明弹窗（右栏不再常驻那篇长文）；小圆钮，hover 转主题蓝 */
+  .edHead .hbtn{flex:none;width:19px;height:19px;padding:0;font-size:11px;font-weight:700;line-height:1;border:1px solid var(--border-strong);border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .edHead .hbtn:hover{color:#fff;border-color:var(--accent);background:rgba(79,140,255,.22)}
   .miniDot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
   .miniDot.g{background:var(--green)}
   .miniDot.d{background:var(--danger)}
