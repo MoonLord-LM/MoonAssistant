@@ -28,7 +28,7 @@ import java.util.List;
  * （普通标签页受浏览器策略限制无法脚本自关，页面会显示手动关闭按钮兜底）。</p>
  *
  * <p>应用窗口的初始尺寸与位置由 {@code ui.window-size} / {@code ui.center}
- * 控制（默认 1760×990 并居中展示），通过 Chromium 的
+ * 控制（按给定尺寸居中展示），通过 Chromium 的
  * {@code --window-size} / {@code --window-position} 参数实现。</p>
  */
 @Slf4j
@@ -67,7 +67,7 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
     @Value("${ui.path:/annotate}")
     private String path;
 
-    /** 控制台应用窗口尺寸（{@code ui.window-size}，默认 1760x990），形如 {@code 宽x高}；{@code 0x0} 表示不指定、交给系统 */
+    /** 控制台应用窗口尺寸（{@code ui.window-size}），形如 {@code 宽x高}；{@code 0x0} 表示不指定、交给系统 */
     @Value("${ui.window-size:1760x990}")
     private String windowSize;
 

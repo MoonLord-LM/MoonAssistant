@@ -18,20 +18,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 截图任务：截图默认不开启，需在控制台网页点击「自动采集」后才开始后台截取目标窗口像素并保存 PNG。
+ * 截图任务（标注模式的采集端）：默认不开启，需在控制台网页点击「自动采集」后才开始截取目标窗口并保存 PNG。
  *
- * <p>截图节拍不做「固定 3 秒一拍」：每处理完一帧（抓帧 → 尺寸校验/调窗 → 与去重基准全库
- * 匹配比对 → 保存或判重丢弃）后再等 {@code capture.interval-ms}（默认 1 秒）取下一帧
- * （Spring fixedDelay 语义）——帧处理耗时多少就顺延多少，绝不因固定节拍而与上一帧的匹配
- * 比对并发或排队积压；上一帧的匹配比对没完成，下一帧就继续顺延等待。
+ * <p>节拍用 Spring fixedDelay：每处理完一帧（截图 + 比对去重基准 + 保存/判重丢弃）后再等
+ * {@code capture.interval-ms} 取下一帧——帧处理耗时多少就顺延多少，绝不与上一帧并发或排队积压。</p>
  *
- * <p>截图基于 Windows Graphics Capture，全程不切前台、不置顶，
- * 目标窗口在后台/被遮挡时也能正常抓到它自身的画面。</p>
+ * <p>截图基于 Windows Graphics Capture，不切前台、不置顶，目标窗口在后台/被遮挡时也能抓到它自身的画面。</p>
  *
- * <p>尺寸强校验：当 {@code capture.resize-width}/{@code capture.resize-height} 都 &gt;0
- * （如 1280x720）时，<b>只有截出来恰好是该尺寸的 PNG 才会被保存</b>。截图一旦发现
- * 尺寸不符，本任务就用 {@link WindowResizer#resizeWindowToPngSize} 把窗口强制缩放并
- * 在当轮内重截验证；仍不达标则下一轮继续调整，直到截图尺寸合规为止。</p>
+ * <p>尺寸强校验：{@code capture.resize-width}/{@code capture.resize-height} 都 &gt;0 时
+ * <b>只有恰好是该尺寸的 PNG 才会被保存</b>，不符则用 {@link WindowResizer#resizeWindowToPngSize}
+ * 强制调窗并在当轮内重截验证，持续不达标按下方阈值自动暂停。</p>
  */
 @Slf4j
 @Component
@@ -46,70 +42,63 @@ public class WindowCaptureTask implements ApplicationRunner {
     /** 强制缩放窗口后，等窗口完成重排再重截验证的时长（毫秒） */
     private static final int RESIZE_SETTLE_MS = 400;
 
-    /** 单轮内“截图 → 调窗 → 重截”的最多轮数（含首次），避免一帧反复调窗无限占用资源 */
+    /** 单轮内「截图 → 调窗 → 重截」的最多轮数（含首次），避免一帧反复调窗 */
     private static final int MAX_VERIFY_ATTEMPTS = 3;
 
-    /** 找不到窗口时，至少间隔这么久才再次告警，避免日志刷屏 */
+    /** 找不到窗口时的告警节流间隔（毫秒） */
     private static final long FIND_FAIL_LOG_INTERVAL = 30 * 1000L;
 
-    /** 持续无法让截图达到目标尺寸时，至少间隔这么久才再次告警 */
+    /** 截图尺寸持续不达标时的告警节流间隔（毫秒） */
     private static final long SIZE_FAIL_LOG_INTERVAL = 30 * 1000L;
 
-    /** 相似帧（画面差异低于去重阈值被丢弃）的汇总日志最小间隔，避免画面静止时每轮刷屏 */
+    /** 相似帧汇总日志的最小间隔（毫秒），避免画面静止时刷屏 */
     private static final long SKIP_LOG_INTERVAL = 30 * 1000L;
 
-    /** “执行了强制缩放、但重截发现截图尺寸与调整前完全一样（窗口没被 resize 改变）”的连续次数：
-     *  达到该次数即判定窗口无法被调整尺寸，立即自动暂停（每轮内最多出现 2 次验证，故约 1~2 轮内即可触发，无需等满多轮） */
+    /** 连续多少次「强制缩放后截图尺寸毫无变化」即判定窗口无法被调整、立即自动暂停 */
     private static final int SIZE_NO_CHANGE_AUTO_STOP_TIMES = 3;
 
-    /** 兜底阈值：窗口在变化但迟迟不达标 / resize 因最小化、超屏等无法执行时，按“轮”累计达到该轮数才自动暂停
-     *  （每轮时长 = 单帧处理耗时 + capture.interval-ms，不固定，故轮数阈值只能近似“时长”） */
+    /** 兜底：连续多少轮尺寸始终不达标即自动暂停。按「轮」而非时长计，因为每轮耗时不固定 */
     private static final int SIZE_STUCK_AUTO_STOP_ROUNDS = 10;
 
-    /** 截图任务是否未开启/已暂停。初始为 {@code true}：程序启动后不自动截图，
-     *  由控制台网页「自动采集」按钮（{@code /api/capture/resume}）手动开启。 */
+    /** 截图是否暂停；初始 {@code true} = 启动后不自动截图，需控制台网页「自动采集」开启 */
     private final AtomicBoolean paused = new AtomicBoolean(true);
 
-    /** 防重入：手动首截线程与定时调度可能同时触发，只允许一个真正执行 */
+    /** 防重入：定时轮与手动首截只允许一个真正执行 */
     private final AtomicBoolean busy = new AtomicBoolean(false);
 
     private long nextFindFailLogTime = 0;
     private long nextSizeFailLogTime = 0;
 
-    /** 距上次汇总日志以来，因画面与已保存参考图太像而被丢弃的帧数 */
+    /** 距上次汇总日志以来被丢弃的相似帧数 */
     private long skippedSinceLog = 0;
 
-    /** 下一轮允许打印相似帧丢弃汇总日志的时间点 */
+    /** 下一轮允许打印相似帧汇总日志的时间点 */
     private long nextSkipLogTime = 0;
 
-    /** 截图尺寸连续未达标的轮数（仅在截图线程递增；resume 时清零；自增与清零跨线程原子，防 resume 与截图线程交错丢计数） */
+    /** 尺寸连续未达标的轮数（resume 时清零） */
     private final AtomicInteger sizeStuckRounds = new AtomicInteger();
 
-    /** “强制缩放被执行但重截尺寸毫无变化（窗口没被调整动）”的连续次数；resume / 尺寸有变化 / 尺寸达标时清零 */
+    /** 「强制缩放后尺寸毫无变化」的连续次数（resume / 尺寸有变化 / 尺寸达标时清零） */
     private final AtomicInteger noChangeResizes = new AtomicInteger();
 
-    /** 最近一次自动暂停原因（resize 持续无法达标）。非空时前端 /api/app/meta 轮询会收到并弹窗提示；
-     *  用户手动 resume（{@code setPaused(false)}）时清除，便于下次失败再次提示。 */
+    /** 最近一次自动暂停原因，供 /api/app/meta 轮询取走弹窗；用户手动开启时清除，便于下次失败再提示 */
     private volatile String autoStopReason = null;
 
-    /** 最近一次截图「本帧结果」：成功保存 或 画面与已保存参考截图差异过小被丢弃。
-     *  每轮完成都更新、不节流；前端每 2s 轮询 /api/app/meta 取走（截图节拍可为每帧完成后约 1s，
-     *  轮询间隙内连续产生的多条中间结果会被最新一条覆盖），以右下角轻提示即时展示。
-     *  {@code at}（毫秒时间戳）单调递增供前端去重。 */
+    /** 最近一次截图结果（saved / dup），供 /api/app/meta 轮询取走做右下角即时提示；
+     *  只保留最新一条，完整历史见 {@link #shotHistory} */
     private volatile ShotNotice shotNotice = null;
 
-    /** 截图结果全局序号（从 1 起单调递增）：每条历史记录一个 seq，前端按 seq 增量拉取补齐——
-     *  轮询间隙被节流掉的中间结果也不丢（历史日志回溯）。 */
+    /** 截图结果全局序号（从 1 起单调递增），前端按 seq 增量补齐历史 */
     private final AtomicLong shotSeqGen = new AtomicLong();
 
-    /** 每轮截图结果的完整历史（含被前端 2s 轮询节流覆盖的中间条），按发生顺序追加在末尾；
-     *  内存保留、随服务重启清空，供「历史日志」回填与增量拉取。访问需在 {@code shotHistory} 上同步。 */
+    /** 每轮截图结果的完整历史（含被轮询覆盖的中间条），供「历史日志」回溯；内存保留、重启清空。
+     *  访问需在 {@code shotHistory} 上同步 */
     private final List<ShotNotice> shotHistory = new ArrayList<>();
 
-    /** 成功保存截图的总次数（单调递增）：前端 /api/app/meta 轮询看到它变化 = 刚有新截图落盘，立即静默刷新列表 */
+    /** 成功保存截图的总次数（单调递增）：前端轮询看到它变化即静默刷新列表 */
     private volatile long savedSeq = 0;
 
-    /** 当前已使用的最大截图结果 seq（服务重启归零重计）：meta 输出给前端识别“后端已重启”，据此重置增量基线后重新全量 */
+    /** 已使用的最大 seq：前端据此识别「后端已重启」（归零）并重置增量基线 */
     public long getShotSeq() {
         return shotSeqGen.get();
     }
@@ -122,13 +111,12 @@ public class WindowCaptureTask implements ApplicationRunner {
         return autoStopReason;
     }
 
-    /** 供 /api/app/meta 读取最近一次「截图结果」；尚未完成任何一轮（保存或丢弃）时为 null */
+    /** 最近一次截图结果；尚未完成任何一轮时为 null */
     public ShotNotice getShotNotice() {
         return shotNotice;
     }
 
-    /** 供 /api/app/meta 增量拉取截图结果历史：返回 {@code seq > afterSeq} 的全部记录（快照）。
-     *  afterSeq = -1 表示从第一条开始全量返回；尚无任何记录时返回空列表。 */
+    /** 返回 {@code seq > afterSeq} 的历史记录快照；afterSeq = -1 表示从第一条起全量 */
     public List<ShotNotice> shotHistorySince(long afterSeq) {
         synchronized (shotHistory) {
             if (shotHistory.isEmpty()) {
@@ -148,21 +136,20 @@ public class WindowCaptureTask implements ApplicationRunner {
         return savedSeq;
     }
 
-    /** 手动暂停/开启与截图线程自动暂停、计数增减互斥，避免「开启清零」与「自动停置位/计数」交错导致状态错乱 */
+    /** 手动开启 / 暂停；与截图线程的自动暂停互斥，避免「开启清零」与「自动停置位」交错出错乱 */
     public synchronized void setPaused(boolean p) {
         paused.set(p);
         if (p) {
             log.info("截图任务已暂停：不再保存新截图（控制台仍可用）");
             return;
         }
-        // 重新开启：清零连续失败计数与自动暂停原因（原因仅保留到下次手动开启为止）
         sizeStuckRounds.set(0);
         noChangeResizes.set(0);
         autoStopReason = null;
         log.info("截图任务已开启：每处理完一帧（截图 + 匹配比对）后等 {} ms 再取下一帧，"
                 + "尺寸校验 = {}x{}", properties.getIntervalMs(),
                 properties.getResizeWidth(), properties.getResizeHeight());
-        // 异步立即执行一轮，让点按钮后尽快出图；若与定时轮撞车则交给定时轮
+        // 先异步跑一轮，让点按钮后尽快出图（与定时轮撞车则让位）
         Thread first = new Thread(this::tick, "capture-first-shot");
         first.setDaemon(true);
         first.start();
@@ -174,29 +161,20 @@ public class WindowCaptureTask implements ApplicationRunner {
                 + "若网页未自动打开，可手动访问 http://127.0.0.1:8080/annotate");
     }
 
-    /**
-     * 截图调度入口：Spring fixedDelay = 距上一轮<b>处理完成</b>后再等 {@code capture.interval-ms}
-     * （默认 1000ms）取下一帧。帧内「抓帧 + 匹配比对 + 保存/丢弃」同步完成，比对耗时多长，
-     * 下一帧就自然顺延多久——上一帧的匹配比对没完成，不会开始下一帧（绝不叠帧并发）。
-     */
+    /** 定时入口（fixedDelay 语义见类注释） */
     @Scheduled(initialDelayString = "${capture.interval-ms:1000}",
             fixedDelayString = "${capture.interval-ms:1000}")
     public void captureTick() {
         tick();
     }
 
-    /**
-     * 单轮截图 = 截图 → 校验尺寸 →（不达标：强制调整窗口 → 重截）→ 达标才保存 PNG。
-     * 开启截图（setPaused=false）时立即异步调用一次；之后由 fixedDelay 调度：每轮处理完成
-     * 后再等 interval 取下一帧（单帧抓帧/比对超时时自动顺延，不与上一帧并发）。
-     * WGC 方案无需把窗口切到前台或置顶。
-     */
+    /** 单轮入口：暂停中或上一轮未结束时直接跳过 */
     private void tick() {
         if (paused.get()) {
-            return;   // 未开启/暂停期间直接跳过，不查找窗口也不占资源
+            return;
         }
         if (!busy.compareAndSet(false, true)) {
-            return;   // 上一轮还在跑（如手动首截撞上定时轮）：跳过本轮
+            return;
         }
         try {
             doTick();
@@ -221,19 +199,18 @@ public class WindowCaptureTask implements ApplicationRunner {
             return;
         }
 
-        int prevW = 0, prevH = 0;   // 最近一次强制缩放前截到的尺寸；用它判断缩放后窗口是否真的动了
+        int prevW = 0, prevH = 0;   // 最近一次强制缩放前截到的尺寸，用于判断缩放是否真的改变了窗口
         for (int attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
             BufferedImage image = screenCaptureService.captureWindow(window);
             if (image == null) {
-                return;   // 窗口不可捕获/超时：交给下一轮调度重试
+                return;   // 窗口不可捕获/超时，交给下一轮
             }
             int imageW = image.getWidth();
             int imageH = image.getHeight();
 
-            // 本帧是上一次强制缩放后的重截验证帧：尺寸若仍与缩放前一模一样，说明 SetWindowPos 没能让窗口产生任何变化
+            // 与缩放前一模一样 = SetWindowPos 没能让窗口产生任何变化
             if (prevW > 0 && imageW == prevW && imageH == prevH) {
                 if (noChangeResizes.incrementAndGet() >= SIZE_NO_CHANGE_AUTO_STOP_TIMES) {
-                    // 连续 N 次“调了但窗口毫无变化”：直接判定无法调整，立即自动暂停（不必再等后续轮次）
                     stopByUnresizable(window, imageW, imageH, targetW, targetH);
                     return;
                 }
@@ -241,28 +218,25 @@ public class WindowCaptureTask implements ApplicationRunner {
                         window.getTitle(), imageW, imageH,
                         noChangeResizes.get(), SIZE_NO_CHANGE_AUTO_STOP_TIMES);
             } else if (prevW > 0) {
-                noChangeResizes.set(0);   // 尺寸有变化 = resize 生效：清零“无变化”计数，继续按实测尺寸迭代
+                noChangeResizes.set(0);   // resize 生效
             }
 
             if (!enforce || (imageW == targetW && imageH == targetH)) {
                 if (paused.get()) {
-                    return;   // 截图期间用户点了暂停：放弃这帧
+                    return;   // 截图期间被暂停，放弃这帧
                 }
                 ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(image);
                 if (dup != null) {
-                    // 画面与某张已保存图的不一致像素点占比 ≤ 阈值：视为重复帧，丢弃不保存
                     logSkippedSimilar();
-                    recordShotResult("dup", dup.name(), dup.diffPercent(),
-                            dup.refState(), dup.threshold());   // 右下角提示「与哪张参考图重复、未保存」（附分类与阈值）
+                    recordShotResult("dup", dup.name(), dup.diffPercent(), dup.refState(), dup.threshold());
                 } else {
                     save(image, window);
                 }
-                sizeStuckRounds.set(0);   // 尺寸达标并已保存：清零连续失败计数
+                sizeStuckRounds.set(0);
                 noChangeResizes.set(0);
                 return;
             }
 
-            // 尺寸不符：丢弃这帧（不保存），强制调整窗口后当轮内重截
             log.warn("第 {}/{} 次截图尺寸为 {}x{}，不符合目标 {}x{}，已丢弃该帧并强制调整窗口",
                     attempt, MAX_VERIFY_ATTEMPTS, imageW, imageH, targetW, targetH);
             if (attempt == MAX_VERIFY_ATTEMPTS) {
@@ -272,44 +246,38 @@ public class WindowCaptureTask implements ApplicationRunner {
             boolean adjusted = windowResizer.resizeWindowToPngSize(
                     window.getHwnd(), window.getTitle(), imageW, imageH, targetW, targetH);
             if (!adjusted) {
-                // 窗口最小化/目标超屏等暂不可调：本帧不保存，交给下一轮再试
+                // 窗口最小化 / 目标超屏等暂不可调，本帧不保存
                 logSizeStuck(window, imageW, imageH, targetW, targetH);
                 onSizeStuck(window, targetW, targetH);
                 return;
             }
-            // 记下调整前的尺寸：重截后若仍是它，说明这次强制缩放没有让窗口产生任何变化
             prevW = imageW;
             prevH = imageH;
             sleep(RESIZE_SETTLE_MS);
 
-            // 刷新窗口信息（几何/最小化状态可能在缩放后变化）
+            // 调窗后几何 / 最小化状态可能已变
             WindowInfo fresh = windowFinder.findTarget(properties.getWindowKeywords());
             if (fresh != null) {
                 window = fresh;
             }
         }
 
-        // 单轮内多次尝试仍未达标：不保存，交给下一轮再调
         logSizeStuck(window, -1, -1, targetW, targetH);
         onSizeStuck(window, targetW, targetH);
     }
 
     /**
-     * 手动采集一次（标注模式「未标注」空列表的「手动采集」按钮 → {@code /api/capture/manual}）：
-     * 立即做与自动截图「一轮」等价的处理——截图 → 尺寸校验（不符则强制调窗重截，最多
-     * {@link #MAX_VERIFY_ATTEMPTS} 次）→ 去重检查 → 达标才存 capture/。与自动轮仅两处差异：
-     * 去重套「手动保存」阈值（{@code capture.diff-threshold-manual-percent}，默认 0.5%，与执行模式
-     * 「存到待标注」同一判定方法同一口径：与 capture/ + classify/ 全部同尺寸 PNG 逐像素比对，须与
-     * 每一张的不一致像素占比都 &gt; 阈值才算新画面）；不触发自动暂停、不写右下角截图事件流
-     * （由页面按钮按返回结果自行提示与刷新列表）。单次执行不受截图开关（paused）约束；
-     * 与定时轮经 {@link #busy} 互斥，撞车时先等至多约 2 秒再试。
+     * 手动采集一次（「手动采集」按钮 → {@code /api/capture/manual}）：与自动轮同一套截图 / 调窗逻辑，
+     * 差别只在去重套「手动保存」阈值（{@code capture.diff-threshold-manual-percent}，
+     * 见 {@link ScreenCaptureService#duplicateReference}），且不触发自动暂停、不写截图事件流；
+     * 不受截图开关约束，与定时轮经 {@link #busy} 互斥（撞车时先等其收尾）。
      *
      * @return 本次结果（{@link ManualShotResult}）
      */
     @SneakyThrows
     public ManualShotResult manualShot() {
         for (int i = 0; i < 20 && busy.get(); i++) {
-            sleep(100);   // 定时轮/首截线程仍在处理：稍等其完成，避免两路截图同时抓帧互相干扰
+            sleep(100);   // 等定时轮 / 首截线程收尾，避免两路同时抓帧
         }
         if (!busy.compareAndSet(false, true)) {
             return ManualShotResult.of("busy");
@@ -324,8 +292,7 @@ public class WindowCaptureTask implements ApplicationRunner {
         }
     }
 
-    /** 手动采集实际执行体：结构与 {@link #doTick()} 一致（截图 → 尺寸不达标调窗重截 → 达标才保存），
-     *  差异（手动阈值 / 不暂停 / 不计数 / 逐失败点返回结果）见 {@link #manualShot()} */
+    /** 手动采集执行体；与 {@link #doTick()} 的差异见 {@link #manualShot()} */
     @SneakyThrows
     private ManualShotResult doManualShot() {
         int targetW = properties.getResizeWidth();
@@ -341,7 +308,7 @@ public class WindowCaptureTask implements ApplicationRunner {
             log.warn("手动采集：窗口 [{}] 已最小化，无法截图", window.getTitle());
             return ManualShotResult.of("minimized");
         }
-        // 与去重判定同口径：阈值先四舍五入到两位小数（默认 0.5，同执行模式「存到待标注」）
+        // 与去重判定同口径：阈值先四舍五入到两位小数
         double threshold = Math.round(properties.getDiffThresholdManualPercent() * 100.0) / 100.0;
 
         for (int attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
@@ -353,7 +320,7 @@ public class WindowCaptureTask implements ApplicationRunner {
             int imageW = image.getWidth();
             int imageH = image.getHeight();
             if (!enforce || (imageW == targetW && imageH == targetH)) {
-                // 去重判定与「提示用差异」一次扫描带出（minDiffPercent 取自本次扫描且落盘前算，故不含本张）
+                // 去重判定与「提示用差异」共用一次扫描；minDiffPercent 落盘前算，故不含本张
                 ScreenCaptureService.DedupScan scan = screenCaptureService.scanReference(image, threshold);
                 ScreenCaptureService.DuplicateMatch dup = scan.dup();
                 if (dup != null) {
@@ -393,9 +360,8 @@ public class WindowCaptureTask implements ApplicationRunner {
         return ManualShotResult.of("resize-fail");
     }
 
-    /** 手动采集结果：kind = saved（已存 capture/，name 为文件名，minDiffPercent 为去重扫描中与任一已有图的
-     *  最小不一致像素占比、-1 无可比参考）/ dup（与 name 这张已存图的不一致像素占比 diffPercent% ≤ 阈值 threshold% 被拦截，
-     *  refState 为该图所属分类，capture/ 图为 null）/ window-not-found / minimized / capture-fail /
+    /** 手动采集结果：kind = saved（已存 capture/）/ dup（与 name 这张已存图差异 diffPercent% ≤ threshold% 被拦截，
+     *  refState 为其所属分类，capture/ 未标注图为 null）/ window-not-found / minimized / capture-fail /
      *  resize-fail / save-fail / busy / error。 */
     public static final class ManualShotResult {
 
@@ -404,7 +370,7 @@ public class WindowCaptureTask implements ApplicationRunner {
         public final double diffPercent;
         public final String refState;
         public final double threshold;
-        /** saved 时 = 本次去重扫描中与任一已有图的最小不一致像素占比（提示用）；-1 = 无可比参考（首张图等） */
+        /** saved 时 = 本次扫描中与任一已有图的最小不一致像素占比（提示用）；-1 = 无可比参考（如首张图） */
         public final double minDiffPercent;
 
         ManualShotResult(String kind, String name, double diffPercent, String refState, double threshold) {
@@ -427,13 +393,12 @@ public class WindowCaptureTask implements ApplicationRunner {
     }
 
     /**
-     * 快速判死：强制缩放已执行但重截尺寸毫无变化，连续累计到 {@link #SIZE_NO_CHANGE_AUTO_STOP_TIMES} 次
+     * 快速判死：强制缩放后尺寸毫无变化，累计到 {@link #SIZE_NO_CHANGE_AUTO_STOP_TIMES} 次
      * 即判定窗口无法被调整，立即自动暂停（不等满 {@link #SIZE_STUCK_AUTO_STOP_ROUNDS} 轮）。
-     * 暂停原因记录后，前端 /api/app/meta 轮询到即弹窗提示。
      */
     private synchronized void stopByUnresizable(WindowInfo window, int imageW, int imageH, int targetW, int targetH) {
-        paused.set(true);   // 停止截图（暂停保存，需用户手动重新开启）
-        // 文案用 \n 分段：前端弹窗按换行符多行展示，方便阅读
+        paused.set(true);
+        // 文案用 \n 分段：前端弹窗按换行符多行展示
         autoStopReason = String.format(
                 "截图任务已自动暂停：窗口 [%s] 连续 %d 次被强制调整尺寸后，截图仍为 %dx%d，\n"
                         + "窗口大小没有任何变化，已判定该窗口无法被程序调整尺寸。\n"
@@ -447,16 +412,14 @@ public class WindowCaptureTask implements ApplicationRunner {
     }
 
     /**
-     * 兜底路径：resize 因最小化/超屏等无法执行（按“轮”累计），或窗口在变化但迟迟不达标，
-     * 累计达到 {@link #SIZE_STUCK_AUTO_STOP_ROUNDS} 轮仍未达标，判定为“持续调整不成功”，
-     * 自动暂停截图并记录原因（前端 /api/app/meta 轮询到后弹窗提示）。
+     * 兜底：resize 无法执行（最小化 / 超屏）或窗口在变却迟迟不达标，累计
+     * {@link #SIZE_STUCK_AUTO_STOP_ROUNDS} 轮即判定「持续调整不成功」并自动暂停。
      */
     private synchronized void onSizeStuck(WindowInfo window, int targetW, int targetH) {
         if (sizeStuckRounds.incrementAndGet() < SIZE_STUCK_AUTO_STOP_ROUNDS) {
             return;
         }
-        paused.set(true);   // 停止截图（暂停保存，需用户手动重新开启）
-        // 文案用 \n 分段：前端弹窗按换行符多行展示，方便阅读
+        paused.set(true);
         autoStopReason = String.format(
                 "截图任务已自动暂停：窗口 [%s] 连续 %d 轮都无法把截图调整到目标尺寸 %dx%d，\n"
                         + "判定「窗口尺寸调整持续不成功」，截图任务停止。\n"
@@ -473,13 +436,12 @@ public class WindowCaptureTask implements ApplicationRunner {
     @SneakyThrows
     private void save(BufferedImage image, WindowInfo window) {
         Path file = screenCaptureService.savePng(image, window);
-        savedSeq++;   // 落盘成功：seq 递增，前端轮询到变化即立刻刷新列表（无需等 10s 后台轮询）
-        recordShotResult("saved", file.getFileName().toString(), 0, null, 0);   // 右下角即时提示「已保存 xx」
+        savedSeq++;   // 落盘成功即递增，前端轮询到变化立刻刷新列表
+        recordShotResult("saved", file.getFileName().toString(), 0, null, 0);
         log.info("已截图并保存（{}x{}）: {}", image.getWidth(), image.getHeight(), file);
     }
 
-    /** 记录一次已完成的截图结果（saved=成功保存 / dup=与参考图不一致像素点占比 ≤ 阈值被丢弃）：
-     *  写入完整历史供「历史日志」回溯，并作为“最近一次”供 /api/app/meta 轮询即时提示 */
+    /** 记录一次截图结果（saved / dup）：写入完整历史，并作为「最近一次」供轮询即时提示 */
     private void recordShotResult(String kind, String name, double diffPercent, String refState, double threshold) {
         long seq = shotSeqGen.incrementAndGet();
         ShotNotice n = new ShotNotice(seq, System.currentTimeMillis(), kind, name, diffPercent, refState, threshold);
@@ -489,7 +451,7 @@ public class WindowCaptureTask implements ApplicationRunner {
         shotNotice = n;
     }
 
-    /** 统计相似帧丢弃次数，并按 {@link #SKIP_LOG_INTERVAL} 节流打印汇总日志（不逐帧刷屏） */
+    /** 累计被丢弃的相似帧，并按 {@link #SKIP_LOG_INTERVAL} 节流打印汇总日志 */
     private void logSkippedSimilar() {
         skippedSinceLog++;
         long now = System.currentTimeMillis();
@@ -498,14 +460,14 @@ public class WindowCaptureTask implements ApplicationRunner {
         }
         nextSkipLogTime = now + SKIP_LOG_INTERVAL;
         log.info("画面与去重基准（capture/ + classify/ 全部 PNG）中某张的不一致像素点占比 ≤ {}%（须与每一张都 > 阈值才保存），本轮不保存；"
-                        + "近 {} 秒内已丢弃 {} 张几乎重复的截图（自动截图去重阈值默认 5%，可用启动参数覆盖，"
+                        + "近 {} 秒内已丢弃 {} 张几乎重复的截图（自动截图去重阈值可用启动参数覆盖，"
                         + "如 --capture.diff-threshold-percent=10）",
                 properties.getDiffThresholdPercent(),
                 SKIP_LOG_INTERVAL / 1000, skippedSinceLog);
         skippedSinceLog = 0;
     }
 
-    /** 截图尺寸长期无法达标时降频告警（每 30 秒最多一条），并给出可操作建议 */
+    /** 截图尺寸长期不达标的降频告警（含可操作建议） */
     private void logSizeStuck(WindowInfo window, int imageW, int imageH, int targetW, int targetH) {
         long now = System.currentTimeMillis();
         if (now < nextSizeFailLogTime) {
@@ -540,11 +502,9 @@ public class WindowCaptureTask implements ApplicationRunner {
         }
     }
 
-    /** 一次截图结果的 UI 通知：
-     *  {@code kind} = {@code "saved"}（成功保存，{@code name} 为新截图文件名）或
-     *  {@code "dup"}（与已保存参考截图的不一致像素点占比 ≤ 阈值被丢弃，{@code name} 为重复的参考图文件名，
-     *  {@code diffPercent} 为实际占比）；
-     *  {@code seq}（从 1 起全局递增）与 {@code at}（毫秒时间戳）都单调递增，前端按 seq 增量取历史、按 at 判断新结果 */
+    /** 一次截图结果的 UI 通知：{@code kind} = saved（{@code name} 为新截图文件名）/ dup（差异
+     *  {@code diffPercent}% ≤ {@code threshold}% 被丢弃，{@code name} 为重复的参考图文件名）；
+     *  {@code seq} 与 {@code at}（毫秒时间戳）均单调递增，前端按 seq 增量取历史、按 at 去重 */
     public static final class ShotNotice {
 
         public final long seq;

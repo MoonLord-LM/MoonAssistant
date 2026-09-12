@@ -43,12 +43,8 @@ import java.util.stream.Stream;
  *
  * <p>抓帧由本地采集器 WindowsCapture.exe 完成，Java 侧只负责调用并读取结果。</p>
  *
- * <p>WGC 直接抓取目标窗口的合成内容（含 GPU/DX 渲染表面），因此：</p>
- * <ul>
- *   <li>不需要窗口处于前台 / 顶层 / 未被遮挡；</li>
- *   <li>不受显示器缩放比例影响，返回的是窗口自身的物理像素内容，天然无坐标偏移；</li>
- *   <li>窗口被其它窗口完全盖住也能抓到它自己的画面。</li>
- * </ul>
+ * <p>WGC 直接抓取目标窗口的合成内容（含 GPU/DX 渲染表面），因此不需要窗口在前台 / 顶层 / 未被遮挡，
+ * 不受显示器缩放比例影响（返回窗口自身的物理像素内容，天然无坐标偏移），被其它窗口完全盖住也能抓到画面。</p>
  *
  * <p>分层（WS_EX_LAYERED）窗口（如 MuMu 模拟器）无法被 WGC 的 CreateForWindow
  * 直接捕获，采集器会自动降级为"显示器捕获 + 按窗口矩形裁剪"，由 Java 侧透明调用。</p>
@@ -86,26 +82,18 @@ public class ScreenCaptureService {
     /** 正在运行的采集器进程；控制台点「退出程序」结束 JVM 时强制杀掉，避免残留抓帧进程 */
     private volatile Process activeCapture;
 
-    /** 最近一次截图，后续 Match / Classify 阶段可从这里取图 */
-    private volatile BufferedImage latestImage;
-
-    /** 最近一次保存的图片文件 */
-    private volatile Path latestFile;
-
-    /** 一条去重参考图：只记录原图路径与尺寸（尺寸用于判断与当前画面是否同尺寸可比）。
-     *  不缓存任何像素数据，判定时直接按路径读取全尺寸原图逐像素比对，无缩略 / 预筛环节。 */
+    /** 一条去重参考图：只记原图路径与尺寸（尺寸用于判断能否逐像素比对），不缓存像素数据 */
     private record Reference(Path path, int srcW, int srcH) {
     }
 
-    /** 一次去重判定命中：{@code name} = 与当前画面重复的那张已保存截图 / 标注样本的文件名（可直接向用户指出「和哪一张重复」）；
+    /** 一次去重判定命中：{@code name} = 与之重复的那张已保存截图 / 标注样本的文件名（可直接向用户指出「和哪一张重复」）；
      *  {@code diffPercent} = 两者不一致像素点占比（%，两位舍入，必然 ≤ {@code threshold}）；
-     *  {@code threshold} = 本次判定所用差异阈值（像素点差异百分比）；{@code refState} =
-     *  参考图为 classify/ 已标注样本时的分类标注，capture/ 未标注参考图为 null。 */
+     *  {@code refState} = 参考图为 classify/ 已标注样本时的分类标注，capture/ 未标注参考图为 null。 */
     public record DuplicateMatch(String name, double diffPercent, double threshold, String refState) {
     }
 
-    /** 一次去重扫描结果：{@code dup} 非空 = 命中重复（语义同 {@link #duplicateReference} 返回值）；
-     *  {@code minDiffPercent} = 扫描中与任一参考图的最小不一致像素点占比（-1 = 无可比参考），仅供「保存成功」提示用。 */
+    /** 一次去重扫描结果：{@code dup} 非空 = 命中重复；{@code minDiffPercent} = 扫描中与任一参考图的
+     *  最小不一致像素点占比（-1 = 无可比参考），仅供「保存成功」提示用。 */
     public record DedupScan(DuplicateMatch dup, double minDiffPercent) {
     }
 
@@ -113,13 +101,10 @@ public class ScreenCaptureService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
-     * 画面去重基准 = capture/（原始截图）与 classify/（已标注样本）两目录下的<b>全部</b> PNG：
-     * 新帧保存前须与其中「每一张」的全尺寸原图逐像素比对，不一致像素点占比都 &gt; 阈值才算新画面，
-     * 只要与任意一张 ≤ 阈值即判重复丢弃，避免一边把图标注入库、一边 capture/ 又落盘几乎一样的图。
-     * key = PNG 绝对路径字符串；value 只含路径与尺寸（不缓存像素，比对时按需读取原图）。
+     * 画面去重基准 = capture/（原始截图）与 classify/（已标注样本）两目录下的<b>全部</b> PNG，
+     * key = 绝对路径，value 只含路径与尺寸（判定口径见 {@link #duplicateReference(BufferedImage, double)}）。
      *
-     * <p>与早期“内存只保留最近 30 帧”不同，这里以磁盘全集为准：截图被标注移入 classify/、
-     * 程序重启后，仍能与历史任意一张对上；只要与 classify/ 中任意标注样本几乎相同就不会再保存新图。</p>
+     * <p>以磁盘全集为准而非「内存只保留最近 N 帧」：截图被标注移入 classify/、程序重启后仍能与历史任意一张对上。</p>
      */
     private final Map<String, Reference> referenceCache = new LinkedHashMap<>(256, 0.75f, true);
 
@@ -231,15 +216,13 @@ public class ScreenCaptureService {
         Runtime.getRuntime().addShutdownHook(new Thread(this::killActiveCapture, "capture-shutdown-hook"));
     }
 
-    /** 启动历史重复清理的结果事件：每次应用启动按两启用阈值中较低者（默认 min(5, 0.5) = 0.5%）与保留图逐像素比对
-     *  （不一致像素占比 ≤ 阈值即删，近似但不相同的画面保留）后写入（有删除与无删除都会记录），供控制台页一次性取走展示。 */
+    /** 最近一次启动历史重复清理的结果（有删除与无删除都记录），供控制台页一次性取走展示 */
     private volatile StartupDedupNotice startupDedupNotice = null;
 
-    /** 启动去重清理结果摘要：at=完成时刻；threshold=本次差异阈值（像素点差异百分比，两位舍入口径）；
-     * scanned=参与比对截图数；removed=删除重复张数；costMs=本次重扫实际耗时（毫秒，供页面提示“耗时 Xs/Xms”）；
-     * compared=本次真正完成全尺寸逐像素比对的次数（尺寸不同的对不计）；reused=直接复用 {@link DedupCache}
-     * 已存结果、没再读像素比对的次数；minDiff=这些判定（含复用）中最低的不一致像素点占比
-     * （无任何可比对的同尺寸对 = -1），供页面提示「最接近的一张还有多大差异」。 */
+    /** 启动去重清理结果摘要：at=完成时刻；threshold=本次差异阈值；scanned=参与比对截图数；
+     *  removed=删除张数；costMs=实际耗时（毫秒，供页面提示「耗时 Xs/Xms」）；compared=真正逐像素比对的次数
+     *  （尺寸不同的对不计）；reused=复用 {@link DedupCache} 已存结果、未再读像素的次数；
+     *  minDiff=这些判定中最低的不一致像素点占比（无同尺寸可比对 = -1），供页面提示「最接近的一张还有多大差异」。 */
     public record StartupDedupNotice(long at, double threshold, int scanned, int removed, long costMs,
                                      int compared, int reused, double minDiff) {
     }
@@ -249,13 +232,11 @@ public class ScreenCaptureService {
         return startupDedupNotice;
     }
 
-    /** 启动历史重复清理的「进行态」快照：供控制台页在清理期间显示一条一直刷新的进度提示（含已耗时），
-     *  与批量分析任务的「正在第 N 轮…（已耗时 X 秒）」同款观感。
+    /** 启动历史重复清理的「进行态」快照，供控制台页在清理期间显示一条一直刷新的进度提示（含已耗时）。
      *
      *  <p>at=开始时刻（毫秒，页面据此逐秒算已耗时）；done/total=已判定 / 待判定截图数（total=0 = 仍在枚举目录）；
-     *  current=当前正在判定的文件名；compared/reused=本次已完成的逐像素比对次数 / 复用 {@link DedupCache}
-     *  已存结果省掉的次数；removed=已删重复张数；costMs/running=总耗时与收尾标记——running 变 false 后
-     *  页面撤掉进度提示，改由 {@link StartupDedupNotice} 展示结果。</p>
+     *  current=当前判定的文件名；compared/reused=已完成的逐像素比对 / 复用 {@link DedupCache} 省掉的次数；
+     *  removed=已删张数；running 变 false 后页面撤掉进度提示，改由 {@link StartupDedupNotice} 展示结果。</p>
      */
     public record StartupDedupProgress(long at, int done, int total, String current,
                                        int compared, int reused, int removed, long costMs, boolean running) {
@@ -283,10 +264,8 @@ public class ScreenCaptureService {
 
     private void startupDedupAndSeed() {
         try {
-            // 启动历史重复清理：按自动截图 / 手动保存两个启用阈值中的「最低要求」（两者都启用取较小者，
-            // 默认 min(5, 0.5) = 0.5）判定重复并删除——与保留图的不一致像素点占比 ≤ 该值即删，
-            // 同运行期判定口径（全尺寸逐像素比对）。某项阈值 ≤0（该路径去重关闭）时以另一项为准；
-            // 都 ≤0 则跳过，历史完全不清理
+            // 启动历史重复清理：取两条路径启用阈值中的「最低要求」（两者都启用取较小者），
+            // 某项 ≤0（该路径去重关闭）时以另一项为准，都 ≤0 则跳过清理
             double autoThreshold = properties.getDiffThresholdPercent();
             double manualThreshold = properties.getDiffThresholdManualPercent();
             double threshold = autoThreshold > 0 && manualThreshold > 0
@@ -300,7 +279,7 @@ public class ScreenCaptureService {
             synchronized (referenceLock) {
                 long started = System.nanoTime();
                 long startedAt = System.currentTimeMillis();
-                // 进行态快照 + 开始消息：页面据此先提示一条「开始检查」，并在整个扫描期间显示一直刷新的进度（含已耗时）
+                // 先置进行态快照：页面据此在扫描期间显示一直刷新的进度（含已耗时）
                 startupDedupProgress = new StartupDedupProgress(startedAt, 0, 0, "", 0, 0, 0, 0L, true);
                 log.info("启动历史重复清理：开始检查 capture/ + classify/ 的全部历史截图重复"
                         + "（不一致像素点占比 ≤ 阈值 {}% 即视为重复删除，逐像素全尺寸比对；"
@@ -308,13 +287,13 @@ public class ScreenCaptureService {
                 DedupResult result = dedupeHistoryLocked(threshold, startedAt);
                 long costMs = (System.nanoTime() - started) / 1_000_000;
                 int scanned = result.removed() + result.kept().size();
-                // 收尾：running=false（页面撤掉进度提示），结果由下面的 notice 与日志给出
+                // 收尾：running=false 让页面撤掉进度提示，结果由下方 notice 给出
                 startupDedupProgress = new StartupDedupProgress(startedAt, scanned, scanned, "",
                         result.compared(), result.reused(), result.removed(), costMs, false);
                 startupDedupNotice = new StartupDedupNotice(
                         System.currentTimeMillis(), threshold, scanned, result.removed(), costMs,
                         result.compared(), result.reused(), result.minDiff());
-                // 判定量：真正逐像素比对次数 + 复用缓存省掉的次数 + 其中最低的不一致占比（最接近重复的一对有多近）
+                // 判定量：比对 / 复用次数 + 其中最低的不一致占比（最接近重复的一对有多近）
                 String cmpTxt = result.compared() + result.reused() > 0
                         ? String.format("，比对 %d 次%s，最低不一致像素点占比 %s%%", result.compared(),
                                 result.reused() > 0 ? "（复用已存结果 " + result.reused() + " 次）" : "",
@@ -327,7 +306,7 @@ public class ScreenCaptureService {
                     log.info("启动历史重复清理：capture/ + classify/ 共 {} 张，未发现不一致像素点占比 ≤ {}% 的重复截图{}",
                             scanned, threshold, cmpTxt);
                 }
-                // 清理结果即最新基准全集：直接用保留列表重建基准缓存（只含路径与尺寸），与运行期逐帧去重共用同一基准
+                // 保留列表即最新基准全集：直接用它重建基准缓存，与运行期逐帧去重共用同一基准
                 referenceCache.clear();
                 for (Reference r : result.kept()) {
                     referenceCache.put(r.path.toString(), r);
@@ -398,8 +377,7 @@ public class ScreenCaptureService {
     }
 
     /**
-     * 把截图保存为 PNG 文件，并记录为最近一次截图。
-     * 文件名固定为 IMG_yyyyMMdd_HHmmss.png，与窗口标题无关。
+     * 把截图保存为 PNG 文件，并记录为最近一次截图（命名与窗口标题无关）。
      *
      * @param image  待保存的截图
      * @param window 截图来源窗口（仅用于调用方日志，不参与命名）
@@ -409,7 +387,7 @@ public class ScreenCaptureService {
         Path directory = storage.capture();   // 原始截图固定写入 capture/
         Files.createDirectories(directory);
 
-        // 毫秒时间戳命名；同毫秒或与 classify/ 同名时追加 _2、_3…（classify 同名时标注列表以已标注版本为准，避免保存了却看不到）
+        // 毫秒时间戳命名；重名时追加 _2、_3…（与 classify/ 重名则标注列表以已标注版本为准，避免保存了却看不到）
         String base = LocalDateTime.now().format(FILE_TIME_FORMAT);
         String name = base + ".png";
         for (int i = 2; Files.exists(directory.resolve(name))
@@ -418,7 +396,7 @@ public class ScreenCaptureService {
         }
         Path file = directory.resolve(name);
 
-        // 先写 .tmp 再原子改名，保证控制台列表/浏览器永远看不到写了一半的 PNG
+        // 先写 .tmp 再原子改名：控制台列表 / 浏览器不会看到写了一半的 PNG
         Path tmp = directory.resolve(name + ".png.tmp");
         boolean written = ImageIO.write(image, "png", tmp.toFile());
         if (!written) {
@@ -431,30 +409,19 @@ public class ScreenCaptureService {
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
         }
 
-        this.latestImage = image;
-        this.latestFile = file;
-        rememberReference(file, image.getWidth(), image.getHeight());   // 立即把新帧登记进去重基准：后续帧须与它也有足够差异才允许保存
+        rememberReference(file, image.getWidth(), image.getHeight());   // 立即登记进去重基准，后续帧须与它也有足够差异
         return file;
     }
 
-    public BufferedImage getLatestImage() {
-        return latestImage;
-    }
-
-    public Path getLatestFile() {
-        return latestFile;
-    }
-
-    /** 画面去重判定（自动截图循环在保存前调用）：阈值取 {@code capture.diff-threshold-percent}（默认 5%），
+    /** 画面去重判定（自动截图循环在保存前调用）：阈值取 {@code capture.diff-threshold-percent}，
      *  判定口径同 {@link #duplicateReference(BufferedImage, double)}。 */
     public DuplicateMatch duplicateReference(BufferedImage image) {
         return duplicateReference(image, properties.getDiffThresholdPercent());
     }
 
-    /** 带阈值的画面去重判定（手动采集、「存入分类 / 存到待标注」传 {@code capture.diff-threshold-manual-percent}，
-     *  默认 0.5%）：与「去重基准」capture/ + classify/ 全部同尺寸 PNG 逐点比 RGB（低 24 位不等即不一致），
-     *  不一致像素点占比 ≤ threshold 即判重复、须与每一张都 &gt; threshold 才算新画面；直接读取原图逐像素比对、
-     *  无缩略预筛；阈值 ≤ 0 视为关闭、直接放行。返回 {@link #scanReference} 的 dup。 */
+    /** 带阈值的画面去重判定（手动采集、「存入分类 / 存到待标注」传 {@code capture.diff-threshold-manual-percent}）：
+     *  与去重基准里每一张同尺寸 PNG 逐像素比对，不一致像素点占比 ≤ threshold 即判重复、须与每一张都
+     *  &gt; threshold 才算新画面；阈值 ≤ 0 视为关闭、直接放行。返回 {@link #scanReference} 的 dup。 */
     public DuplicateMatch duplicateReference(BufferedImage image, double threshold) {
         return scanReference(image, threshold).dup();
     }
@@ -475,7 +442,7 @@ public class ScreenCaptureService {
         int w = image.getWidth();
         int h = image.getHeight();
         synchronized (referenceLock) {
-            scanAndLoadMissingLocked();   // 同步磁盘全集：新保存/移入/删除的参考即时纳入（已有缓存命中不重复读头部）
+            scanAndLoadMissingLocked();   // 同步磁盘全集：新保存 / 移入 / 删除的参考即时生效
             if (referenceCache.isEmpty()) {
                 return new DedupScan(null, -1);   // 还没有任何参考图：首帧保存，作为后续比较的基准
             }
@@ -488,7 +455,7 @@ public class ScreenCaptureService {
                 if (ref.srcW != w || ref.srcH != h) {
                     continue;   // 历史窗口尺寸不同：无法逐像素对比，视为不重复
                 }
-                BufferedImage full = readFull(ref.path);   // 直接读取原图逐像素比对，无缩略预筛
+                BufferedImage full = readFull(ref.path);
                 if (full == null) {
                     continue;   // 解码失败：无法比对，视为不重复放行
                 }
@@ -534,8 +501,8 @@ public class ScreenCaptureService {
         }
     }
 
-    /** 全尺寸逐像素「不一致像素点占比」：两图同尺寸时逐点比较 RGB（忽略 alpha，低 24 位不等即算不一致），
-     *  返回不一致像素 / 总像素 × 100（两位舍入；与识别交集类「完全一致」同判据，只是统计占比用于阈值比较）。
+    /** 全尺寸逐像素「不一致像素点占比」：同尺寸时逐点比较 RGB（忽略 alpha，低 24 位不等即算不一致），
+     *  返回不一致像素 / 总像素 × 100（两位舍入；与识别交集类的「完全一致」同判据，只是这里统计占比用于阈值比较）。
      *  任一图为空返回 0（无图可比）；尺寸不同返回 100（不可比，调用方按不重复放行）。 */
     private static double mismatchPercentFull(BufferedImage a, BufferedImage b) {
         if (a == null || b == null) {
@@ -620,14 +587,12 @@ public class ScreenCaptureService {
 
     /* ---------------- 启动历史重复清理（把历史堆积的重复一次清掉） ---------------- */
 
-    /** 历史清理结果：removed = 实际删除张数；kept = 判定保留（即清理后的基准全集，只含路径与尺寸）；
-     *  compared = 本次真正逐像素比对的次数；reused = 复用 {@link DedupCache} 已存结果、没再读像素的次数；
-     *  minDiff = 这些判定（含复用）中最低的不一致像素点占比（无比对时 -1） */
+    /** 历史清理结果：removed = 实际删除张数；kept = 保留全集（即清理后的基准，只含路径与尺寸）；
+     *  compared / reused = 逐像素比对 / 复用 {@link DedupCache} 的次数；minDiff = 判定中最低的不一致像素点占比（无比对时 -1） */
     private record DedupResult(int removed, List<Reference> kept, int compared, int reused, double minDiff) {
     }
 
-    /** 一张保留图的比较用状态：ref/stamp 固定，img 懒解码——本次没比到它就不解码（整轮全命中缓存时
-     *  一张都不用读）；decodeTried 避免解码失败后反复重试与反复告警。 */
+    /** 一张保留图的比较用状态：img 懒解码（整轮全命中缓存时一张都不用读），decodeTried 避免失败后反复重试 */
     private static final class Kept {
 
         private final Reference ref;
@@ -651,26 +616,22 @@ public class ScreenCaptureService {
     }
 
     /**
-     * 启动时对 capture/（未标注原始截图）+ classify/（已标注样本）历史全部截图做一次重复清理
-     * （须在 {@link #referenceLock} 内调用）。按「保留优先级」排序后逐张判定，每张只与前面
-     * 已保留的图比较：
+     * 启动时对 capture/（未标注原始截图）+ classify/（已标注样本）的历史截图做一次重复清理
+     * （须在 {@link #referenceLock} 内调用）：按保留优先级排序后逐张判定，每张只与前面已保留的图比较。
      *
      * <ul>
-     *   <li>保留优先级：classify/ 已标注样本在前（有标注价值），capture/ 未标注在后；
-     *       同目录内按文件名（IMG_ 时间戳 ≈ 保存先后）升序、较早的优先保留；</li>
-     *   <li>同尺寸且与保留图的不一致像素点占比 ≤ 阈值即视为重复而删除——与运行期判定同一口径
-     *       （见 {@link #duplicateReference(BufferedImage, double)}），清掉早期未开去重 / 旧版只
-     *       对比少数参考图时期堆积的重复；比对直接使用全尺寸原图逐像素计数，无缩略预筛；</li>
-     *   <li>比对结果按「两张图的文件名 + 最后修改时间」四元组记进 {@link DedupCache}：四元组都没变过的
-     *       组合下次启动直接复用（本次一个像素都不用读），因此全量重扫过一遍后重启几乎瞬时完成；
-     *       缓存的是<b>差异值</b>而不是「是否重复」，判定仍拿本次阈值去比，改阈值也不会用错结果；</li>
-     *   <li>删除 classify/ 下的样本时连带删除同名 .json（样本归属标注），中心表
-     *       data.json 的分类定义不动；汇总分析产物留待其自身的「样本数变化自检」重算。</li>
+     *   <li>保留优先级：classify/ 已标注样本在前（有标注价值），capture/ 次之；同目录内较早的优先；</li>
+     *   <li>判定口径与运行期完全一致（见 {@link #duplicateReference(BufferedImage, double)}），
+     *       目的是清掉早期未开去重时堆积的重复；</li>
+     *   <li>比对结果按「两张图的文件名 + 最后修改时间」记进 {@link DedupCache}：四元组没变过的组合下次
+     *       启动直接复用（一个像素都不用读），因此全量重扫过一遍后重启几乎瞬时完成；缓存的是<b>差异值</b>
+     *       而非「是否重复」，判定仍拿本次阈值去比，改阈值也不会用错结果；</li>
+     *   <li>删除 classify/ 样本时连带删除同名 .json，中心表 data.json 的分类定义不动。</li>
      * </ul>
      *
      * @param threshold 差异阈值（不一致像素点百分比，&gt;0 才被调用）
      * @param startedAt 本次清理开始时刻（毫秒）：写进行态快照时原样带上，页面据此算「已耗时」
-     * @return 删除张数、保留全集，以及判定量（逐像素比对次数 + 复用缓存次数 + 其中最低的不一致像素点占比）
+     * @return 删除张数、保留全集，以及判定量（比对次数 + 复用次数 + 其中最低的不一致像素点占比）
      */
     private DedupResult dedupeHistoryLocked(double threshold, long startedAt) {
         threshold = pct2(threshold);   // 与运行期判定同一口径：阈值两位舍入后再比较
@@ -702,19 +663,18 @@ public class ScreenCaptureService {
         List<Kept> kept = new ArrayList<>();
         for (int idx = 0; idx < all.size(); idx++) {
             Path p = all.get(idx);
-            // 每张判定前刷新进行态快照（页面每 2 秒轮询 meta 取走）：写 volatile 对象本身极廉价，
-            // 相对下面全尺寸解码/逐像素比对可忽略
+            // 每张判定前刷新进行态快照；写 volatile 对象的开销相对下面的解码 / 比对可忽略
             startupDedupProgress = new StartupDedupProgress(startedAt, idx + 1, all.size(),
                     p.getFileName().toString(), compared, reused, removed, 0L, true);
             DedupCache.Stamp stamp = stamps.get(idx);
-            BufferedImage img = null;      // 只有真的要比像素时才解码（整轮全命中缓存 → 一张都不解）
+            BufferedImage img = null;      // 只有真要逐像素比对时才解码
             boolean decodeFailed = false;
             Path dupOf = null;
             for (Kept k : kept) {
                 double diff;
                 Double cached = dedupCache.get(stamp, k.stamp);
                 if (cached != null) {
-                    diff = cached;    // 这对图以前算过、两侧文件都没变：直接复用，连像素都不用读
+                    diff = cached;    // 这对图以前算过、两侧文件都没变：直接复用
                     reused++;
                 } else {
                     if (img == null && !decodeFailed) {
@@ -849,9 +809,8 @@ public class ScreenCaptureService {
         }
     }
 
-    /** 差异/阈值统一舍入口径：四舍五入到小数点后 2 位（%）。去重判定、历史清理、对外提示全部先用
-     *  该值再比较/展示，保证「拦截效果」与「提示文字」严格一致（不会出现 0.96% 被显示成 1%、
-     *  与 1% 阈值并排时看起来像「1% < 1%」的矛盾观感）。 */
+    /** 差异 / 阈值的统一舍入口径：四舍五入到小数点后 2 位（%）。判定、历史清理、对外提示都先经它，
+     *  保证「拦截效果」与「提示文字」一致（不会出现显示成与阈值相等、却判为低于阈值的矛盾观感）。 */
     private static double pct2(double v) {
         return Math.round(v * 100.0) / 100.0;
     }

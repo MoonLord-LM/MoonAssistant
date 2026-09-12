@@ -98,7 +98,7 @@ public class ThinkController {
         return ResponseEntity.ok(t);
     }
 
-    /** 智能建议：把一张未标注截图与各分类标注的七张对照图异步逐像素比对 → {taskId}，随后轮询 /suggest/task/{taskId} */
+    /** 智能建议：把一张未标注截图交给 runtime/ 落地的「综合最佳算法」异步比对 → {taskId}，随后轮询 /suggest/task/{taskId} */
     @PostMapping("/suggest")
     public ResponseEntity<?> suggest(@RequestBody(required = false) Map<String, String> body) {
         String file = (body == null ? "" : String.valueOf(body.getOrDefault("file", ""))).trim();

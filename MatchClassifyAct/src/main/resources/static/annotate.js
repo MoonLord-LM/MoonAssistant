@@ -38,7 +38,7 @@ function listNow(noAct){
   if(!noAct && imgActFil && (FILTER === "all" || FILTER === "marked")){
     L = L.filter(i => i.marked && i.action === imgActFil);   // 截图视图也可按动作过滤（未标注图无动作，一并滤掉）
   }
-  if(FILTER === "all" || FILTER === "marked") L.reverse();   // 全部 / 已标注：最新在上；未标注：最旧在上（顺序打标）
+  if(FILTER === "all" || FILTER === "marked") L.reverse();   // 全部 / 已标注：最新在上；未标注：最早在上（顺序打标）
   return L;
 }
 function curIndex(){ return listNow().findIndex(i => i.name===curName); }
@@ -251,21 +251,33 @@ function showShotTip(msg, kind){
    既避免两次轮询之间消息闪掉，也让「已耗时 N 秒」逐秒走动。它是「未标注」页面的常驻任务：进度文本变化频繁，
    故只显示在该页最下方 tips 行、不写历史日志（开始 / 结束各一条消息由 showShotTip 入库），
    同时「未标注」标签文字转黄。 */
-/* 启动去重判定量文案：「已比对 N 次 · 复用 M 次」——compared = 本次真的读像素逐点比过的次数，
-   reused = 按「文件名 + 最后修改时间」命中 dedup-cache.json 上次结果、没再比像素的次数；
-   两个都为 0（还没比到任何一对同尺寸图）时返回空串，由 progLine 省略该段 */
+/* 启动去重判定量文案（逗号分隔、不用括号）：「逐像素比对 N 个，复用历史比对结果 M 个」——
+   compared = 本次真的读像素逐点比过的次数，reused = 按「文件名 + 最后修改时间」命中
+   dedup-cache.json 上次结果、没再比像素的次数；两个都为 0（还没比到任何一对同尺寸图）时返回空串 */
 function dedupCmpTxt(compared, reused){
   const parts = [];
-  if(compared > 0) parts.push("已比对 " + compared + " 次");
-  if(reused > 0) parts.push("复用 " + reused + " 次");
-  return parts.join(" · ");
+  if(compared > 0) parts.push("逐像素比对 " + compared + " 个");
+  if(reused > 0) parts.push("复用历史比对结果 " + reused + " 个");
+  return parts.join("，");
 }
+/* 启动去重进度行（用户 2026-09-13 指定风格：**逗号串联、不套括号**，与其它长任务共用的
+   progLine() 括号模板不同）：
+   「正在检查重复图片：849/877 张，当前文件名：IMG_xxx.png，已耗时 8 秒，复用历史比对结果 359128 个」
+   段与段用「，」连接；当前文件名 / 判定量没有时整段省略；总数还没算出来时只报到哪一步 + 已耗时 */
 function dedupProgText(p){
   const t = Number(p.total) || 0, n = Number(p.done) || 0;
   const age = Math.max(0, Math.round((Date.now() - (Number(p.at) || Date.now())) / 1000));
   const cmp = dedupCmpTxt(Number(p.compared) || 0, Number(p.reused) || 0);
-  if(!t && !n) return progLine("枚举历史截图", 0, 0, "", "", durTxt(age), cmp);   // 还没算出总数
-  return progLine("检查重复图片", n, t, "张", p.current, durTxt(age), cmp);
+  const seg = [];
+  if(t || n){
+    seg.push("正在检查重复图片：" + (t > 0 ? n + "/" + t + " 张" : "已完成 " + n + " 张"));
+    if(p.current) seg.push("当前文件名：" + p.current);
+  }else{
+    seg.push("正在枚举历史截图");               // 还没算出总数
+  }
+  seg.push("已耗时 " + durTxt(age));
+  if(cmp) seg.push(cmp);
+  return seg.join("，");
 }
 function dedupProgTick(){
   if(!dedupProg) return;
@@ -273,10 +285,11 @@ function dedupProgTick(){
 }
 
 /* ---------------- 全局底部 tips 行（#tipsBar） ----------------
-   「现在在干什么、到哪了」这类常驻进度显示在页面最下方这一行，**每个页面只显示自己的那条**（不汇聚、不互相抢占）：
+   「现在在干什么、到哪了」这类常驻进度靠左显示在页面最下方这一行，**每个页面只显示自己的那条**（不汇聚、不互相抢占）：
    谁的任务归哪个页面由 TIPS_VIEW 定死 —— 启动重复清理 → 未标注；汇总分析 → 汇总分析；特征验证 → 特征验证；
    算法调优 → 算法调优。有常驻任务在跑的页面，顶栏标签文字同时转黄（.busy），切走了也一眼看得出哪个页面还在跑。
-   本页没任务时整行留空（仍占住最下这一条，只当分隔线用，不写任何占位文案）；只做常驻展示、不写历史日志
+   进度文本可用鼠标选中 / 复制（不拦鼠标）；本页没任务时不显示任何文本（仍占住最下这一条，只当分隔线用，
+  不写任何占位文案）；只做常驻展示、不写历史日志
   （避免逐张刷屏）；任务的开始 / 完成 / 失败仍由 toast() 进右下角与历史日志。 */
 const TIPS_VIEW = { dedup:"unmarked", think:"think", verify:"verify", opt:"opt" };   // 各任务的常驻进度归属到哪个页面
 const TIPS_SRC = { dedup:"", think:"", verify:"", opt:"" };                          // 各任务最新的一行进度（空 = 该任务没在跑）
@@ -648,7 +661,7 @@ function renderList(){
   $("listCount").textContent = actOn ? L.length + " / " + listNow(true).length + " 张" : L.length + " 张";
   $("lstTitle").textContent = stateFilter && (FILTER === "all" || FILTER === "marked")
     ? "「" + stateFilter + "」分类" + (FILTER === "marked" ? "（已标注）" : "截图")
-    : (FILTER === "unmarked" ? "截图列表（最旧在上）" : "截图列表（最新在上）");
+    : (FILTER === "unmarked" ? "截图列表（最早在上）" : "截图列表（最新在上）");
   if(FILTER === "all") renderFilterPanel();   // 分类过滤面板跟随最新计数刷新
   const curItem = cur();
   for(const item of L){
@@ -750,7 +763,7 @@ async function applyFilter(f){
   syncRightPanel();                          // 右栏随视图切换：all→分类标签 / unmarked、marked→标注编辑
   if(!dirty) await refreshSilent();          // 切到新视图前先把列表/计数同步到最新：挂机期间落盘的新截图即刻出现
   const name = cur() ? cur().name : null;
-  if(name && listNow().some(i=>i.name===name)){ renderList(); updateNavButtons(); }
+  if(name && listNow().some(i=>i.name===name)){ renderList(); }
   else if(listNow().length){ selectTarget(listNow()[0].name); }
   else { renderList(); showEmpty(); }
   refreshSmartTip();   // 视图切换后，按当前目标图刷新智能分析提示条（建议条只出现在「未标注」）
@@ -834,7 +847,6 @@ function showEmpty(msg){
   renderDot();
   baseMark = null;            // 无当前图：取消修改无可还原基准
   updateTagActive();
-  updateNavButtons();
   refreshSmartTip();          // 无图片 → 隐藏智能分析提示条
   setEditorEnabled(false);    // 无当前图 → 右侧编辑按钮置灰
 }
@@ -875,7 +887,6 @@ async function showImage(item, opts){
   $("stateInput").value = "";
   setAction(item.action && ACT_LABEL[item.action] ? item.action : "none", false);
   renderDot();
-  updateNavButtons();
   refreshSmartTip();          // 未标注图 → 智能分析相似度建议条；已标注图 → 隐藏
   // 读标注
   try{
@@ -1268,7 +1279,7 @@ function setEditorEnabled(on){
   document.querySelectorAll('#coordBox .act').forEach(el => el.classList.toggle("dis", !on));
 }
 
-/* 保存后取当前列表视觉顺序的下一张（全部 / 已标注 = 最新在上；未标注 = 最旧在上）。
+/* 保存后取当前列表视觉顺序的下一张（全部 / 已标注 = 最新在上；未标注 = 最早在上）。
    未标注视图：保存后该图已移出列表，仍有剩余未标注就继续下一张，列表真空才提示全部标记完 */
 function advanceAfterSave(item){
   const L = listNow();
@@ -1461,9 +1472,6 @@ function navThinkStep(d){
   const li = $("imgList").children[np]; if(li) li.scrollIntoView({block:"nearest"});
 }
 
-/* 顶部上一张/下一张/刷新等按钮已移除（顶栏右上角保留「自动采集/暂停采集」与「完全退出」），保留空实现兼容既有调用点 */
-function updateNavButtons(){}
-
 /* ---------------- 自动采集/暂停采集（自动采集默认不开启，需在页面手动开启） ---------------- */
 let capPaused = true;    // 截图任务是否未开启/已暂停（程序启动后默认关闭）
 let capBusy = false;
@@ -1537,7 +1545,7 @@ async function toggleCap(){
 }
 
 /* 手动采集（「未标注」空列表中间按钮）：请求后端立即截一帧并做与执行模式同一套全尺寸逐像素去重
-   （与 capture/、classify/ 全部同尺寸图比对，差异须 > 0.5% 手动阈值），通过即插入待标注列表并打开标注 */
+   （与 capture/、classify/ 全部同尺寸图比对，差异须 > 手动保存阈值），通过即插入待标注列表并打开标注 */
 async function capManualShot(){
   const b = $("capManualBtn");
   if(!b || b.disabled) return;
@@ -1744,8 +1752,10 @@ async function startExit(){
     const alive = await probeAlive();
     if(!alive){
       if(++deadCount >= 2){
-        showExitScreen();               // 后端确实已停：从“正在退出”切到“已退出”，随后自动关页
-        armPageClose(1600);             // 延迟约 1.6s 再尝试自动关页，确保提示可见（失败时留手动按钮）
+        // 后端确实已停：**先尝试直接关掉本页**（应用窗口 Edge/Chrome --app 模式下脚本可自关，关掉就没有后续了）；
+        // 等 1 秒窗口仍活着（浏览器禁止脚本自关）才切到「已退出」兜底页 ——「立即关闭本页」按钮留给用户手动关
+        try{ window.close(); }catch(e){ /* 忽略 */ }
+        setTimeout(()=>{ showExitScreen(); armPageClose(0); }, 1000);
         return;
       }
     } else {
@@ -1757,8 +1767,10 @@ async function startExit(){
   showExitFailed("服务进程未能在 10 秒内停止。可再试一次；若持续失败，请在任务管理器中手动结束 java 进程。");
 }
 
-/* 反复尝试自动关闭本页：delayMs 后再开始尝试，让“已退出”覆盖层提示先可见；
-   应用窗口（Edge/Chrome --app）模式下脚本可自关；普通标签页约 6 秒后放弃，留给手动按钮兜底 */
+/* 反复尝试自动关闭本页：默认不延时 —— 应用窗口（Edge/Chrome --app）模式下脚本可自关，
+   故正常情况下点「完全退出」就直接关窗、看不到“已退出”那一屏；只有浏览器禁止脚本自关（普通标签页）
+   才会停在该屏（“立即关闭本页”按钮兜底），约 6 秒（15 × 400ms）后放弃重试。
+   2026-09-13 起：后端确认停止后**先 `window.close()`**，等 1 秒窗口还活着（确实关不掉）才显示兜底屏 */
 function armPageClose(delayMs){
   if(closeArmed) return;
   closeArmed = true;
@@ -1937,14 +1949,16 @@ function thinkTaskUi(text, pct){
 /* 任务收尾结果行（同「特征验证」完成态）：进度条拉满 + 结果文案上色（成功绿 / 失败红）保留在右栏 */
 function thinkTaskFinal(label, t){
   if(!t){ thinkTaskUi(null); return; }
+  const sup = t.status === "superseded";     // 跑一半被更新请求取代：不是失败，但也不该显示绿色「已完成」
   const ok = t.status !== "error";
   const box = $("thinkTask");
   box.style.display = "block";
   const f = $("thinkFill"); if(f) f.style.width = "100%";
   const el = $("thinkTaskTxt");
   if(el){
-    el.style.color = ok ? "var(--green)" : "var(--danger)";
-    el.textContent = (label || "分析") + (ok ? "已完成" : "失败") + "：" + (t.message || (ok ? "任务完成" : "任务失败"));
+    el.style.color = ok ? (sup ? "var(--amber)" : "var(--green)") : "var(--danger)";
+    el.textContent = (label || "分析") + (ok ? (sup ? "已被最新一轮取代" : "已完成") : "失败")
+      + "：" + (t.message || (ok ? "任务完成" : "任务失败"));
   }
 }
 /* 任务期间两个按钮一并置灰（开始分析 / 重新生成全部） */
@@ -1953,7 +1967,7 @@ function thinkButtonsBusy(on){
   if(s) s.disabled = !!on;
   if(r) r.disabled = !!on;
 }
-/* 左上角「汇总分析」标签的任务态：后台批量任务进行中（含排队等待）时文字转黄，任务结束（成功 / 失败 / 中断）
+/* 左上角「汇总分析」标签的任务态：后台批量任务进行中时文字转黄，任务结束（成功 / 失败 / 被取代）
    恢复常色 —— 用户切去别的视图时，靠这一处就能看出汇总分析还在处理。与底部 tips 行、右栏进度条同一节奏：
    提交任务即置位，pollAnalyze 每轮保持，thinkTaskDone 统一复位（tipsSet("think", …) 也同步同一状态） */
 function setThinkTabBusy(on){ setTabBusy("think", on); }
@@ -1987,12 +2001,12 @@ const THINK_EMPTY = "没有分类标注";
   去重均值族 dedup-avg/dedup-avg8/dedup-avg32 各带 -unique（共 6 张）；
   每个分类另含 12 张注意区交集图 attn8/32-same100/90/80/70/60/50（以关注点为中心，未设 = 屏幕中心），
   鼠标点击分类再加 12 张点击区交集图 click8/32-same100/90/80/70/60/50（以鼠标点击点为中心）
-  （均为 1/8、1/32 方框 × 各交集档，均参与识别）。
-  识别差异度 = 五族加权平均 (50A+15B+10C+10D+15E)/W：每族先把族内各图「不匹配点占比」等权平均，
-  A 全图交集 12 张（权 50）/ B 多数族 6 张（权 15）/ C 均值族 6 张（权 10）/
-  D 去重均值族 6 张（权 10）/ E 方框交集区（注意区 + 点击区）24 张（权 15）；
-  W = 适用族的权重之和（参与分类产物齐全、五族俱备恒为 100）；
-  产物无任何有效像素的空图（独有区图无独有点等）没有可判别的点、无法做区分，判完全不匹配按满值计入、照常参与族均值；
+  （均为 1/8、1/32 方框 × 各交集档）。
+  识别不再读这里的整批产物：改成只认【算法调优】落地在 runtime/ 的「综合最佳算法」
+  （综合分 =（1 − 无法区分率）× 匹配正确率 最高的那一种），算法用到哪几个 kind 就只比哪几个；
+  差异度 = 100 − 加权匹配度，加权匹配度 = Σ「匹配值 × X × Y」÷ Σ「X × Y」（X 特征基础分、Y 权重），
+  先放弃「最高匹配值被 ≥2 个分类并列」的特征（并列只在有有效产物的分类之间数）；
+  产物无任何有效像素的空图（独有区图无独有点等）没有可判别的点、无法做区分，判完全不匹配按满值计入、照常参与加权；
   -unique 图须等全部分组的基础图（15 张：交集六档 + 多数/均值/去重均值/8·32 块族）都生成完后
   由后台统一补算，未生成前本组先不展示独有区图卡片） */
 /* 对照图 kind 元数据：唯一权威源 = 后端 act/ArtifactKind，启动时经 /api/app/kinds 取回。
@@ -2586,7 +2600,7 @@ async function startAnalyzeIfNeeded(label){
   thinkRun = { keys: need.map(gkey), stage: 1, processed: 0 };   // 记录本轮待算队列（顺序同后端），供列表 chip 推进
   thinkBusy = true; renderThinkList();
   thinkButtonsBusy(true);       // 任务期间「开始分析 / 重新生成全部」置灰
-  setThinkTabBusy(true);        // 左上角「汇总分析」标签立即转琥珀（排队中也要显示在处理）
+  setThinkTabBusy(true);        // 左上角「汇总分析」标签立即转琥珀（一提交就显示在处理）
   thinkBusyDock("正在后台" + taskName + "，为「待生成 / 需重算」的组合合成对照图…");
   toast("发现 " + need.length + " 个分组待生成对照图，开始后台分析…", "");
   try{
@@ -2603,8 +2617,9 @@ async function startAnalyzeIfNeeded(label){
   }
 }
 
-/* 长任务进度文案统一模板（所有「正在进行中的后台任务」共用，与右下角那条
-   「正在检查重复图片：87/848 张（IMG_xxx.png）（已耗时 2 分 50 秒 · 已比对 42 次 · 复用 3613 次）」同款）：
+/* 长任务进度文案统一模板（「正在进行中的后台任务」共用，例：
+   「正在分析对照图：3/93 个分类（红点提示 ｜ 鼠标点击）（已耗时 29 秒）」；
+   启动重复清理那条**不走本模板** —— 它是逗号风格、不套括号，见 dedupProgText()）：
    「正在<动作>：<已完成>/<总数> <单位>（<当前对象>）（已耗时 N 秒[ · <附加计数>]）」
    计数为 0 时省略计数段、cur 为空时省略对象括号、已耗时与附加计数都为空时省略末段括号 */
 function progLine(act, done, total, unit, cur, ageTxt, extra){
@@ -2634,11 +2649,12 @@ async function pollAnalyze(id, label){
       t = await r.json();
     }catch(_){ continue; }     // 服务短暂中断则等下一轮
     if(t.status === "running"){
-      // 后台为单线程串行计算池（手动批量分析 / 自动重算共用，执行序 = 提交序）：
-      // 任务刚提交可能还在排队（queuePos>0，得等前面的任务跑完），也可能已进场做准备工作。
-      // 进度文案统一走 progLine()（与右下角「正在检查重复图片：87/848 张（文件名）（已耗时 2 分 50 秒 · 已比对 42 次 · 复用 3613 次）」
-      // 同一模板）：「正在<做什么>：<第几项>/<共几项> <单位>（<当前对象>）（已耗时 N 秒）」，已耗时逐秒走动 →
-      // 排队等待 / 长计算都能一眼看出仍在推进，而不是一句看不出在干什么、也不知道进度到哪的「正在准备…」。
+      // 后台为单线程串行计算池（手动批量分析 / 自动重算共用），但**没有排队等待**：数据一变就以最新一轮
+      // 为准 —— 正在跑的旧任务（算的是变动前的旧数据）被新请求当场作废（任务转 superseded），新任务
+      // 立刻接上，所以 running 态从提交那一刻起就是「正在算」。
+      // 进度文案统一走 progLine()（「正在<做什么>：<第几项>/<共几项> <单位>（<当前对象>）（已耗时 N 秒）」模板，
+      // 与其它长任务同款），已耗时逐秒走动 →
+      // 长计算能一眼看出仍在推进，而不是一句看不出在干什么、也不知道进度到哪的「正在准备…」。
       // 任务分 3 个阶段：0 = 准备（一键重建先逐张清场 summary/，再逐分类统计待分析组合，prepAct/prepDone/prepTotal/prepCur 计数）、
       // 1 = 逐分类生成 15 张基础对照图（processed/total 计数）、2 = 生成各分类 15 张 -unique 独有区图（current 带 i/15）。
       // 进行中：进度画在汇总分析右栏 vtBar 同款进度条上（准备 / 基础轮按占比、第 2 轮按图种内 i/15 占比），
@@ -2646,18 +2662,13 @@ async function pollAnalyze(id, label){
       // 退出汇总分析视图后无右栏可挂载，回退为 taskTip 单条闪现兜底（noLog，只显示不写日志）
       const sub = Number(t.submittedAtMs) || 0;
       const ageTxt = sub ? durTxt((Date.now() - sub) / 1000) : "";
-      const qp = Number(t.queuePos);
-      const queued = qp > 0;                       // 还在排队：计算池正被更早提交的任务占用
       const hasN = t.total > 0;
       const stage = Number(t.stage) || 0;
       const curOf = s => String(s || "").replace(/（\s*\d+\s*\/\s*\d+\s*）\s*$/, "");   // 去掉后端附带的计数后缀
       const mk = /（\s*(\d+)\s*\/\s*(\d+)\s*）/.exec(t.current || "");
       const prepTotal = Number(t.prepTotal) || 0, prepDone = Number(t.prepDone) || 0;
       let line = "", pct = 0;
-      if(queued){
-        line = "正在排队：第 " + qp + " 位（计算池正忙：" + (t.queueActiveLabel || label) + "）"
-          + (ageTxt ? "（已耗时 " + ageTxt + "）" : "");
-      }else if(stage < 1){
+      if(stage < 1){
         // 准备阶段：清场逐张删 / 统计逐分类核对产物，都是真实计数
         line = progLine(t.prepAct || "准备分析", prepDone, prepTotal, t.prepUnit || "项", t.prepCur, ageTxt);
         pct = prepTotal > 0 ? prepDone / prepTotal * 100 : 0;
@@ -2669,14 +2680,13 @@ async function pollAnalyze(id, label){
           curOf(t.current) || "准备中", ageTxt);
         pct = hasN ? t.processed / t.total * 100 : 0;
       }
-      // 任务进行中 / 排队等待的进度只显示在页面最下方的全局 tips 行（#tipsBar，切视图也常驻），
+      // 任务进行中的进度只显示在页面最下方的全局 tips 行（#tipsBar，切视图也常驻），
       // 中途不再往右下角弹条、也不写历史日志 —— 只有任务开始 / 结束各由 toast() 入库一条。
-      // thinkBusyDock 只落「任务进行态」标记（本视图 dock 让位）；排队 = 还没轮到本任务、没有进度可言
-      // → 右栏不挂「恒 0% 的进度条 + 长文案」。
+      // thinkBusyDock 只落「任务进行态」标记（本视图 dock 让位）。
       thinkBusyDock(line);
       setThinkTabBusy(true);                                        // 左上角「汇总分析」标签转琥珀：一眼可辨正在处理
       tipsSet("think", line);                                       // 常驻进度：页面最下方 tips 行
-      if(FILTER === "think" && !queued) thinkTaskUi(line, pct);      // 右栏进度行（同特征验证的 vtText），样本库总览常驻上方的 #tkStat
+      if(FILTER === "think") thinkTaskUi(line, pct);                 // 右栏进度行（同特征验证的 vtText），样本库总览常驻上方的 #tkStat
       else thinkTaskUi(null);
       // 与右侧任务进度条同节奏刷新组合列表 chip：正在合成的组合标「计算中…」、已算完的标「已计算」
       if(thinkRun){
@@ -2687,6 +2697,12 @@ async function pollAnalyze(id, label){
       continue;
     }
     if(t.status === "error"){ tipsSet("think", ""); toast(t.message || "分析失败", "err"); return t; }
+    if(t.status === "superseded"){
+      // 跑一半被更新请求作废（数据又变了）：不是失败、也不用重试 —— 最新一轮在算的就是最新状态
+      tipsSet("think", "");
+      toast(t.message || "数据已变动，本轮分析已被最新一轮取代", "warn");
+      return t;
+    }
     tipsSet("think", "");
     toast(t.message || "分析完成", "ok");
     return t;
@@ -2699,7 +2715,7 @@ async function pollAnalyze(id, label){
 /* 「开始分析」：为「可分析但尚无对照图 / 样本已变动」的分类标注后台分析（进入本视图时也会自动跑同一入口）。
    与「重新生成全部」的区别：这是增量分析——产物齐全且样本未变动的分类直接跳过，不清空、不重算已有产物 */
 async function thinkStart(){
-  if(thinkBusy){ toast("已有分析任务进行中，请稍候", "warn"); return; }
+  if(thinkBusy){ toast("已有任务在跑：已当场作废它，按最新样本 / 产物重跑本轮分析。", "warn"); }
   const need = GROUPS.filter(g => g.canAnalyze && (!g.analyzed || g.stale === true));
   if(!need.length){ toast("全部分类的对照图都已生成且样本未变动，无需分析。", ""); return; }
   await startAnalyzeIfNeeded("分析");   // 与自动路径同入口：后端按提交序增量生成，进度显示在右栏进度条
@@ -2708,12 +2724,12 @@ async function thinkStart(){
 /* 「重新生成全部对照图」：先清空 summary/ 全部产物，再全量重建。删除在后台计算线程内串行执行，
    不会与自动重算/其它分析互踩；产物由 classify/ 已标注样本派生，删除不影响原始截图与标注 */
 async function rebuildThink(){
-  if(thinkBusy){ toast("已有分析任务进行中，请稍候", "warn"); return; }
+  if(thinkBusy){ toast("已有任务在跑：已当场作废它，按最新样本重新生成全部对照图。", "warn"); }
   if(!confirm("将清空 summary/ 下全部对照图产物，并从 classify/ 已标注样本重新生成每个分类适用的对照图（15 张基础合成图：交集 100/90/80/70/60/50 六档与多数/均值/去重均值/8·32 块图，各带 1 张独有区图共 15 张；每个分类另含 12 张注意区交集图（以关注点为中心，未设 = 屏幕中心），鼠标点击分类再加 12 张点击区交集图（以点击点为中心），全部参与识别）。\n原始截图与标注不受影响。\n\n确定继续？")) return;
   thinkRun = { keys: GROUPS.filter(g => g.canAnalyze).map(gkey), stage: 1, processed: 0 };  // 全量重建：所有有样本的组合都在本轮队列
   thinkBusy = true; renderThinkList();
   thinkButtonsBusy(true);       // 任务期间「开始分析 / 重新生成全部」置灰
-  setThinkTabBusy(true);        // 左上角「汇总分析」标签立即转琥珀（排队中也要显示在处理）
+  setThinkTabBusy(true);        // 左上角「汇总分析」标签立即转琥珀（一提交就显示在处理）
   thinkBusyDock("正在全量重建全部对照图…（将先清空 summary/ 旧产物）");
   try{
     const r = await fetch("/api/annotate/think/rebuild", { method:"POST" });
@@ -2787,6 +2803,14 @@ let sugDismiss = new Set();  // 用户手动收起的智能分析（按文件名
 
 function sugStop(){ if(sugTimer){ clearTimeout(sugTimer); sugTimer = 0; } }
 
+/* 提示条标题行：各状态统一带上「!」按钮 —— 判定口径那一整段固定说明收进 #sugHelpModal 弹窗，点开才看 */
+const SUG_TITLE = '<span class="sb-title">智能分析</span>' +
+  '<button type="button" class="hbtn" data-sughelp title="智能分析 · 详细说明（匹配口径 · 逐点判据 · 差异度怎么算 · 独有区图与空图 · 怎么看）">!</button>';
+
+/* 最近一次提示条里的候选分类名（按差异度升序，0 = 顶部建议）：提示条上每个「填入」按钮都按序号回填 ——
+   分类名可能带引号 / 空格，不适合塞进 HTML 属性 */
+let sugCandStates = [];
+
 function sugRender(html, cls){
   const b = $("smartBar");
   b.hidden = false;
@@ -2836,7 +2860,7 @@ function refreshSmartTip(){
 function startSmartAnalysis(seq, file){
   if(seq !== sugSeq) return;
   if(!smartTipVisible() || !cur() || cur().name !== file){ hideSmartTip(); return; }
-  sugRender('<span class="spin"></span><span>智能分析中：正在按执行模式同一口径，把该截图与各分类适用的对照图（基础图 + 独有区图 + 12 张注意区交集图（以关注点为中心）+ 点击分类 12 张点击区交集图（以点击点为中心））做逐像素差异比对…</span>');
+  sugRender(SUG_TITLE + '<span class="spin"></span><span>正在按执行模式同一口径，把该截图与该算法用到的各分类对照图（基础图 + 独有区图 + 注意区 / 点击区交集图）做逐像素差异比对…</span>');
   (async () => {
     let taskId = null;
     try{
@@ -2872,25 +2896,31 @@ function pollSuggest(seq, file, taskId){
       return;
     }
     if(seq !== sugSeq){ return; }
+    if(t.status === "superseded"){
+      return;   // 已被更新的请求取代（用户切到了下一张图）：本轮结果作废，不展示
+    }
     if(t.status === "error"){
       sugRender('智能分析失败：' + escHtml(t.message || "未知错误"), "bad");
       return;
     }
-    renderSuggest(t.candidates || [], t.rawBest || null);
+    renderSuggest(t.candidates || []);
   };
   tick();
 }
 
-/* 渲染智能建议：与执行模式同一口径——差异度 diffPercent = 五族加权 (50A+15B+10C+10D+15E)/W（A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 方框交集区（注意区 12 + 点击区 12）24 张权 15：注意区以关注点为中心每个分类都有、点击区以点击点为中心仅点击分类有；每族先对族内各图等权平均；W = 适用族的权重之和（参与分类产物齐全、恒为 100）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与族均值），越小越像；候选另带一行「按已分类原图匹配」（rawBest）：与全部已分类原始截图逐像素完全一致直比的最低一张，与对照图候选合并后统一按差异分值由小到大排序，最小的那行就是顶部建议分类 */
-function renderSuggest(list, rawBest){
+/* 渲染智能建议：与执行模式同一口径——只按 runtime/ 里【算法调优】落地的「综合最佳算法」打分
+   （差异度 diffPercent = 100 − 加权匹配度，加权匹配度 = Σ「匹配值 × X × Y」÷ Σ「X × Y」，
+   X 特征基础分、Y 权重，先放弃「最高匹配值被 ≥2 个分类并列」的特征（并列只在有有效产物的分类之间数）；产物无任何有效像素的空图
+   判完全不匹配、按满值计入、照常参与加权），越小越像；无 runtime/ 时后端直接回
+   「请先完成算法调优」的提示（status=error），不给出候选 */
+function renderSuggest(list){
   const comp = (list && list.length) ? list : [];
-  const raw = (rawBest && typeof rawBest.diffPercent === "number") ? rawBest : null;
-  // 候选 = 对照图候选（前 3）与「按已分类原图匹配」直比行合并，统一按差异分值由小到大排序，最小那行就是顶部建议与按钮选中的分类
+  // 候选：对照图候选（前 3）按差异分值由小到大排序，最小那行就是顶部建议与按钮选中的分类
   const diffOf = g => (typeof g.diffPercent === "number") ? g.diffPercent : Number.MAX_VALUE;
   const items = comp.slice(0, 3);
-  if(raw) items.push(raw);
   if(!items.length){
-    sugRender('<span class="sb-title">智能分析</span>' +
+    sugCandStates = [];
+    sugRender(SUG_TITLE +
       '<span>还没有可参考的对照图：请先在标注模式把同一画面的截图标成同一分类标注（每类 ≥1 张即可，越多越稳），并到「汇总分析」栏生成对照图（生成该分类适用的全部对照图——基础图 + 独有区图 + 12 张注意区交集图（以关注点为中心）+ 点击分类 12 张点击区交集图（以点击点为中心）——即可参与比对）。</span>');
     return;
   }
@@ -2899,31 +2929,35 @@ function renderSuggest(list, rawBest){
   const pct = (typeof top.diffPercent === "number") ? top.diffPercent.toFixed(2) + "%" : "—";
   // 识别已不设阈值门槛（与执行模式一致）：差异度仅作相近程度参考，不再按阈值区分「已识别 / 未识别」
   const actTxt = (top.action && top.action !== "none") ? "（" + escHtml(actLabel(top.action)) + "）" : "";
-  const fmtItem = g => (g === raw ? '<span style="color:var(--green)">【按已分类原图匹配】</span> ' : '') +
-    '<b>「' + escHtml(g.state) + '」</b> ' +
-    (typeof g.diffPercent === "number" ? g.diffPercent.toFixed(2) + "%" : "—");
+  // 候选按差异度升序存一份名字：提示条上每个「填入」按钮都按序号回填（0 = 顶部建议）
+  sugCandStates = items.map(g => g.state);
+  // 每个候选都带自己的「填入」：不必只认顶部建议，点哪个就填哪一个
+  const fmtItem = (g, i) => '<b>「' + escHtml(g.state) + '」</b> ' +
+    (typeof g.diffPercent === "number" ? g.diffPercent.toFixed(2) + "%" : "—") +
+    '<button class="sb-btn mini" type="button" data-sugadopt="' + i + '" title="把这一个填成分类标注（含该分类统一的动作与关注点）">填入</button>';
   const cands = items.map(fmtItem).join('　·　');
   const candBlock = '<span class="cand">候选（差异分值由小到大）：' + cands + '</span>';
-  const lowNote =
-    '<div style="margin-top:6px">差异度越低表示该画面与该分类的样本越接近；若差异度明显偏高，多半是还没有对照样本的新画面——直接人工标注即可把它归入对应分类的样本池。</div>';
   sugRender(
-    '<span class="sb-title">智能分析</span>' +
+    SUG_TITLE +
     '<span class="sug">建议分类标注：<b>「' + escHtml(top.state) + '」</b>' + actTxt +
       ' <span style="color:var(--green)">差异度 ' + pct + '（越低越接近样本）</span></span>' +
     candBlock +
-    '<button class="sb-btn" id="sugAdopt" type="button">填入此分类标注</button>' +
-    '<span class="expl">与执行模式完全同一套匹配：把该截图与每个分类适用的对照图（15 张基础图：交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/均值/去重均值/8·32 块图，各带 1 张 -unique 独有区图共 15 张，全部参与比对；每个分类另含 attn8/32-same100/90/80/70/60/50 十二张注意区交集图——以该分类关注点（未设 = 屏幕中心）为心的 1/8、1/32 方框 × 各交集档；鼠标点击分类再加 click8/32-same100/90/80/70/60/50 十二张点击区交集图——以鼠标点击点为心）分别同尺度逐点比对。逐点判据按维度类别分两套：交集/多数/方框交集类（全部交集档、多数/多数块图、注意区与点击区交集图及各自 -unique）颜色来自样本真实像素，要求逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）颜色是样本平均色 / 去重平均色，走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才匹配，默认 255/3=85，任一通道 > 它判「不匹配」）。分类差异度 = 五族加权平均：(50A+15B+10C+10D+15E)/W，A 全图交集（交集六档及各自 -unique，12 张，权 50）、B 多数（max/major8/major32 及各自 -unique，6 张，权 15）、C 均值（avg/avg8/avg32 及各自 -unique，6 张，权 10）、D 去重均值（dedup-avg/8/32 及各自 -unique，6 张，权 10）、E 方框交集区（注意区 12 + 点击区 12，共 24 张，权 15：注意区以关注点为中心每个分类都有、点击区以点击点为中心仅点击分类有）——每族先把族内各图不匹配点占比等权平均再加权；W = 适用族的权重之和（参与分类产物齐全、恒为 100），越小越像；产物无任何有效像素的空图（独有区图无独有点等）没有可判别的点、无法做区分，判完全不匹配、按不匹配占比满值计入并照常参与族均值、不报错；不按识别阈值区分「已识别 / 未识别」，差异度仅供人工标注参考；独有区图只在“该分类独有的画面区域”上计分，专门拉开相近分类的差距，独有像素为空即空图、该维判完全不匹配、不给该分类留任何靠它“完美命中”的口子；不再使用像素一致率 / 平均色差口径。' + lowNote + '</span>');
-  const btn = $("sugAdopt");
-  if(btn){
-    btn.addEventListener("click", ()=>{
-      adoptCategory(top.state);
-      $("stateInput").focus();
-      toast('已填入分类标注「' + top.state + '」，并自动带入该分类统一的动作与关注点坐标（可在图上点一下微调）', "ok");
-    });
-  }
+    '<button class="sb-btn" type="button" data-sugadopt="0">填入此分类标注</button>');
+}
+
+/* 回填提示条上的第 i 个候选（0 = 顶部建议，也是建议行那个主按钮）：带入该分类统一的动作与关注点坐标 */
+function adoptSug(i){
+  const state = sugCandStates[i];
+  if(!state) return;
+  adoptCategory(state);
+  $("stateInput").focus();
+  toast('已填入分类标注「' + state + '」，并自动带入该分类统一的动作与关注点坐标（可在图上点一下微调）', "ok");
 }
 
 /* ---------------- 事件绑定 ---------------- */
+/* 智能分析提示条标题后的「!」：点开详细说明弹窗 —— 提示条内容每轮都会重渲染，故用委托监听 */
+$("smartBar").addEventListener("click", e => { if(e.target.closest("[data-sughelp]")) openSugHelp(); });
+
 /* dockX：收起当前未标注图的智能分析提示（该图之后不再自动弹出，方便完整查看 / 点选整张图取坐标） */
 $("dockX").addEventListener("click", ()=>{
   const it = cur();
@@ -3027,8 +3061,10 @@ let vkCnt = null;            // 算法 kind 数（启动即预取一次、进验
 let VK_SEL = null;           // 当前选中的汇总图算法 kind
 let VK_DTL = null;           // 当前选中算法的分类级明细
 let VK_SEQ = "";             // 列表渲染签名（避免无变化时每 1 秒强制重建 DOM）
-let VK_STALE_SEEN = "";      // 已提示过「需重新验证」的指纹（样本 / 产物再变动才会再提示一次）
+let VK_STALE_TOLD = false;   // 本次「过期」是否已提示过（一次过期只提示一次：指纹在数据变动期间每 3 秒就是个新值，按指纹去重会刷屏）
 let VK_TMR = null;           // 特征验证视图下的专用轮询定时器
+let VK_RUN_ID = 0;           // 正在跑的那一轮的标识（后端 task.startedMs）：值一变就是换了轮次（含被抢断后重跑的新一轮）
+let VK_RUN_FP = null;        // 该轮开始时的样本 / 产物指纹：与当前指纹不一致 = 运行期间数据变过（本轮结果注定作废）
 let vkBusy = false;          // 请求去重（防止上一轮未返回时下一轮叠发）
 let vkFil = null;            // 特征验证左栏过滤：null=全部；gen100/c80=只看该条（互斥单选，再点取消）
 
@@ -3091,7 +3127,7 @@ function vkSig(j){
   // 进行中任务也进签名：全部 kind 重算时 state 不变（仍 done），「计算中…」chip 需随当前 kind 切换、
   // 任务结束清除，否则列表只按 kind 状态重绘会漏掉这些不改变状态的变化（与右栏进度条脱节）
   const t = j.task;
-  const runTag = (t && (j.running || t.finished)) ? (j.running ? "run@" + (t.cur || "") : "fin") : "idle";
+  const runTag = (t && (j.running || t.finished)) ? (j.running ? "run@" + (t.cur || "") + "#" + (t.done || 0) : "fin") : "idle";
   return j.samples + "|" + j.groups + "|" + runTag + "\n" +
     (j.kinds || []).map(k => k.kind + "|" + k.state + "|" + k.a + "|" + k.b + "|" + k.c + "|" + k.e + "|" + k.samples).join("\n");
 }
@@ -3171,9 +3207,16 @@ function renderVerifyList(){
     const li = document.createElement("li");
     li.className = "row vrow" + (VK_SEL === k.kind ? " on" : "");
     const info = vkInfo(k.kind);
+    // 运行中按本轮进度显示（与汇总分析组合行的 thinkChipFor 同一口径）：本轮已算完 → 已计算 / 正在算 →
+    // 计算中… / 还没轮到 → 等待重算。**运行中不显示「需重算」**：明明正在重算，再标「需重算」会让
+    // 用户以为这一轮白算了。未跑时不显示「计算中… / 等待重算」，只看结果自身状态（已计算 / 需重算）
     let chip = "未验证", chipCls = "vn";
-    if(j.running && t && !t.finished && t.cur === k.kind){ chip = "计算中…"; chipCls = "vr"; }
-    else if(k.state === "done"){ chip = "已计算"; chipCls = "vd"; }   // 与汇总分析组合行同一口径（thinkChipFor）
+    const inRun = !!(j.running && t && !t.finished);
+    const ridx = inRun ? ks.findIndex(x => x.kind === k.kind) : -1;
+    if(ridx >= 0 && t.cur === k.kind){ chip = "计算中…"; chipCls = "vr"; }
+    else if(ridx >= 0 && ridx < (Number(t.done) || 0)){ chip = "已计算"; chipCls = "vd"; }
+    else if(ridx >= 0){ chip = "等待重算"; chipCls = "vn"; }
+    else if(k.state === "done"){ chip = "已计算"; chipCls = "vd"; }
     else if(k.state === "stale"){ chip = "需重算"; chipCls = "vs"; }
     // 左栏只给一个数：匹配正确率（区分度）——生成成功率 / 自分类平均 / 其它分类平均 / 样本数都进明细区，列表保持清爽
     const meta = k.c != null
@@ -3227,25 +3270,30 @@ async function vkPoll(){
   const prev = VER;                              // 上一轮快照（判断任务是否刚结束）
   const wasRun = !!(prev && prev.running);
   VER = j;
+  // 运行中记下本轮开始时的指纹：与当前指纹不一致即「运行期间样本 / 产物变动过」，本轮结果注定作废 ——
+  // 「开始验证」按钮据此从「灰（正在验证中）」转回「绿（点一下按最新数据重跑）」。按 task.startedMs 认轮次：
+  // 点了转绿的按钮 = 后端当场作废旧轮、起了新一轮，基准跟着重置（数据不再变就自动回到灰）
+  if(j.running){
+    const rid = (j.task && j.task.startedMs) || 0;
+    if(VK_RUN_ID !== rid){ VK_RUN_ID = rid; VK_RUN_FP = j.fp || null; }
+  }else{
+    VK_RUN_ID = 0; VK_RUN_FP = null;
+  }
   tipsSet("verify", vkTaskLine(j));              // 常驻进度：页面最下方全局 tips 行（本视图内 / 切走后都往这里写）
   if(!inView || FILTER !== "verify"){            // 已切走（本次轮询在为 tips 行兜底）：只更新进度与快照，不动本视图 DOM
     if(wasRun && !j.running){
       const err = j.task ? j.task.error : null;
       if(err) toast("特征验证中断：" + err, "err");
+      else if(j.task && j.task.dataChanged){     // 切走后跑完：这条已把「已完成 + 已过期」说清了，记为已提示，
+        VK_STALE_TOLD = true;                    // 免得切回本视图时又补弹一条「数据有变动，请重新验证」
+        toast("特征验证已完成，但运行期间数据发生了变动：结果算的是变动之前的数据、已标记为「需重算」，请重新验证。", "warn");
+      }
       else toast("特征验证已完成，结果已缓存" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "。", "ok");
     }
     if(!j.running && VK_TMR){ clearInterval(VK_TMR); VK_TMR = null; }   // 任务结束：停掉跨视图兜底轮询
     return;
   }
   if(j && j.kinds) vkCnt = j.kinds.length;
-  // 数据一有变动（指纹变了）就提示一次「需重新验证」；数据重新一致后再变动会再提示一次
-  const staleN = (j && Array.isArray(j.kinds)) ? j.kinds.filter(k => k.state === "stale").length : 0;
-  if(staleN > 0 && j.fp && j.fp !== VK_STALE_SEEN){
-    VK_STALE_SEEN = j.fp;
-    toast("已标注 / 汇总分析的数据有变动，特征验证结果已过期（" + staleN + " 种算法需重算），请重新验证。", "warn");
-  }else if(staleN === 0){
-    VK_STALE_SEEN = "";
-  }
   const sig = vkSig(j);
   if(sig !== VK_SEQ){ VK_SEQ = sig; renderVerifyList(); }
   vkTaskUi(j);
@@ -3253,6 +3301,14 @@ async function vkPoll(){
   const err = j.task ? j.task.error : null;
   if(wasRunning && !j.running){
     if(err){ toast("特征验证中断：" + err, "err"); }
+    else if(j.task && j.task.superseded){
+      toast("特征验证这一轮已被最新一次验证取代（数据已变动，按最新状态重跑）。", "warn");
+    }
+    else if(j.task && j.task.dataChanged){       // 本轮跑完但仍过期：这一条已经把「已完成 + 已过期」说清了
+      VK_STALE_TOLD = true;                      // 于是记下「已提示」，下面不再补弹一条同义的过期提醒
+      toast("特征验证已完成，但运行期间数据发生了变动：结果算的是变动之前的数据、已标记为「需重算」，请重新验证。", "warn");
+      if(VK_SEL) vkLoadDetail(VK_SEL);
+    }
     else{
       const costTxt = fmtCostSuffix(Number(j.task && j.task.costMs));
       toast("特征验证已完成，结果已缓存" + costTxt + "。", "ok");
@@ -3261,6 +3317,17 @@ async function vkPoll(){
   }else if(!VK_SEL && !j.running){
     const first = vkShown(j.kinds || []).find(k => k.state === "done");   // 默认选中只在当前过滤可见的算法里挑
     if(first){ vkSelect(first.kind); return; }
+  }
+  // 过期提醒：**一次「过期」只提示一次**（数据重新一致、结果恢复「已计算」后再变动才会再提示一次）。
+  // 原来按「当前指纹」去重，而指纹在数据变动期间每 3 秒（fp() 的 TTL）就是个新值 —— 同一次变动会被
+  // 反复提示、历史日志跟着刷屏。这里放在任务结束处理**之后**：本轮刚跑完的「已完成 · 仍过期」不再补弹。
+  // **运行中不提示**：此时正按最新数据重算，弹「请重新验证」只会让人以为白算（原因由进度行说明）
+  const staleN = (j && Array.isArray(j.kinds)) ? j.kinds.filter(k => k.state === "stale").length : 0;
+  if(staleN === 0){
+    VK_STALE_TOLD = false;
+  }else if(!j.running && !VK_STALE_TOLD){
+    VK_STALE_TOLD = true;
+    toast("已标注 / 汇总分析的数据有变动，特征验证结果已过期（" + staleN + " 种算法需重算），请重新验证。", "warn");
   }
   if(VK_SEL && !VK_DTL) vkLoadDetail(VK_SEL);   // 尚未取过明细（如运行中进入）→ 补取
 }
@@ -3472,13 +3539,24 @@ function openVkDetail(r, mode){
   ov.querySelectorAll("img").forEach(im => im.addEventListener("click", () => openLightbox(im.src, im.alt)));
 }
 
-/* 验证任务进行态的一行进度文案（右栏进度条 + 页面最下方全局 tips 行共用）：未在跑返回空串 */
+/* 验证任务进行态的一行进度文案（右栏进度条 + 页面最下方全局 tips 行共用）：未在跑返回空串。
+   风格同「未标注」页启动去重的 dedupProgText()（用户 2026-09-13 指定）：**段与段用「，」连接、不套括号**，例：
+   「正在验证特征 1/54，当前特征名：红点提示，当前样本 12/847，已耗时 1 分 12 秒，已缓存 3 个特征，已缓存 2541 条样本比对行」
+   当前特征名（还没轮到具体特征）/ 当前样本（总数未定）/ 缓存计数为 0 时整段省略；已耗时由 task.startedMs 逐秒走动 */
 function vkTaskLine(j){
   const t = j && j.task;
   if(!(j && j.running && t && !t.finished)) return "";
-  const curName = t.cur ? vkInfo(t.cur).name : "准备中";
-  return "正在验证「" + curName + "」（" + Math.min(t.done + 1, t.total) + "/" + t.total + "）"
-    + (t.totalSamples ? " · 样本 " + Math.min(t.processed + 1, t.totalSamples) + "/" + t.totalSamples : "");
+  const total = Number(t.total) || 0, done = Number(t.done) || 0;
+  const seg = ["正在验证特征 " + (total > 0 ? Math.min(done + 1, total) + "/" + total : "已完成 " + done + " 个")];
+  if(t.cur) seg.push("当前特征名：" + vkInfo(t.cur).name);
+  const ts = Number(t.totalSamples) || 0;
+  if(ts) seg.push("当前样本 " + Math.min((Number(t.processed) || 0) + 1, ts) + "/" + ts);
+  seg.push("已耗时 " + durTxt((Date.now() - (Number(t.startedMs) || Date.now())) / 1000));
+  if(j.matrixKinds) seg.push("已缓存 " + j.matrixKinds + " 个特征");     // 逐图比对结果缓存里的特征数与样本行数
+  if(j.matrixRows) seg.push("已缓存 " + j.matrixRows + " 条样本比对行");
+  // 本轮运行期间数据被改过（标注保存 / 汇总分析自动重算产物…）：本轮算的是变动前的数据、跑完必被标记需重算
+  if(t.dataChanged) seg.push("期间数据已变动，本轮结果将标记为需重算");
+  return seg.join("，");
 }
 
 function vkTaskUi(j){
@@ -3494,21 +3572,32 @@ function vkTaskUi(j){
   // 结果来自 summary/verify.json（完整缓存）：已标注与汇总分析的数据没变就直接用上次的，不必重算
   if(j.cached && (doneCount || staleCount)) base += "\n已从 summary/" + (j.cacheFile || "verify.json") + " 恢复上次结果（数据没变即可直接用）。";
   // 逐图比对结果缓存（summary/verify-matrix.json）：每张原图与每个分类产物各按自己的大小 / 修改时间记账，
-  // 没变过的整表 / 整行连 PNG 都不解码；算法调优用同一份，跨重启也能接着复用
+  // 没变过的整表 / 整行连 PNG 都不解码；算法调优用同一份，跨重启也能接着复用。
+  // 这里**只报文件名**（用户 2026-09-13 指定）：已载入的特征数 / 样本行数由运行中的进度行（vkTaskLine 的
+  // 「已缓存 N 个特征，已缓存 M 条样本比对行」）给出，不在统计块里再重复一遍
   const mx = "summary/" + (j.matrixFile || "verify-matrix.json");
-  if(j.matrixRows) base += "\n逐图比对结果缓存：" + mx + "（已载入 " + j.matrixKinds + " 种特征 · " + j.matrixRows + " 条样本行）。";
-  else if(j.matrixBytes) base += "\n逐图比对结果缓存：" + mx + "（开始验证时自动载入，没变过的图不必重比）。";
+  if(j.matrixRows || j.matrixBytes) base += "\n逐图比对结果缓存：" + mx + "。";
   if(staleCount) base += "\n注意：已标注 / 汇总分析的数据有变动，需重新验证（" + staleCount + " 种）。";
+  // 本轮运行期间数据被改过（标注保存 / 汇总分析自动重算产物…）：本轮算的是变动前的数据、跑完必被标成
+  // 「需重算」——直接把原因与下一步写清楚，别让用户看着「已完成」又变回「需重算」而觉得白算
+  if(t && t.dataChanged) base += "\n本轮运行期间样本 / 产物发生了变动（如标注保存、汇总分析自动重算产物），本轮结果算的是变动之前的数据、已标记为「需重算」；请在数据不再变动后重新验证一次。";
   if(j.running && t && !t.finished){
     bar.style.display = "block";
     const pct = t.total ? Math.min(100, Math.round(t.done / t.total * 100)) : 0;
     fill.style.width = pct + "%";
     txt.style.color = "";
     txt.textContent = vkTaskLine(j);               // 与页面最下方 tips 行同一行文案（vkTaskLine）
-    btn.disabled = true;
+    // 运行中默认置灰（正在按最新数据验证，不必也不该再点）；只有发现样本 / 产物在这一轮里变动过
+    // （本轮结果注定作废）才转回亮绿提示重跑：点一下当场作废这一轮、按最新数据重新开始
+    const dirty = !!(t.dataChanged || (VK_RUN_FP != null && j.fp && j.fp !== VK_RUN_FP));
+    btn.disabled = !dirty;
+    btn.title = dirty
+      ? "运行期间样本 / 产物发生了变动：这一轮算的是变动之前的数据 —— 点一下当场作废它，按最新数据重新开始"
+      : "正在验证中（跑完自动恢复可用）；若期间样本 / 产物发生变动，本按钮会转绿，点它可按最新数据重跑";
     ver.style.display = "none";
   }else{
     btn.disabled = false;
+    btn.title = "按当前样本 / 产物重新验证全部汇总图算法（已有任务在跑时会当场作废它并按最新数据重跑）";
     ver.style.display = "none";
     if(t && t.finished){
       fill.style.width = "100%";
@@ -3516,6 +3605,15 @@ function vkTaskUi(j){
       if(t.error){
         txt.style.color = "var(--danger)";
         txt.textContent = t.error;
+        ver.style.display = "none";
+      }else if(t.superseded){
+        txt.style.color = "var(--amber)";          // 跑一半被更新的请求作废：不是失败，只是输入已经变了
+        txt.textContent = "这一轮已被最新一次验证取代（数据已变动，按最新状态重跑）。";
+        ver.style.display = "none";
+      }else if(t.dataChanged){
+        txt.style.color = "var(--amber)";          // 跑完了但期间数据变动：结果算的是变动前的数据，如实标「需重算」而不是「完成」
+        txt.textContent = "最近一次验证已完成：" + t.done + "/" + t.total + " 种算法，但运行期间数据发生了变动"
+          + "（结果算的是变动之前的数据、已标记为「需重算」），请在数据稳定后重新验证。";
         ver.style.display = "none";
       }else{
         txt.style.color = "var(--green)";
@@ -3532,16 +3630,19 @@ function vkTaskUi(j){
 }
 
 async function vkStart(){
+  const b = $("btnVerifyStart");
   let ok = false, started = false;
+  // 点了立刻给反馈：先置灰（正在提交），随后由 vkPoll → vkTaskUi 接管 —— 任务在跑就保持灰，发现数据变动才转绿
+  if(b){ b.disabled = true; b.title = "正在提交验证请求…"; }
   try{
     const r = await fetch("/api/verify/start", { method:"POST", cache:"no-store" });
     const j = await r.json();
     started = !!(j && j.started);
     ok = true;
   }catch(e){ ok = false; }
-  if(!ok){ toast("无法启动验证：" + "请求失败", "err"); return; }
-  if(started){ toast("开始验证全部汇总图算法…", "ok"); }
-  else{ toast("已有验证任务在跑，请稍候。", ""); }
+  if(!ok){ if(b) b.disabled = false; toast("无法启动验证：" + "请求失败", "err"); return; }
+  if(started){ toast("开始验证全部汇总图算法…（若上一轮还在跑，已当场作废）", "ok"); }
+  else{ toast("启动失败：任务未能提交，请稍后重试。", "err"); }
   vkPoll();
 }
 
@@ -3553,7 +3654,7 @@ let OPT_TMR = null;    // 本视图专用轮询定时器（1 秒，仅停留该�
 let optBusy = false;   // 请求去重（上一轮未返回时不叠发）
 let optSig = "";       // 主图区算法结构签名（算法 + 特征 + 基础分 X），变化才重建（避免轮询打断 Y 输入）
 /* 结果卡重建已改为按算法逐卡签名（box.dataset.sig）：只重绘真的变了的那个算法卡片 */
-let optY = {};         // 权重草稿 { 算法id: { sig, single, vals:[num] } }，起点 = 后端保存的权重 / 默认 1
+let optY = {};         // 权重草稿 { 算法id: { sig, single, vals:[num] } }，起点 = 后端保存的权重 / 后端未记录时的默认值
 let optWSig = "";      // 后端保存的权重签名（「自动调整参数」落盘 / 手改权重文件后，把新值同步回权重框）
 let OPT_STALE_SEEN = ""; // 已提示过「需重新计算」的指纹（三处数据再变动才会再提示一次）
 let optCnt = null;     // 算法个数（顶栏「算法调优(N)」用：启动即预取一次、进本视图轮询刷新，与 vkCnt 同一套做法）
@@ -3622,6 +3723,17 @@ function optStartMsg(diffs){
     ? "修改 " + diffs[0] + "，开始重新计算。"
     : "修改 " + diffs.length + " 处权重 Y（" + diffs.join("；") + "），开始重新计算。";
 }
+/* 后端权重同步回界面的提示：逐处交代「哪个算法、哪个特征、从什么值改成了什么值」（与上面那条同一格式）。
+   自动调整参数一次可能攒下很多处（每采纳一处就落盘、前端 1 秒轮询一次才同步），超过 6 处只列前 6 处 + 总处数 */
+const OPT_SYNC_MAX = 6;
+function optSyncMsg(diffs){
+  const head = "已应用后端保存的权重 Y（自动调整参数 / 权重文件）";
+  if(!diffs.length) return head + "。";
+  return head + "：" + (diffs.length === 1
+    ? diffs[0]
+    : diffs.length + " 处（" + diffs.slice(0, OPT_SYNC_MAX).join("；")
+      + (diffs.length > OPT_SYNC_MAX ? "；…共 " + diffs.length + " 处" : "") + "）") + "。";
+}
 /* 改动前各算法的两率快照（键 = 算法 id → { acc, tie }）：重算结束后给「xxx -> xxx」用 */
 function optResSnap(){
   const m = new Map();
@@ -3650,7 +3762,7 @@ function optFeatSig(a){ return ((a && a.features) || []).map(f => f.kind).join("
 function optAlgo(id){ return ((OPT && OPT.algos) || []).find(a => a.id === id) || null; }
 function optXof(id, i){ const a = optAlgo(id); return a && a.features[i] ? a.features[i].x : 0; }
 /* 取（或初始化）某算法的权重草稿：特征集合未变则沿用用户已改的 Y。
-   起点 = 后端保存的权重（「自动调整参数」落盘的那份，见 /status 的 algos[].weights），没记录才默认 1 */
+   起点 = 后端保存的权重（「自动调整参数」落盘的那份，见 /status 的 algos[].weights），没记录才用默认值 */
 function optYof(a){
   const sig = optFeatSig(a);
   let d = optY[a.id];
@@ -3874,20 +3986,18 @@ function optEnsureMain(){
   p.innerHTML = '<div class="optWrap">' +
     '<div class="optTop"><span class="ot">特征组合算法</span><span class="otSub" id="optMeta">—</span></div>' +
     // 「已过期 · 需重算」状态条（与「汇总分析」主图区那条「样本有变」同一口径）：只在过期时出现，
-    // 展示上次数据的同时把状态与下一步说清楚（特征验证结果变旧 → 去特征验证；能组合只是结果旧 → 重新计算）
+    // 只交代状态 + 「上次结果仅供参考」；能组合、只是结果旧时不给按钮（点右上角「刷新算法特征」即可，它此时已重新变亮），
+    // 只有特征验证结果变旧、算法与特征要先重新组合时才给「去特征验证」
     '<div class="optStale" id="optStale" hidden>' +
       '<span class="ost">算法调优</span><span class="osTag">已过期 · 需重算</span>' +
       '<span class="osTxt" id="optStaleTxt"></span>' +
       '<button type="button" class="btn" id="optStaleVerify" hidden>去特征验证</button>' +
-      '<button type="button" class="btn green" id="optStaleRun" hidden>重新计算</button>' +
     '</div>' + tip + cards +
   '</div>';
   const vb = $("optToVerify");
   if(vb) vb.addEventListener("click", ()=> applyFilter("verify"));
   const sv = $("optStaleVerify");
   if(sv) sv.addEventListener("click", ()=> applyFilter("verify"));
-  const sr = $("optStaleRun");
-  if(sr) sr.addEventListener("click", ()=>{ optRecalc = null; optWaitIds = null; optStartRun(); });
   p.querySelectorAll(".optYin").forEach(inp => {
     inp.addEventListener("input", ()=>{
       const d = optY[inp.dataset.a];
@@ -4026,21 +4136,21 @@ function optRender(){
     (run ? (tuning ? "自动调整参数中" : "刷新算法特征中") : ("算法 " + algos.length + " 个" +
       (j.ready ? "" : (optStaleShown() ? "（已过期 · 需重算）" : "（未计算：缺少特征验证结果）"))));
   // 「已过期 · 需重算」状态条（与「汇总分析」主图区那条「样本有变」同一口径）：过期时出现，平时整条隐藏；
-  // 文案分两种：①特征验证结果变旧、算法组合不出来 → 先去特征验证重跑；②能组合、只是结果旧 → 直接重新计算
+  // 只交代状态 + 「上次结果仅供参考」：能组合、只是结果旧时不给按钮（点右上角「刷新算法特征」重算即可，它此时已重新变亮），
+  // 只有特征验证结果变旧、算法与特征要先重新组合时才给「去特征验证」
   const sbar = $("optStale");
   if(sbar){
     sbar.hidden = !stale;
     if(stale){
       const lastTxt = (res && Array.isArray(res.algos) && res.algos.length)
-        ? "下面显示的是上次结果（样本 " + res.samples + " 张" + (res.costMs ? " · 用时 " + durTxt(Math.round(res.costMs / 1000)) : "") + "），仅供参考。"
+        ? "下面显示的是上次结果（样本 " + res.samples + " 张），仅供参考。"
         : "下面没有可展示的上次结果，需要按最新数据重算。";
-      const txt = "已标注 / 汇总分析 / 特征验证的数据已变动，" + (optStaleShown() ? "算法与特征要先重新组合：" : "") + lastTxt +
-        (j.ready ? "点右侧「重新计算」按当前特征与权重 Y 重算。" : "点右侧「去特征验证」重跑一次，再回来点「重新计算」。");
+      const txt = "已标注 / 汇总分析 / 特征验证的数据已变动，" +
+        (j.ready ? "" : "算法与特征要先按最新数据重新组合（先到「特征验证」重跑一次）：") + lastTxt;
       const tx = $("optStaleTxt");
       if(tx && tx.textContent !== txt) tx.textContent = txt;
-      const sv = $("optStaleVerify"), sr = $("optStaleRun");
+      const sv = $("optStaleVerify");
       if(sv){ sv.hidden = !!j.ready; sv.disabled = run || optLock; }
-      if(sr){ sr.hidden = !j.ready; sr.disabled = run || optLock || !j.ready; }
     }
   }
   // 运行中（或已按改后的权重提交重算）禁用输入；单一特征算法的权重固定 1（结构里本来就带 disabled），这里不能把它解除；
@@ -4092,15 +4202,11 @@ function optRender(){
     // 只重算被改动的算法时（t.only 非空）把措辞收敛到那个算法上，不写成「全部算法」
     const onlyNames = (Array.isArray(t.only) ? t.only : [])
       .map(id => { const a = optAlgo(id); return a ? a.name : id; }).join("、");
+    // 「怎么试」那一整篇固定规则（随机组合尝试 / 逐权重第 1~5 轮 / 采纳判据）不再常驻右栏：
+    // 已挪进标题后的「!」弹窗（见 index.html #optHelpModal「自动调整参数 · 试探规则」段），
+    // 这里只留一行状态 + 指路，逐次试探的细节由下方 #optTask 的三行进度给。
     if(stat) stat.textContent = (t.mode === "tune"
-        ? "正在后台自动调整参数：逐个算法 →（随机组合尝试 → 逐个权重 → 逐个轮次），每个权重第一遍 4 轮共 403 次（步进 0.001）：\n"
-          + "　随机组合尝试：每个算法先试 100 次——每次随机取 1 ~ 全部 个特征、其权重 Y 各随机取 0~10 内任意值（其余特征保持当前值）\n"
-          + "　第 1 轮：0~10 整段随机 100 个\n"
-          + "　第 2 轮：0.1~10 递增 0.1 递进扫描 100 个\n"
-          + "　第 3 轮：最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1 逐个走一遍）\n"
-          + "　第 4 轮：四舍五入微调 3 档（0.01 / 0.1 / 1，重算后两率一点没变就换成更简单的值）\n"
-          + "随机组合尝试与前三轮一律只有匹配正确率上升、或无法区分率下降才采纳；某个权重这一遍采纳过更好的值，就再只跑随机轮重试"
-          + "（一遍 300 个 0~10 随机值，最多追加 3 遍，进度里的「第 N 遍」）。新权重保存到 classify/opt-weights.json。"
+        ? "正在后台自动调整参数…（试探规则见标题后的「!」：自动调整参数 · 试探规则）"
         : "正在后台" + (onlyNames ? "只重新计算「" + onlyNames + "」的分类匹配正确率" : "刷新算法特征、按当前权重 Y 重新计算全部算法的分类匹配正确率") + "…（" + (t.stage || "准备中")
           + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "")
           + (t.reuseRows ? " · 复用 " + t.reuseRows + " 行" : "")
@@ -4112,29 +4218,34 @@ function optRender(){
     if(stat){
       if(err) stat.textContent = "最近一次刷新算法特征失败：" + err;
       else if(res && Array.isArray(res.algos) && res.algos.length){
-        const best = res.algos.filter(r => r.accuracy != null).sort((a, b) => b.accuracy - a.accuracy)[0];
+        const rated = res.algos.filter(r => r.accuracy != null);
+        const best = rated.slice().sort((a, b) => b.accuracy - a.accuracy)[0];
+        // 综合最佳 =「（1 − 无法区分率）× 匹配正确率」：正确率再高，只要分不出的样本多就被拉低（口径见「!」里的详细说明）
+        const scoreOf = r => r.accuracy * (100 - (Number(r.tieRate) || 0)) / 100;
+        const bestAll = rated.slice().sort((a, b) => scoreOf(b) - scoreOf(a))[0];
         stat.textContent = "上次刷新完成" + fmtCostSuffix(Number(res.costMs)) + "：样本 " + res.samples + " 张 · 分类 " + res.groups + " 个" +
           (best ? "\n最高匹配正确率：" + best.name + " " + fmtV(best.accuracy) + "（命中 " + best.hit + "/" + optDecided(best)
             + " · 判错 " + (best.miss == null ? (best.samples - best.hit - (best.tie || 0)) : best.miss)
             + (best.tie ? " · 无法区分 " + best.tie + "（" + fmtV(best.tieRate) + "）" : "") + "）" + optWaitTxt(best.id) : "") +
-          // 结果来自 summary/opt-result.json（完整缓存）：三处数据都没变就直接用上次的，不必重算
-          (j.cached ? "\n已从 summary/" + (j.cacheFile || "opt-result.json") + " 恢复上次结果（数据没变即可直接用）。" : "") +
+          (bestAll ? "\n综合最佳算法：" + bestAll.name + " " + fmtV(scoreOf(bestAll)) + optWaitTxt(bestAll.id) : "") +
+          // 结果接的是完整缓存：三处数据都没变就直接用上次的，不必重算（缓存文件都收进「!」里的详细说明）
+          (j.cached ? "\n已恢复上次结果（数据没变即可直接用）。" : "") +
           // 过期（三处数据有变动）：上面是变动前的结果，照样展示，同时把「需重算」说清楚（与状态条同一口径）
           (!j.ready ? "\n已过期 · 需重算：已标注 / 汇总分析 / 特征验证的数据有变动，算法与特征要先按最新数据重新组合——先到「特征验证」视图跑一次，再回来点「刷新算法特征」；上面的数值与下面的结果卡都是上次的，仅供参考。"
             : (staleRes ? "\n已过期 · 需重算：已标注 / 汇总分析 / 特征验证的数据有变动，上面的数值与下面的结果卡都是变动前的，仅供参考，请重新计算。" : "")) +
-          (j.tune && j.tune.finished ? "\n自动调整参数上一次完成" + fmtCostSuffix(Number(j.tune.costMs)) + "：采纳 "
+          // 这次调参的耗时与上面那次刷新是同一轮，只在首行报一次；权重文件路径收进「!」里的详细说明
+          (j.tune && j.tune.finished ? "\n自动调整参数上一次完成：采纳 "
             + (j.tune.improved || 0) + " 处权重调整（共试探 " + (j.tune.weights || 0) + " 个权重"
             + (j.tune.combos ? "，其中随机组合尝试采纳 " + j.tune.combos + " 处" : "")
             + (j.tune.repeats ? "，另有 " + j.tune.repeats + " 遍是找到更好值后只跑随机的重试" : "")
             + (j.tune.simplified ? "，第 4 轮四舍五入微调把 " + j.tune.simplified + " 个权重换成更直白的值" : "") + "）"
-            + (j.tune.stale ? "（已过期 · 需重算）" : "") + "，权重文件 "
-            + (j.tune.file || "") : "") +
-          // 特征选择 + 权重数值始终另存一份最新的（后续功能 / 开发验证直接读，不必解析界面状态）
-          "\n特征选择与权重数值快照：summary/" + (j.snapshotFile || "opt-weights.json") + "（每次跑完覆写最新的）。" +
+            + (j.tune.stale ? "（已过期 · 需重算）" : "") + "。" : "") +
+          // 特征选择 + 权重数值始终另存一份最新的（后续功能 / 开发验证直接读，不必解析界面状态；文件名见「!」里的详细说明）
+          "\n特征选择与权重数值快照：每次跑完覆写最新的。" +
           // 逐图比对结果与特征验证共用同一份：特征验证刚跑过就在内存里命中，一张都不用重比
           (j.matrixRows || j.matrixBytes
-            ? "\n逐图比对结果缓存：summary/" + (j.matrixFile || "verify-matrix.json") + "（与特征验证共用，没变过的图不必重比"
-              + (j.matrixRows ? "，已载入 " + j.matrixRows + " 条样本行" : "") + "）。"
+            ? "\n逐图比对结果缓存：与特征验证共用，没变过的图不必重比"
+              + (j.matrixRows ? "，已载入 " + j.matrixRows + " 条样本行" : "") + "。"
             : "");
       }else if(!j.ready) stat.textContent = (j.verify && j.verify.running)
         ? "特征验证正在运行，请等它结束后再回到本视图。"
@@ -4147,7 +4258,7 @@ function optRender(){
   const wSig = algos.map(a => a.id + ":" + ((a.weights || []).join(","))).join(";");
   if(wSig !== optWSig){
     const first = optWSig === "";
-    let dirty = false;
+    const diffs = [];                          // 逐处记下「哪个算法、哪个特征、旧值 -> 新值」，供日志写清楚
     for(const a of algos){
       if(a.features.length <= 1) continue;      // 单一特征算法固定 1，不跟着权重文件走
       const d = optY[a.id];
@@ -4158,12 +4269,17 @@ function optRender(){
         const y = Number(w[i]);
         // 权重精度 0.001，同步时不能丢第三位；0 也照搬（= 该特征不参与本算法）
         const v = (w[i] != null && !isNaN(y)) ? Math.round(y * 1000) / 1000 : 1;
-        if(d.vals[i] !== v){ d.vals[i] = v; changed = true; }
+        if(d.vals[i] !== v){
+          diffs.push("「" + (a.name || a.id) + "」的「" + vkInfo(a.features[i].kind).name + "」权重 Y "
+            + fmtY(d.vals[i]) + " -> " + fmtY(v));
+          d.vals[i] = v;
+          changed = true;
+        }
       }
-      if(changed){ syncOptRow(a.id); dirty = true; }
+      if(changed) syncOptRow(a.id);
     }
     optWSig = wSig;
-    if(dirty && !first) toast("已应用后端保存的权重 Y（自动调整参数 / 权重文件）。", "ok");
+    if(diffs.length && !first) toast(optSyncMsg(diffs), "ok");
   }
 
   // 「等待刷新」的范围（精确到算法 id）与结果数值一起做签名，按算法逐个比对：只重建真的变了的卡片 ——
@@ -4187,8 +4303,8 @@ function optRender(){
             ? '：结果已过期 · 需重算，这里没有可展示的上次结果——先到「特征验证」视图重跑一次，再回来点「刷新算法特征」。'
             : '：先到「特征验证」视图完成一次验证，算法、特征与基础分 X 会自动组合。')) + '</div>';
   }
-  // 右栏不再重复展示「自动调整参数」「结论」两张卡：采纳数 / 权重文件 / 快照 / 缓存规模看上面统计行，
-  // 各算法的两率看左栏与结果卡；这里只在结论需要提醒时才出现（见 optNotice）
+  // 右栏不再重复展示「自动调整参数」「结论」两张卡：两个「最好」/ 采纳数 / 快照 / 缓存规模看上面统计行
+  // （文件路径一律收进「!」里的详细说明），各算法的两率看左栏与结果卡；这里只在结论需要提醒时才出现（见 optNotice）
   const ver = $("optVerdict");
   if(ver) ver.innerHTML = res ? optNotice(res, staleRes) : "";
 }
@@ -4281,7 +4397,10 @@ async function optPoll(){
     const isTune = !!(j.task && j.task.mode === "tune");
     const rc = optRecalc; optRecalc = null;   // 本轮由改权重触发：结束提示换成「两率变化 + 用时」那条
     optPrevW = null;                          // 结果已对上当前权重：基准快照下次按结果里的 weights 重建
-    if(err) toast((isTune ? "自动调整参数中断：" : "刷新算法特征中断：") + err, "err");
+    if(j.task && j.task.superseded){
+      toast((isTune ? "自动调整参数" : "刷新算法特征") + "这一轮已被最新一次请求取代（数据已变动，按最新状态重跑）。", "warn");
+    }
+    else if(err) toast((isTune ? "自动调整参数中断：" : "刷新算法特征中断：") + err, "err");
     else if(isTune) toast("自动调整参数已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "：采纳 "
       + ((j.tune && j.tune.improved) || 0) + " 处权重调整"
       + ((j.tune && j.tune.combos) ? "，其中随机组合尝试采纳 " + j.tune.combos + " 处" : "")
@@ -4304,38 +4423,48 @@ function optCollect(){
   return out;
 }
 
-/* 运行按钮可用性：未就绪 / 运行中时禁用；
-   「自动调整参数」更严：必须「刷新算法特征」已经跑完且结果没过期（后端 tunable） */
+/* 运行按钮可用性：结果就是按当前「特征验证」的值算出来的（值没变化）→ 置灰（没有可刷新的东西）；
+   值变过（结果过期）或还没算过 → 亮绿可点；正在跑一轮 → 置灰，跑完按上面两条自动定色。
+   「自动调整参数」更严：必须「刷新算法特征」已经跑出一份没过期的结果（后端 tunable） */
 function optSyncRunBtn(){
   const b = $("optRunBtn");
   if(!b) return;
   const algos = (OPT && Array.isArray(OPT.algos)) ? OPT.algos : [];
   const run = !!(OPT && OPT.running);
   const ready = !!(OPT && OPT.ready) && algos.length > 0;
-  b.disabled = run || optLock || !ready;
+  const res = (OPT && OPT.result && OPT.result.finished && !OPT.result.error) ? OPT.result : null;
+  const synced = !!(res && !res.stale);         // 结果指纹 = 当前特征验证的指纹：值没变过
+  b.disabled = optLock || !ready || run || synced;
   b.title = (!ready && optStaleShown()) ? "已过期 · 需重算：先到「特征验证」视图重跑一次（算法与特征要按最新数据重新组合），再回来点这里"
     : !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
-    : (run || optLock) ? "正在刷新算法特征，等它结束（结果与新数值会一起刷新）"
-    : "按最新特征验证结果重新组合算法与特征（含基础分 X），再按当前权重 Y 重新计算全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；改完权重 Y 会自动重算（只重算被改动的那个算法），运行中不可再次启动";
+    : optLock ? "正在提交…"
+    : run ? "正在跑一轮（跑完自动恢复可用）；若期间数据发生变动，跑完会提示「结果已过期 · 需重算」—— 按提示先到「特征验证」视图重跑一次，再回来点这里"
+    : synced ? "特征验证的值没有变化：当前结果就是按它算出来的，无需刷新（若之后特征验证的值变了，本按钮会重新变亮）"
+    : "按最新特征验证结果重新组合算法与特征（含基础分 X），再按当前权重 Y 重新计算全部算法的分类匹配正确率（classify/ 全部已标注原图 × 全部分类）；改完权重 Y 会自动重算（只重算被改动的那个算法）";
   const ab = $("optAutoBtn");
   if(!ab) return;
-  ab.disabled = run || optLock || !(OPT && OPT.tunable);
-  ab.title = (run || optLock) ? "正在跑任务，等它结束"
+  ab.disabled = optLock || run || !(OPT && OPT.tunable);   // 运行中置灰：这一轮跑完自动恢复可用
+  ab.title = optLock ? "正在提交…"
+    : run ? "正在自动调整参数（跑完自动恢复可用）；若期间数据发生变动，跑完会提示「结果已过期 · 需重算」—— 按提示先到「特征验证」视图重跑一次，再回来点这里"
     : !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
     : !(OPT && OPT.tunable) ? "请先点「刷新算法特征」并等它跑完（结果要能对上当前的样本 / 产物），之后才能自动调整参数"
-    : "逐个算法地调：每个算法先做 100 次「随机组合尝试」（每次随机取 1 ~ 全部 个特征、其权重 Y 各随机取 0~10 内任意值，其余特征保持当前值），" +
-      "再对每个可调的权重 Y 逐个权重 → 逐个轮次地试（步进 0.001），第一遍 4 轮共 403 次：" +
-      "第 1 轮 0~10 整段随机 100 个；第 2 轮 0.1~10 递增 0.1 递进扫描 100 个；第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1）；" +
-      "第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1：重算后两率一点没变就换成更简单的值）；" +
-      "随机组合尝试与前三轮都是只要匹配正确率上升、或无法区分率下降就采纳；某个权重这一遍里采纳过更好的值，就再只跑随机轮重试（一遍 300 个随机值，最多追加 3 遍）；" +
-      "并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；" +
-      "单一特征算法的权重固定 1、不参与调整";
+    : "自动调整参数（逐个算法地调）：\n"
+      + "　1. 逐个算法随机尝试\n"
+      + "　　每个算法试 100 次\n"
+      + "　　每次随机取 1 ~ 全部 个特征，其权重 Y 各随机取 0~10 内任意值，其余特征保持当前值\n"
+      + "　2. 逐个权重随机尝试\n"
+      + "　　逐个算法逐个权重，按以下的规则尝试新的值，共试 403 次（步进 0.001）\n"
+      + "　　第 1 轮：0~10 范围内取值，随机取 100 次\n"
+      + "　　第 2 轮：0.1~10 递增 0.1，递进扫描取 100 次\n"
+      + "　　第 3 轮：最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1 逐个走一遍）\n"
+      + "　　第 4 轮：四舍五入微调 3 档（0.01 / 0.1 / 1，重算后结果没变就换成更简单的值）\n"
+      + "　　第 5 轮：额外说明：某个权重在前三轮里，如果采纳过更好的值，就再跑 0~10 范围内取值，随机取 300 次（最多追加 3 遍）\n"
+      + "只有匹配正确率上升、或无法区分率下降才采纳；新权重保存到 classify/opt-weights.json（界面权重框随更新）；单一特征算法的权重固定 1、不参与调整";
 }
 
 /* 权重改完（输入框失焦 / 回车）立刻重算：只重算被改动的那个算法（onlyId=算法 id），其余算法的数值不动、
    也不会被标「（等待刷新）」；先把按钮与输入框锁上（任务期间不可再提交），再提交这次验证 */
 function optApplyWeights(onlyId){
-  if(OPT && OPT.running) return;
   if(!OPT || !OPT.ready){ toast("请先在「特征验证」视图完成验证。", "err"); return; }
   // 开头一条「修改 xxx -> xxx，开始重新计算」：改动值对比基准 = 上一次真参与计算的权重（结果里的 weights）
   const nowW = optWeightMap();
@@ -4356,8 +4485,10 @@ function optApplyWeights(onlyId){
 
 /* 提交一次验证：onlyIds 非空 = 只重算这些算法（改权重时只传被改的那个），空 = 全部算法 */
 async function optStartRun(onlyIds){
-  if(OPT && OPT.running) return;
   if(!OPT || !OPT.ready){ toast("请先在「特征验证」视图完成验证。", "err"); optLock = false; optRecalc = null; optWaitIds = null; optPoll(); return; }
+  const rb = $("optRunBtn"), ab = $("optAutoBtn");
+  if(rb) rb.disabled = true;        // 点了立刻置灰（正在提交），最迟 1 秒后由 optPoll → optSyncRunBtn 接管
+  if(ab) ab.disabled = true;
   try{
     const body = { weights: optCollect() };
     if(onlyIds && onlyIds.length) body.only = onlyIds;
@@ -4365,8 +4496,8 @@ async function optStartRun(onlyIds){
     const j = r && r.ok ? await r.json().catch(()=>null) : null;
     // 改权重触发的重算已有「修改 xxx -> xxx，开始重新计算」那条，不再叠发这条通用的
     if(j && j.started){ if(!optRecalc) toast("开始刷新算法特征、重新计算全部算法的分类匹配正确率…", "ok"); }
-    else { optLock = false; optRecalc = null; optWaitIds = null; toast("启动失败：" + ((j && j.error) || "请求失败"), "err"); }
-  }catch(e){ optLock = false; optRecalc = null; optWaitIds = null; toast("启动失败：请求异常", "err"); }
+    else { optLock = false; optRecalc = null; optWaitIds = null; optSyncRunBtn(); toast("启动失败：" + ((j && j.error) || "请求失败"), "err"); }
+  }catch(e){ optLock = false; optRecalc = null; optWaitIds = null; optSyncRunBtn(); toast("启动失败：请求异常", "err"); }
   optPoll();
 }
 $("optRunBtn").addEventListener("click", ()=>{ optRecalc = null; optWaitIds = null; optStartRun(); });   // 手动跑：这条不带「改权重」的对比提示
@@ -4385,16 +4516,18 @@ function syncOptRow(id){
 
 /* 启动「自动调整参数」（后端只在「刷新算法特征」跑完且结果没过期时才受理） */
 async function optAutoStart(){
-  if(OPT && OPT.running) return;
-  if(!OPT || !OPT.tunable){ toast("请先点「刷新算法特征」并等它跑完，再自动调整参数。", "err"); return; }
+  if(!OPT || !OPT.tunable){ toast("请先点「刷新算法特征」跑出一份没过期的结果，再自动调整参数。", "err"); return; }
   optRecalc = null;                        // 自动调整参数有自己的完成提示，不带「改权重」的对比
   optWaitIds = null;                       // 自动调整参数会改所有算法的权重，等待刷新按全量处理
+  const rb = $("optRunBtn"), ab = $("optAutoBtn");
+  if(rb) rb.disabled = true;               // 点了立刻置灰（正在提交），最迟 1 秒后由 optPoll → optSyncRunBtn 接管
+  if(ab) ab.disabled = true;
   try{
     const r = await fetchT("/api/optimize/auto", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights: optCollect() }) }, 9000);
     const j = r && r.ok ? await r.json().catch(()=>null) : null;
     if(j && j.started) toast("开始自动调整参数：每个算法先做 100 次「随机组合尝试」（每次随机取 1 ~ 全部 个特征、其权重 Y 各随机取 0~10 内任意值，其余特征保持当前值），再逐个权重 → 逐个轮次，每个权重第一遍 4 轮共 403 次（步进 0.001）——第 1 轮 0~10 整段随机 100 个；第 2 轮 0.1~10 递增 0.1 递进扫描 100 个；第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1）；第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1，两率没变就换成更简单的值）；随机组合尝试与前三轮都是正确率上升或无法区分率下降才采纳；某个权重这一遍采纳过更好的值就再只跑随机轮 300 个随机值（最多追加 3 遍）…", "ok");
-    else toast("启动失败：" + ((j && j.error) || "请求失败"), "err");
-  }catch(e){ toast("启动失败：请求异常", "err"); }
+    else { optSyncRunBtn(); toast("启动失败：" + ((j && j.error) || "请求失败"), "err"); }
+  }catch(e){ optSyncRunBtn(); toast("启动失败：请求异常", "err"); }
   optPoll();
 }
 $("optAutoBtn").addEventListener("click", optAutoStart);
@@ -4418,6 +4551,44 @@ function openOptHelp(){
 }
 $("optHelpBtn").addEventListener("click", openOptHelp);
 
+/* 特征验证「!」按钮（标题后）：点开「详细说明」弹窗 —— 右栏不再常驻那一大段指标说明，需要时点开才看。
+   与 #optHelpModal / #vkDetailModal / #capStopModal 同一套版式（静态 DOM，故用 onclick 赋值防重复绑定）：点遮罩 / 知道了 / Esc 关闭 */
+let vfyHelpKey = null;    // 当前挂在 document 上的 Esc 监听（连点两次时先摘掉旧的，避免叠加）
+function openVerifyHelp(){
+  const ov = $("vfyHelpModal");
+  if(!ov) return;
+  ov.style.display = "flex";
+  const close = ()=>{
+    ov.style.display = "none";
+    if(vfyHelpKey){ document.removeEventListener("keydown", vfyHelpKey); vfyHelpKey = null; }
+  };
+  if(vfyHelpKey) document.removeEventListener("keydown", vfyHelpKey);
+  vfyHelpKey = e => { if(e.key === "Escape") close(); };
+  document.addEventListener("keydown", vfyHelpKey);
+  ov.onclick = e => { if(e.target === ov) close(); };
+  const ok = $("vfyHelpOk"); if(ok) ok.onclick = close;
+}
+$("vfyHelpBtn").addEventListener("click", openVerifyHelp);
+
+/* 智能分析「!」按钮（提示条标题后）：点开「详细说明」弹窗 —— 提示条只留「建议 + 候选 + 填入按钮」，
+   判定口径那一整段固定说明收在这里。与 #optHelpModal / #vfyHelpModal 同一套版式
+   （静态 DOM，故用 onclick 赋值防重复绑定）：点遮罩 / 知道了 / Esc 关闭 */
+let sugHelpKey = null;    // 当前挂在 document 上的 Esc 监听（连点两次时先摘掉旧的，避免叠加）
+function openSugHelp(){
+  const ov = $("sugHelpModal");
+  if(!ov) return;
+  ov.style.display = "flex";
+  const close = ()=>{
+    ov.style.display = "none";
+    if(sugHelpKey){ document.removeEventListener("keydown", sugHelpKey); sugHelpKey = null; }
+  };
+  if(sugHelpKey) document.removeEventListener("keydown", sugHelpKey);
+  sugHelpKey = e => { if(e.key === "Escape") close(); };
+  document.addEventListener("keydown", sugHelpKey);
+  ov.onclick = e => { if(e.target === ov) close(); };
+  const ok = $("sugHelpOk"); if(ok) ok.onclick = close;
+}
+
 /* ---------------- 自动刷新 ---------------- */
 const POLL_MS = 10000;   // 后台每 10 秒悄悄同步一次列表
 function listSig(arr){ return arr.map(i => [i.name,i.marked,i.state,i.action,i.left,i.top].join("|")).join("\n"); }
@@ -4430,7 +4601,6 @@ async function refreshSilent(){
   try{ DEF = await fetchDefs(); }catch(_){}
   rebuildStates();
   renderList();
-  updateNavButtons();
   // 列表从“全部完成”空态补进新图时自动载入第一张，占位提示随之消失
   if(!curName){
     const L = listNow();
@@ -4539,11 +4709,11 @@ async function checkAppVersion(){
     // 后端重启后 seq 会从 1 重新计数（历史已清空）：本页基线若已越过它则说明计数跳变，下一轮改为全量回填，避免提示静默中断
     const maxSeq = Number(j && j.shotMaxSeq) || 0;
     if(maxSeq > 0 && lastShotLogSeq > maxSeq) lastShotLogSeq = -1;
-    // 启动历史重复清理结果：后端每次启动按两个启用阈值中较低者（默认 min(5, 0.5) = 0.5%）逐像素比对重扫
+    // 启动历史重复清理结果：后端每次启动按两个启用阈值中较低者逐像素比对重扫
     // capture/ + classify/ 全部截图，不一致像素占比 ≤ 阈值即删（近似但不重复的画面一律保留）。
     // 不论是否删除了图片都右下角提示一次清理完成
     // 启动历史重复清理进行态（startupDedup）：开始 → 一条「开始检查」消息；进行中 → 一条一直刷新的进度消息
-    // （已判定 / 待判定张数 + 当前文件 + 逐秒走动的已耗时，同批量任务的「正在第 1 轮…（已耗时 29 秒）」）；
+    // （逗号风格：已判定 / 待判定张数，当前文件名，逐秒走动的已耗时，逐像素比对 / 复用历史比对结果个数，见 dedupProgText()）；
     // 结束 → running=false 撤掉进度消息，结果提示由下面的 startupDedupNotice 给出
     const dp = j && j.startupDedup;
     if(dp && dp.at){
@@ -4551,9 +4721,9 @@ async function checkAppVersion(){
       if(dp.running){
         if(dpAt !== lastDedupProgAt){                 // 首次见到本次启动的清理：先提示一条「开始检查」
           lastDedupProgAt = dpAt;
-          showShotTip("启动重复清理：开始检查 capture/ + classify/ 的历史截图重复"
-            + "（逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除；"
-            + "文件名 + 修改时间都没变过的组合直接复用上次的比对结果、不再重复比对）…", "");
+          showShotTip("启动重复清理：开始检查 capture/ 与 classify/ 的历史截图是否重复，"
+            + "逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除，"
+            + "文件名与修改时间都没变过的组合直接复用上次的比对结果、不再重复比对，请稍候…", "");
         }
         dedupProg = { at:dpAt, done:Number(dp.done)||0, total:Number(dp.total)||0,
                       current:dp.current || "", compared:Number(dp.compared)||0, reused:Number(dp.reused)||0 };
@@ -4577,12 +4747,12 @@ async function checkAppVersion(){
       const reused = Number(dedup.reused) || 0;
       const minDiff = Number(dedup.minDiff);
       const judgeTxt = dedupCmpTxt(compared, reused);
-      let cmpTxt = "";
+      let cmpTxt = "";                        // 判定量段（已带前导「，」）：逐像素比对 N 个，复用历史比对结果 M 个，最低不一致 X%
       if(judgeTxt){
         const minTxt = (isFinite(minDiff) && minDiff >= 0)
           ? "，最低不一致 " + (Number.isInteger(minDiff) ? String(minDiff) : String(Math.round(minDiff * 100) / 100)) + "%"
           : "";
-        cmpTxt = "（" + judgeTxt + minTxt + "）";
+        cmpTxt = "，" + judgeTxt + minTxt;
       }
       // 耗时（后端实际重扫毫秒数）；旧后端无该字段时静默不加
       const costTxt = fmtCostSuffix(Number(dedup.costMs) || 0);
@@ -4949,16 +5119,14 @@ function renderExecCandidates(list){
   list.forEach((it, i) => {
     const row = document.createElement("div");
     row.className = "cand" + (i === 0 ? " top" : "");
-    const isRaw = !!(it && it.raw === true);   // 「按已分类原图匹配」直比行：来源是某张已分类原图而非对照图，无各图分值明细；仍可把当前画面存入其命中分类（后端 Candidate 字段名 raw）
     const stateTxt = execEsc(it.state || "—");
     const diffTxt = (typeof it.diffPercent === "number" && it.diffPercent >= 0) ? it.diffPercent.toFixed(2) + "%" : "—";
     if(it.matchedFile && it.matchedFile !== it.state){
-      row.title = isRaw ? "已分类原图 " + it.matchedFile + "（与当前画面直比命中）" : it.matchedFile;   // 来源文件名只挂悬停提示，不占行宽
+      row.title = it.matchedFile;   // 来源文件名只挂悬停提示，不占行宽
     }
-    row.innerHTML = (isRaw ? '<span style="color:var(--green)">【按已分类原图匹配】</span> ' : "") +
-                    '<span class="cst">' + stateTxt + "</span>" +
+    row.innerHTML = '<span class="cst">' + stateTxt + "</span>" +
                     '<span class="cd">' + diffTxt + "</span>";
-    if(!isRaw && Array.isArray(it.kinds) && it.kinds.length){
+    if(Array.isArray(it.kinds) && it.kinds.length){
       const vbtn = document.createElement("button");
       vbtn.type = "button";
       vbtn.className = "mbtn";
@@ -4974,9 +5142,7 @@ function renderExecCandidates(list){
     btn.textContent = done ? "已存入" : "存入分类";
     btn.title = done
       ? "当前画面已存入（待标注截图或某分类样本）；重新「立即识别」出新画面后可再次存入"
-      : (isRaw
-          ? "把当前画面登记为「" + stateTxt + "」的样本（其与已分类原图直比命中的分类），下次识别会优先参考它"
-          : "把当前画面登记为「" + stateTxt + "」的样本，下次识别会优先参考它");
+      : "把当前画面登记为「" + stateTxt + "」的样本（此后重跑算法调优会把 runtime/ 刷新成新的综合最佳算法），下次识别会优先参考它";
     btn.addEventListener("click", () => execQuickMark(it.state, btn));
     row.appendChild(btn);
     box.appendChild(row);
@@ -5020,7 +5186,7 @@ function openKindScores(it){
       '</div>' +
       '<div style="color:var(--muted);font-size:11.5px;line-height:2;margin:2px 0 10px">' +
         "差异分值计算：该图的非透明区域与当前画面逐点比对的不匹配点占比<br>" +
-        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图、注意区与点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。注意区交集图是各分类以关注点（未设 = 屏幕中心）为心的 1/8、1/32 方框 × 各交集档的交集图（每个分类都有）；点击区交集图是鼠标点击分类以点击点为心的同规格交集图。分类差异度 = 五族加权 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张权 50、B 多数 6 张权 15、C 均值 6 张权 10、D 去重均值 6 张权 10、E 方框交集区（注意区 12 + 点击区 12）24 张权 15；每族先把族内各图不匹配点占比等权平均，再除以 W（参与分类产物齐全、恒为 100）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与族均值</div>" +
+        "色差按维度类别分两套：交集/多数类（交集六档 100/90/80/70/60/50（100% = 样本像素完全一致）、多数/多数块图、注意区与点击区交集图及各自 -unique）逐像素完全一致（三通道差都为 0）；均值类（均值/去重均值/均值块图/去重均值块图及各自 -unique）走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold（默认 255/3=85）才一致；去重均值 = 先把样本该点出现过的颜色去重再平均，防重复采样把平均拉偏）。注意区交集图是各分类以关注点（未设 = 屏幕中心）为心的 1/8、1/32 方框 × 各交集档的交集图（每个分类都有）；点击区交集图是鼠标点击分类以点击点为心的同规格交集图。分类差异度 = 100 − 加权匹配度：只有【算法调优】落地在 runtime/ 的「综合最佳算法」用到的 kind 参与，匹配值 = 100 − 不匹配点占比，先放弃「最高匹配值被 ≥2 个分类并列」的特征，再按 Σ「匹配值 × X × Y」÷ Σ「X × Y」算加权匹配度（X 特征基础分、Y 权重，只累加该分类可用特征）；产物无任何有效像素的空图判完全不匹配、按满值计入、照常参与加权</div>" +
       '<div style="max-height:min(46vh,320px);overflow:auto;padding-right:4px">' + rows + "</div>" +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="kindsOk">知道了</button></div>' +
     "</div>";

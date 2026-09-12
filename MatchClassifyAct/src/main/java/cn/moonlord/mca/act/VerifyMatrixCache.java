@@ -59,7 +59,7 @@ public class VerifyMatrixCache {
     private final Map<String, Entry> kinds = new ConcurrentHashMap<>();
 
     private volatile boolean loaded;
-    private volatile boolean restored;   // 本进程的表来自磁盘缓存（界面提示「已载入上次的比对结果」）
+    private volatile boolean restored;   // 本进程的表来自磁盘缓存（界面靠进度行的「已缓存 N 个特征 / M 条样本比对行」体现）
     private volatile boolean dirty;      // 本进程算过新行 / 换过列（落盘时才写文件）
     private volatile long savedMs;
 

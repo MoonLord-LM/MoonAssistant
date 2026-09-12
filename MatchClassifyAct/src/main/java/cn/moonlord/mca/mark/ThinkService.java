@@ -2,6 +2,7 @@ package cn.moonlord.mca.mark;
 
 import cn.moonlord.mca.act.ArtifactKind;
 import cn.moonlord.mca.act.FrameClassifier;
+import cn.moonlord.mca.act.RuntimeService;
 import cn.moonlord.mca.config.ExecuteProperties;
 import cn.moonlord.mca.config.StoragePaths;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -34,8 +35,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -99,8 +99,9 @@ import java.util.stream.Stream;
  * <b>要等全部分组的基础图都生成完才开始算</b>（全集门禁），且该分类适用的全部对照图必须齐全
  * （每个分类 15 基础 + 15 -unique + 12 张注意区交集图 = 42 张，click 分类另有 12 张点击区交集图 = 54 张；
  * 历史旧目录产物不全，重算后补齐）
- * 才参与执行识别
- * （见 {@link cn.moonlord.mca.act.FrameClassifier}）。两套方框交集图都不参与独有区互比，
+ * 才参与汇总分析 / 特征验证 / 算法调优
+ * （见 {@link cn.moonlord.mca.act.FrameClassifier}）；算法调优跑完会把综合最佳算法用到的那几种 kind
+ * 复制一份到 {@code runtime/}，执行识别只认那份副本（见 {@link RuntimeService}）。两套方框交集图都不参与独有区互比，
  * 也没有 -unique 版本。</p>
  *
  * <p>产物统一放在 {@code summary/<分类标注>/} 目录下（capture/classify/summary 三阶段布局见
@@ -117,7 +118,7 @@ import java.util.stream.Stream;
  * 与以<b>鼠标点击点</b>（仅 click 分类有）为框心的
  * {@code click8-same100/90/80/70/60/50.png / click32-same100/90/80/70/60/50.png} 共 12 张点击区交集图；
  * 分析信息（样本数、覆盖率、注意点/点击点坐标等）
- * 写入同目录 {@code info.json}。产物只被执行模式识别读取、不参与标注样本的修改，
+ * 写入同目录 {@code info.json}。产物只被汇总分析 / 特征验证 / 算法调优读取、不参与标注样本的修改，
  * 画面标签一律以控制台的人工标注为准。</p>
  *
  * <p>样本截图只读 classify/（已标注的截图 + .json）；单图智能建议的目标图（未标注）
@@ -224,58 +225,15 @@ public class ThinkService {
         return t;
     });
 
-    /** 计算池排队摘要（单线程池执行序 = 提交序）：第 0 项正在执行、其余排队；供任务快照汇报「第几位 / 前面正忙什么」 */
-    private final List<ThinkQ> thinkQueue = new ArrayList<>();
-
-    /** 计算池执行/排队项：key = 本次提交身份（Task 或 auto 占位对象），label = 给前端看的进行中任务标签 */
-    private static final class ThinkQ {
-        final Object key;
-        final String label;
-
-        ThinkQ(Object key, String label) {
-            this.key = key;
-            this.label = label;
-        }
-    }
-
-    /** 提交到串行计算池并登记队列标签；任务结束（含异常）自动出队（key 内部生成，仅供出队匹配） */
+    /** 提交到串行计算池（单线程串行：像素比对较重，避免并发打满 CPU）。label 只用于日志 */
     private void submitPool(String label, Runnable body) {
-        submitPool(label, new Object(), body);
-    }
-
-    /** 提交到串行计算池并登记队列标签；key 为队列身份（分析 / 重建任务传 Task 本身，
-     *  使 {@link #refreshQueueState(Task)} 能查到「前面还有几个任务」并向前端显示排队进度）；任务结束自动出队 */
-    private void submitPool(String label, Object key, Runnable body) {
-        synchronized (thinkQueue) {
-            thinkQueue.add(new ThinkQ(key, label));
-        }
         pool.submit(() -> {
             try {
                 body.run();
-            } finally {
-                synchronized (thinkQueue) {
-                    for (int i = 0; i < thinkQueue.size(); i++) {
-                        if (thinkQueue.get(i).key == key) {
-                            thinkQueue.remove(i);
-                            break;
-                        }
-                    }
-                }
+            } catch (Throwable e) {
+                log.warn("汇总分析任务 [{}] 异常退出：{}", label, e.toString());
             }
         });
-    }
-
-    /** 轮询前刷新任务在计算池中的位置：0=正在执行；>0=前面排队任务数；不在队（已结束/异常）保持 -1 */
-    private void refreshQueueState(Task t) {
-        synchronized (thinkQueue) {
-            for (int i = 0; i < thinkQueue.size(); i++) {
-                if (thinkQueue.get(i).key == t) {
-                    t.queuePos = i;
-                    t.queueActiveLabel = i == 0 ? "" : thinkQueue.get(0).label;
-                    return;
-                }
-            }
-        }
     }
 
     /** 智能建议独立单线程池：与批量分析/自动重算隔开，长汇总分析不会阻塞「停留 1 秒」的单图建议即时出结果 */
@@ -286,31 +244,28 @@ public class ThinkService {
     });
 
     /* ------------------------------------------------- 自动重算（标注样本变化后后台补齐/刷新产物） */
-    /** 自动重算防抖窗口：最后一次标注变化后延迟多久启动扫描，避免连续标注期间反复全量重算 */
-    private static final long RECOMPUTE_DELAY_MS = 3000L;
 
-    /** 仅做延迟触发，真正的分析仍交给上面的计算池串行执行 */
-    private final ScheduledExecutorService autoScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "mca-think-auto");
-        t.setDaemon(true);
-        return t;
-    });
-    private final Object recomputeLock = new Object();
-    private boolean recomputeArmed;    // 已有延迟计划（防抖窗口内合并多次变化）
-    private boolean recomputeRunning;  // 自动重算正在计算池里执行
-    private boolean recomputeAgain;    // 执行期间样本又变化 → 本轮跑完后再补一轮
+    /** 汇总分析任务代次：任何一次新请求（自动重算 / 开始分析 / 一键重建）都 +1。正在跑的旧任务在检查点
+     *  发现线程被打断即刻作废退出 —— 它算出来的是变动前的旧数据、没有价值；新任务紧接着按最新状态重跑。
+     *  所以既没有防抖延迟、也没有排队等待（池里已过期代次的排队项启动时自检，直接不跑）。 */
+    private final AtomicLong runGen = new AtomicLong();
+    /** 当前正在跑的分析线程：新请求直接打断它（阻塞 IO 立刻抛错、计算循环在下个检查点退出） */
+    private final AtomicReference<Thread> runningThread = new AtomicReference<>();
 
     private final StoragePaths storage;
     private final ClassifyStore classifyStore;
-    /** 执行模式的画面识别器：智能建议直接复用它做比对，保证与执行模式同算法、同阈值、同缓存 */
-    private final FrameClassifier frameClassifier;
+    /** 运行时算法（runtime/，算法调优选出的「综合最佳算法」）：智能建议直接走它做比对，
+     *  保证与执行模式同算法、同口径、同缓存 */
+    private final RuntimeService runtimeService;
     private final ExecuteProperties executeProperties;
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
 
     /** 单图智能建议任务 */
     private final Map<String, SuggestTask> suggestTasks = new ConcurrentHashMap<>();
-    /** 最新一次建议请求：供排队中的旧建议任务启动时自检作废 */
+    /** 最新一次建议请求：新请求一进来就把旧建议当场作废（它算的是上一张图 / 上一版产物） */
     private final AtomicReference<SuggestTask> latestSuggest = new AtomicReference<>();
+    /** 正在跑的建议线程：新请求直接打断它（原图逐像素直比可能读上千张图） */
+    private final AtomicReference<Thread> suggestThread = new AtomicReference<>();
     /** 建议结果缓存：key = 目标图|产物签名，避免同一张图反复重算；取访问序淘汰（再命中=用户还在来回比对该图，应续命留驻），上限 60 条 */
     private final Map<String, SuggestPack> suggestCache = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
@@ -320,10 +275,10 @@ public class ThinkService {
     };
 
     public ThinkService(StoragePaths storage, ClassifyStore classifyStore,
-                        FrameClassifier frameClassifier, ExecuteProperties executeProperties) {
+                        RuntimeService runtimeService, ExecuteProperties executeProperties) {
         this.storage = storage;
         this.classifyStore = classifyStore;
-        this.frameClassifier = frameClassifier;
+        this.runtimeService = runtimeService;
         this.executeProperties = executeProperties;
         // 一次性迁移：历史「无动作」分类缺注意点坐标（left/top 为 null）→ 补为该分类样本的屏幕中心
         // （幂等：没有缺失时零写入；click 分类的注意点不再回退点击点，需注意区图时按屏幕中心兜底）
@@ -335,7 +290,7 @@ public class ThinkService {
         } catch (Exception e) {
             log.warn("补齐无动作分类注意点失败（不影响启动，待后续标注保存时修正）：{}", e.toString());
         }
-        requestRecompute();   // 启动后自动补一轮：上次退出没跑完 / 重启期间样本有变的产物尽快对齐（约 3 秒后执行）
+        requestRecompute();   // 启动后立刻补一轮：上次退出没跑完 / 重启期间样本有变的产物尽快对齐
     }
 
     /* ---------------------------------------------------------------- 对外 API */
@@ -352,7 +307,7 @@ public class ThinkService {
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, force);
         tasks.put(id, t);
-        submitPool("批量汇总分析", t, () -> runAnalyze(t));
+        submitAnalyze("批量汇总分析", t);
         return id;
     }
 
@@ -370,103 +325,104 @@ public class ThinkService {
         String id = UUID.randomUUID().toString();
         Task t = new Task(id, true, true);
         tasks.put(id, t);
-        submitPool("重新生成全部", t, () -> runAnalyze(t));
+        submitAnalyze("重新生成全部", t);
         return id;
     }
 
-    /** 任务快照（含最新队列位置）；不存在返回 null */
+    /** 任务快照；不存在返回 null */
     public Task task(String taskId) {
-        Task t = taskId == null ? null : tasks.get(taskId);
-        if (t != null) {
-            refreshQueueState(t);
+        return taskId == null ? null : tasks.get(taskId);
+    }
+
+    /* ---------------------------------------------------------------- 任务提交（代次作废式） */
+
+    /**
+     * 提交一次汇总分析：自动重算 / 手动「开始分析」/「重新生成全部」都走这里。
+     *
+     * <p><b>数据一变就以最新一轮为准</b>（2026-09-13 用户指定）：先递增代次并打断正在跑的旧任务 ——
+     * 它算的是变动前的旧数据，跑完也没有价值；再把本次任务交给串行计算池。池里先前排队、代次已过期的
+     * 任务在启动时自检直接退出，所以既不防抖、也不排队等待：旧任务被强行作废后新任务立刻接上。
+     */
+    private void submitAnalyze(String label, Task t) {
+        long gen = runGen.incrementAndGet();
+        Thread th = runningThread.get();
+        if (th != null) {
+            th.interrupt();       // 正在跑：打断它（阻塞 IO 立即抛错；计算循环在下个检查点退出）
         }
-        return t;
+        submitPool(label, () -> runGuarded(t, gen));
+    }
+
+    /** 计算池执行外壳：已过期代次直接不跑；被新请求取代时把任务标为 superseded（不是失败） */
+    private void runGuarded(Task t, long gen) {
+        if (gen != runGen.get()) {
+            markSuperseded(t);
+            return;               // 排队期间已被更新的请求取代：不白跑
+        }
+        runningThread.set(Thread.currentThread());
+        try {
+            runAnalyze(t);
+        } catch (Superseded e) {
+            markSuperseded(t);
+        } catch (Exception e) {
+            log.warn("汇总分析异常: {}", e.toString());
+            t.status = "error";
+            t.message = "分析失败：" + e.getMessage();
+        } finally {
+            runningThread.compareAndSet(Thread.currentThread(), null);
+            Thread.interrupted();  // 清掉打断标志，避免污染串行池的后续任务
+        }
+    }
+
+    /** 把任务标成「已被最新一轮取代」：它算的是旧数据，前端据此提示而不是当失败报错 */
+    private void markSuperseded(Task t) {
+        t.status = "superseded";
+        t.message = "数据已变动，本轮分析已被最新一轮取代（结果以最新一轮为准）";
+        log.info("汇总分析任务 [{}] 因数据变动被作废，已提前退出", t.taskId);
+    }
+
+    /** 检查点：本任务已被新请求作废 → 抛 Superseded 立刻停止（穿透各层 catch，见 runAnalyze 里的放行）。
+     *  只对「本轮分析线程」生效：同一批私有方法也会被接口线程同步调用（如拉组合列表），那些调用没有作废语义 */
+    private void checkSuperseded() {
+        Thread cur = Thread.currentThread();
+        if (cur != runningThread.get()) {
+            return;
+        }
+        if (cur.isInterrupted()) {
+            throw new Superseded();
+        }
+    }
+
+    /** 本次分析被更新请求取代（控制流用，不是错误）：一路穿到 runGuarded 收尾 */
+    private static final class Superseded extends RuntimeException {
+        Superseded() {
+            super("superseded", null, false, false);   // 不抓栈：纯控制流，且检查点调用很密
+        }
     }
 
     /**
-     * 标注样本集合（classify/）发生变化后调用：约 3 秒防抖后，自动启动一轮后台汇总分析，
-     * 把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算。
+     * 标注样本 / 分类定义（classify/）或产物（summary/）发生变化后调用：**立刻**按最新状态重跑一轮后台
+     * 汇总分析，把「有样本（≥ 1 张）且产物缺失 / 样本数有变」的分组全部补齐或重算；正在跑的旧任务
+     * （输入已经过期）当场作废让出计算池 —— 没有防抖延迟，也没有排队等待。
      *
      * <p>用于「窗口挂机持续标注」的场景：无需停留在汇总分析页，也不用点按钮，
      * 只要样本或分类定义（动作/注意点/点击点坐标）变化，summary/ 下的对照图（15 张基础合成图
      * + 15 张 -unique 独有区图 + 12 张注意区交集图 + 12 张点击区交集图）就会自动保持与最新样本一致，
-     * 供执行模式随时取用。与前端手动分析共用同一计算池，串行执行互不并发。
+     * 供执行模式随时取用。
      */
     public void requestRecompute() {
-        synchronized (recomputeLock) {
-            if (recomputeRunning) {
-                recomputeAgain = true;      // 正在跑：跑完这轮后自动补一轮，把最新变化扫进去
-                return;
-            }
-            if (recomputeArmed) {
-                return;                     // 已有防抖计划：到点时自会扫描到此刻的最新状态，无需重复排队
-            }
-            recomputeArmed = true;
-        }
-        autoScheduler.schedule(this::autoDispatch, RECOMPUTE_DELAY_MS, TimeUnit.MILLISECONDS);
+        submitAnalyze("自动重算", new Task("auto", false));   // 自动任务不进 tasks map（无需前端轮询）
     }
 
-    /** 防抖到期：占位并提交计算池（不在本调度线程里做重活） */
-    private void autoDispatch() {
-        synchronized (recomputeLock) {
-            if (!recomputeArmed) {
-                return;
-            }
-            recomputeArmed = false;
-            if (recomputeRunning) {
-                recomputeAgain = true;
-                return;
-            }
-            recomputeRunning = true;
-        }
-        submitPool("自动重算", this::runAutoRecomputeLoop);
-    }
+    /* ---------------------------------------------------------------- 智能建议（未标注图 × runtime/ 综合最佳算法） */
 
-    /** 自动重算主体：一轮扫描补齐后，若执行期间样本又变化则继续下一轮，直到追上最新状态 */
-    private void runAutoRecomputeLoop() {
-        try {
-            for (; ; ) {
-                try {
-                    runAnalyze(new Task("auto", false));   // 自动任务不进 tasks map（无需前端轮询）
-                } catch (Throwable e) {
-                    log.warn("自动汇总分析异常，本轮终止（样本再次变化时会自动重试）：{}", e.toString());
-                    return;    // 失败不原地死循环：下次 requestRecompute 自然再触发
-                }
-                boolean again;
-                synchronized (recomputeLock) {
-                    again = recomputeAgain;
-                    recomputeAgain = false;
-                }
-                if (!again) {
-                    return;
-                }
-            }
-        } finally {
-            boolean again;
-            synchronized (recomputeLock) {
-                recomputeRunning = false;
-                again = recomputeAgain;    // 极边角：最后一轮检查之后、解锁之前又收到变化
-                recomputeAgain = false;
-            }
-            if (again) {
-                requestRecompute();
-            }
-        }
-    }
-
-    /* ---------------------------------------------------------------- 智能建议（未标注图 × 已生成的七张对照图） */
-
-    /** 单图智能建议任务：把一张未标注截图交给执行模式的识别器（FrameClassifier）与各分类对照图比对 */
+    /** 单图智能建议任务：把一张未标注截图交给运行时算法（{@link RuntimeService}）与各分类产物比对 */
     public static class SuggestTask {
         public final String taskId;
         public final String file;
         public volatile String status = "running";   // running / done / error
         public volatile String message = "";
-        /** 候选组，与执行模式同口径：按五族加权差异度升序；每条含 diffPercent/recognized 等字段 */
+        /** 候选组，与执行模式同口径：按差异度（100 − 加权匹配度）升序；每条含 diffPercent/recognized 等字段 */
         public volatile List<Map<String, Object>> candidates = List.of();
-        /** 已分类原始图逐像素直比的最佳行（state/diffPercent/file/action…），无可比原图时 null。
-         *  与 candidates 按同一差异分值口径并列比较（0~100，越小越一致）——若它最低，建议分类应以它为准。 */
-        public volatile Map<String, Object> rawBest;
 
         SuggestTask(String taskId, String file) {
             this.taskId = taskId;
@@ -474,18 +430,17 @@ public class ThinkService {
         }
     }
 
-    /** 一次建议的全部结果：对照图候选 + 原图直比最佳行（rawBest 可为 null）。 */
+    /** 一次建议的全部结果：运行时算法算出的各分类候选。 */
     private static final class SuggestPack {
         final List<Map<String, Object>> candidates;
-        final Map<String, Object> rawBest;
 
-        SuggestPack(List<Map<String, Object>> candidates, Map<String, Object> rawBest) {
+        SuggestPack(List<Map<String, Object>> candidates) {
             this.candidates = candidates;
-            this.rawBest = rawBest;
         }
     }
 
-    /** 启动单图智能建议。走独立建议池，新请求使排队中的旧建议任务作废，只计算最新停留的一张图 */
+    /** 启动单图智能建议。走独立建议池，**抢断式**：新请求把正在跑的旧建议（上一张图 / 旧产物）当场作废
+     *  并打断它，只算最新停留的这一张图 —— 不再「等旧的跑完」。 */
     public String startSuggest(String file) {
         String id = UUID.randomUUID().toString();
         if (suggestTasks.size() > 100) {
@@ -493,7 +448,15 @@ public class ThinkService {
         }
         SuggestTask t = new SuggestTask(id, file);
         suggestTasks.put(id, t);
-        latestSuggest.set(t);
+        SuggestTask prev = latestSuggest.getAndSet(t);
+        if (prev != null && "running".equals(prev.status)) {
+            prev.status = "superseded";
+            prev.message = "已切换到最新一张截图";
+        }
+        Thread th = suggestThread.get();
+        if (th != null) {
+            th.interrupt();   // 打断正在跑的旧建议：立刻收手，计算池让给最新这一张
+        }
         suggestPool.submit(() -> runSuggest(t, file));
         return id;
     }
@@ -504,16 +467,23 @@ public class ThinkService {
     }
 
     private void runSuggest(SuggestTask t, String file) {
-        /* 已被更新的建议请求取代 → 作废，不再占用计算 */
-        if (latestSuggest.get() != t) {
-            t.status = "done";
-            return;
-        }
+        suggestThread.set(Thread.currentThread());   // 记下本轮线程：新请求会直接打断它
         try {
+            /* 已被更新的建议请求取代 → 当场作废，不再占用计算 */
+            if (isSuggestStale(t)) {
+                supersedeSuggest(t);
+                return;
+            }
             Path png = suggestPng(file);
             if (png == null) {
                 t.status = "error";
                 t.message = "截图不存在或尚未写入完成：" + file;
+                return;
+            }
+            if (!runtimeService.ready()) {
+                t.status = "error";
+                t.message = "还没有可用于推荐的运行时算法：请先到「算法调优」完成一轮（「刷新算法特征」或"
+                        + "「自动调整参数」），把综合最佳算法落地到 runtime/ 后，这里才会按它给出推荐分类。";
                 return;
             }
             BufferedImage target = ImageIO.read(png.toFile());
@@ -528,24 +498,49 @@ public class ThinkService {
                 pack = suggestCache.get(file + "|" + sig);
             }
             if (pack == null) {
-                List<Map<String, Object>> out = suggestWithClassifier(target);   // 复用执行模式的识别器，与执行模式同口径
-                Map<String, Object> raw = rawOriginalBest(target);                // 已分类原始图逐像素直比（比对照图口径更直接）
-                pack = new SuggestPack(out, raw);
+                List<Map<String, Object>> out = suggestWithClassifier(target);   // 走执行模式的同一运行时算法，同口径
+                if (isSuggestStale(t)) {
+                    supersedeSuggest(t);
+                    return;                       // 用户已切到下一张图：这一轮结果已经没人看了
+                }
+                pack = new SuggestPack(out);
                 synchronized (suggestCache) {
                     suggestCache.put(file + "|" + sig, pack);
                 }
             }
+            if (isSuggestStale(t)) {
+                supersedeSuggest(t);
+                return;                           // 命中缓存也要看是否已过期：结果只给最新这一张图用
+            }
             t.candidates = pack.candidates;
-            t.rawBest = pack.rawBest;
             t.status = "done";
         } catch (Exception e) {
+            if (isSuggestStale(t)) {
+                supersedeSuggest(t);              // 被打断（解码途中）不算失败：本轮已被新请求取代
+                return;
+            }
             log.warn("智能建议 分析失败 {}: {}", file, e.toString());
             t.status = "error";
             t.message = "分析失败：" + e.getMessage();
+        } finally {
+            suggestThread.compareAndSet(Thread.currentThread(), null);
+            Thread.interrupted();   // 清掉打断标志，避免污染串行池的后续任务
         }
     }
 
-    /** 建议结果签名：目标图 + 每个「对照图齐全」分类产物目录内全部对照图/info 的尺寸与修改时间（任一产物重算即失效） */
+    /** 本建议是否已被更新的请求取代（用户切到了下一张图 / 产物重算）：是则立刻收手，不再算剩下的 */
+    private boolean isSuggestStale(SuggestTask t) {
+        return latestSuggest.get() != t;
+    }
+
+    /** 作废本轮建议：结果只服务最新一张图，旧的那一轮算完也没人看 */
+    private void supersedeSuggest(SuggestTask t) {
+        t.status = "superseded";
+        t.message = "已切换到最新一张截图，本轮建议已作废";
+    }
+
+    /** 建议结果签名：目标图 + runtime/（算法定义 algorithm.json + 综合最佳算法用到的各分类产物）全部文件的
+     *  尺寸与修改时间（重跑算法调优 / 产物刷新即失效） */
     private String suggestSig(Path png, BufferedImage target) {
         StringBuilder sb = new StringBuilder();
         try {
@@ -555,38 +550,18 @@ public class ThinkService {
         } catch (IOException e) {
             sb.append("png?|");
         }
-        Path sum = storage.summary();
-        if (Files.isDirectory(sum)) {
-            try (Stream<Path> ds = Files.list(sum)) {
-                for (Path d : (Iterable<Path>) ds.filter(Files::isDirectory)
-                        .sorted(Comparator.comparing(p -> p.getFileName().toString()))::iterator) {
-                    if (!hasAllArtifacts(d)) {
-                        continue;   // 与执行模式识别器同口径：该分类适用的对照图齐全才参与
+        Path rt = storage.runtime();
+        if (Files.isDirectory(rt)) {
+            try (Stream<Path> ps = Files.walk(rt)) {
+                for (Path f : (Iterable<Path>) ps.filter(Files::isRegularFile)
+                        .sorted(Comparator.comparing(p -> rt.relativize(p).toString()))::iterator) {
+                    String rel = rt.relativize(f).toString();
+                    try {
+                        sb.append(rel).append('=').append(Files.size(f)).append(',')
+                          .append(Files.getLastModifiedTime(f).toMillis()).append(';');
+                    } catch (IOException e) {
+                        sb.append(rel).append("=?;");
                     }
-                    sb.append(d.getFileName()).append('{');
-                    // 产物全集：15 基础 + 15 -unique + 12 张注意区 + 12 张点击区交集图 + info，任一重算都使签名失效
-                    List<String> files = new ArrayList<>();
-                    for (String b : UNIQUE_BASE_KINDS) {
-                        files.add(ArtifactKind.file(b));
-                        files.add(ArtifactKind.file(b + "-unique"));
-                    }
-                    for (String c : ATTN_ALL_KINDS) {
-                        files.add(ArtifactKind.file(c));
-                    }
-                    for (String c : CLICK_ALL_KINDS) {
-                        files.add(ArtifactKind.file(c));
-                    }
-                    files.add(FILE_INFO);
-                    for (String f : files) {
-                        Path p = d.resolve(f);
-                        try {
-                            sb.append(f).append('=').append(Files.size(p)).append(',')
-                              .append(Files.getLastModifiedTime(p).toMillis()).append(';');
-                        } catch (IOException e) {
-                            sb.append(f).append("=?;");
-                        }
-                    }
-                    sb.append('}');
                 }
             } catch (IOException ignored) {
             }
@@ -608,26 +583,15 @@ public class ThinkService {
     }
 
     /**
-     * 单图智能建议：把目标截图交给「执行模式」的同一画面识别器比对打分，结果口径与执行模式完全一致——
-     * 每个分类适用其产物对照图分别同尺度逐像素比对：交集六档 same100/90/80/70/60/50 / 多数 / 均值 /
-     * 去重均值 / 1-8、1-32 块图及各自的 -unique 独有区图（30 张），另加 12 张注意区交集图
-     * attn8/32-same100/90/80/70/60/50（以该分类注意点为框心、每个分类都有）与 12 张点击区交集图
-     * click8/32-same100/90/80/70/60/50（以鼠标点击点为框心，仅 click 分类）——都是 1/8、1/32 方框小图
-     * （各交集档），在画面上同坐标裁剪比对。
-     * 判据按维度类别分三套：交集/多数类（全部交集档、多数图、1-8/1-32 多数块图、两套方框交集图
-     * 及各自的 -unique）逐像素完全一致（R/G/B 三通道差都为 0）；均值类（均值图、去重均值图、
-     * 1-8/1-32 均值块图 / 去重均值块图及各自 -unique）
-     * 走逐通道容差（三通道差都不超过 execute.rgb-dist-threshold 才算匹配，默认 255/3=85），
-     * 分类得分 = 五族加权平均 (50A+15B+10C+10D+15E)/W：A 全图交集 12 张（权 50）、B 多数 6 张（权 15）、
-     * C 均值 6 张（权 10）、D 去重均值 6 张（权 10）、E 方框交集区（注意区 12 + 点击区 12）24 张（权 15）——每族先把族内各图
-     * 「不匹配点占比」等权平均；W = 适用族的权重之和（产物齐全的参与分类五族俱备、恒为 100）；
-     * 各图照常参与：产物无任何有效像素的空图（独有区图无独有点等）没有可判别点、
-     * 无法做区分，判完全不匹配、按不匹配占比满值计。
-     * 识别不设阈值门槛：
-     * 有可比的最近似分类即视为已识别（差异度仅供展示参考）。
+     * 单图智能建议：把目标截图交给<b>运行时算法</b>（{@code runtime/}，算法调优落地的「综合最佳算法」，
+     * 见 {@link RuntimeService#classify}）识别，结果口径与执行模式完全一致——算法由若干特征
+     * （产物 kind + 基础分 X + 权重 Y）组成，逐特征同尺度逐像素比对出各分类的匹配值，先放弃「最高匹配值被
+     * ≥2 个分类并列」的打平特征，再按 Σ「匹配值 × X × Y」÷ Σ「X × Y」算出各分类匹配度；
+     * 差异度 = 100 − 匹配度。识别不设阈值门槛：有可比的最近似分类即视为已识别（差异度仅供展示参考），
+     * 最高匹配度被并列则整体判「无法区分」。
      */
     private List<Map<String, Object>> suggestWithClassifier(BufferedImage target) {
-        FrameClassifier.Outcome oc = frameClassifier.classify(target);
+        FrameClassifier.Outcome oc = runtimeService.classify(target);
         if (oc == null || oc.candidates == null || oc.candidates.isEmpty()) {
             return List.of();
         }
@@ -638,11 +602,15 @@ public class ThinkService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("state", c.state());
             m.put("dir", c.matchedFile());
-            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 各图不匹配占比的五族加权差异度（%）
+            m.put("diffPercent", Math.round(c.diffPercent() * 100.0) / 100.0);   // 差异度 = 100 − 加权匹配度（%）
             if (i == 0) {
-                m.put("action", oc.action);    // 建议分类的动作只在最佳候选上读取（来自该分类 info.json）
+                m.put("action", oc.ambiguous ? null : oc.action);   // 建议分类的动作只在最佳候选上读取（来自 algorithm.json）
             }
-            m.put("recognized", oc.recognized);          // 不设识别阈值：有可比的最近似分类即 true
+            m.put("recognized", oc.recognized);          // 不设识别阈值：有唯一最近似分类即 true（无法区分时 false）
+            if (i == 0 && oc.ambiguous) {
+                m.put("ambiguous", true);                // 最高匹配度被这几个分类并列：分不出该选哪个
+                m.put("tiedStates", List.copyOf(oc.tiedStates));
+            }
             m.put("thresholdPercent", Math.round(thr * 100.0) / 100.0);
             List<Map<String, Object>> kinds = new ArrayList<>(c.kinds().size());
             for (FrameClassifier.KindScore ks : c.kinds()) {
@@ -654,66 +622,6 @@ public class ThinkService {
         }
         return out;
     }
-
-    /**
-     * 已分类原始图直比：把目标截图与 {@code classify/} 下每一张已标注原始截图逐像素完全一致比对
-     * （RGB 三通道全等才算匹配，与交集/多数类判据同口径；工程靠 resize 对齐，同一画面应能逐像素重现），
-     * 差异分值 = 不匹配像素数 / 全图总像素 × 100（0~100，0.00% = 与某张原图逐像素完全相同）。
-     * 样本分辨率与目标不一致（resize 对齐被破坏）不可逐点直比，跳过；无任何可比样本返回 null。
-     * <p>用途：对照图（交集/均值等合成图）是分类的“概括代表”，个别画面可能被它误配到别的分类；
-     * 本结果直接与最可信的原始截图比，取全局最低差异的一张样本（含其分类与动作定义），
-     * 与对照图候选按同一差异分值口径并列比较——若它最低，建议分类应改以它为准。
-     * 注意原图直比不设缓存，每次建议都按当前已标注样本集实时计算（样本增删立即生效）。
-     */
-    private Map<String, Object> rawOriginalBest(BufferedImage target) {
-        int tw = target.getWidth(), th = target.getHeight();
-        int[] tpx = target.getRGB(0, 0, tw, th, null, 0, tw);
-        double bestDiff = Double.POSITIVE_INFINITY;
-        Map<String, Object> best = null;
-        for (Path p : annotatedPngs()) {
-            CaptureMark m = classifyStore.sampleOf(p);
-            if (m == null || trim(m.getState()).isEmpty()) {
-                continue;
-            }
-            BufferedImage bi;
-            try {
-                bi = ImageIO.read(p.toFile());
-            } catch (IOException e) {
-                continue;
-            }
-            if (bi == null || bi.getWidth() != tw || bi.getHeight() != th) {
-                continue;   // 仅同分辨率可直接逐点直比（不缩放）
-            }
-            int[] spx = bi.getRGB(0, 0, tw, th, null, 0, tw);
-            long bad = 0;
-            for (int i = 0; i < tpx.length; i++) {
-                if (((tpx[i] ^ spx[i]) & 0xffffff) != 0) {
-                    bad++;
-                }
-            }
-            double diff = bad * 100.0 / tpx.length;
-            if (diff < bestDiff) {
-                bestDiff = diff;
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("state", trim(m.getState()));
-                row.put("file", p.getFileName().toString());
-                row.put("diffPercent", Math.round(diff * 100.0) / 100.0);
-                if (m.getAction() != null) {
-                    row.put("action", m.getAction());
-                }
-                if (m.getLeft() != null) {
-                    row.put("clickLeft", m.getLeft());
-                }
-                if (m.getTop() != null) {
-                    row.put("clickTop", m.getTop());
-                }
-                best = row;
-            }
-        }
-        return best;
-    }
-
-
 
     /**
      * 1/8、1/32 多数 / 均值图：按 block×block 网格把所有样本对齐切块，将「同位置的块内全部
@@ -884,6 +792,7 @@ public class ThinkService {
         List<Map<String, Object>> out = new ArrayList<>();
         int gi = 0;
         for (Map.Entry<String, List<CaptureMark>> e : byKey.entrySet()) {
+            checkSuperseded();     // 准备阶段也可能被新请求作废（逐组合核对产物是耗时项）
             String[] sa = e.getKey().split("\u0001", 2);
             String state = sa[0];
             String action = sa[1];
@@ -1142,6 +1051,7 @@ public class ThinkService {
             t.current = "";
             int processed = 0;
             for (Map<String, Object> g : todo) {
+                checkSuperseded();   // 数据又变了 → 本任务当场作废，让最新一轮接着跑（不再把旧结果算完）
                 String state = String.valueOf(g.get("state"));
                 String action = String.valueOf(g.get("action"));
                 boolean all = Boolean.TRUE.equals(g.get("all"));   // 固定第一条「全部」：合成 12 张专用产物，不按分类分组
@@ -1154,6 +1064,8 @@ public class ThinkService {
                     }
                     processed++;
                     t.processed = processed;
+                } catch (Superseded e) {
+                    throw e;         // 被新请求作废：不算「分类失败」，直接交给 runGuarded 收尾
                 } catch (Exception e) {
                     log.warn("汇总分析 分类 [{}|{}] 分析失败: {}", state, action, e.toString());
                     t.processed = ++processed;
@@ -1168,6 +1080,8 @@ public class ThinkService {
                 t.stage = 2;
                 t.current = "";
                 uniqueClasses = refreshUniqueArtifacts(groups, t);
+            } catch (Superseded e) {
+                throw e;
             } catch (Exception e) {
                 log.warn("刷新 -unique 独有区图异常（不影响本轮分析结果）：{}", e.toString());
             }
@@ -1178,6 +1092,8 @@ public class ThinkService {
                         + (t.errors > 0 ? "（" + t.errors + " 个失败，详见日志）" : ""))
                 + (uniqueClasses > 0 ? "；独有区图已同步刷新（" + uniqueClasses + " 个分类）" : "");
             log.info("汇总分析批量分析结束：{}", t.message);
+        } catch (Superseded e) {
+            throw e;              // 被新请求作废：由 runGuarded 标成 superseded（不是失败）
         } catch (Exception e) {
             log.warn("汇总分析批量分析异常: {}", e.toString());
             t.status = "error";
@@ -1227,6 +1143,7 @@ public class ThinkService {
 
     /** 计算单个分类（state+action）的 15 张基础对照图并刷新产物目录（交集六档 + 多数/均值/去重均值/8·32 块族；固定文件名原子替换；-unique 独有区图由跨分类刷新统一生成） */
     private void computeGroup(String state, String action) throws IOException {
+        checkSuperseded();
         List<Path> pngs = annotatedPngs();
         List<Path> group = new ArrayList<>();
         for (Path p : pngs) {
@@ -1329,8 +1246,9 @@ public class ThinkService {
         int[] sumG = new int[n];
         int[] sumB = new int[n];
         boolean[] dead = new boolean[n];  // 主档（same90）未达标点：不计入公共（稳定）区域
-        // 以行带方式逐点处理，控制峰值内存
+        // 以行带方式逐点处理，控制峰值内存（每带一次作废检查：单分类像素统计也要能被秒级打断）
         for (int y = 0; y < h; y += BAND_H) {
+            checkSuperseded();
             int hh = Math.min(BAND_H, h - y);
             int[][] band = new int[S][w * hh];
             int[] buf = new int[w * hh];
@@ -1458,6 +1376,7 @@ public class ThinkService {
         String dir = dirNameOf(state, action, multiAction);
         Path gdir = groupDir(dir);
         Files.createDirectories(gdir);
+        checkSuperseded();                 // 开始写盘前最后确认：已作废就一个文件都不落
         for (int ti = 0; ti < T; ti++) {   // 六档交集图：same90/80/70/60/50/same100，全部为比对维度
             atomicWritePng(sameImgs[ti], gdir.resolve(ArtifactKind.file(SAME_TIERS.get(ti))));
         }
@@ -1587,6 +1506,7 @@ public class ThinkService {
      * 交集族不出「差异最大图」——公共区与每张原图恒一致（差异恒 0，挑不出最大者），六档图各自落盘。</p>
      */
     private void computeAllGroup() throws IOException {
+        checkSuperseded();
         List<Path> pngs = annotatedPngs();
         if (pngs.isEmpty()) {
             throw new IllegalStateException("没有已标注截图");
@@ -1648,6 +1568,7 @@ public class ThinkService {
             band[s] = new int[w * BAND_H];
         }
         for (int y0 = 0; y0 < h; y0 += BAND_H) {
+            checkSuperseded();       // 「全部」组样本最大：逐带统计也要能被秒级打断
             int bh = Math.min(BAND_H, h - y0);
             int len = w * bh;
             for (int s = 0; s < S; s++) {
@@ -1853,10 +1774,13 @@ public class ThinkService {
         }
         int refreshed = 0;
         for (List<Path> cls : byDim.values()) {
+            checkSuperseded();
             try {
                 if (refreshUniqueClass(cls, t)) {
                     refreshed += cls.size();
                 }
+            } catch (Superseded e) {
+                throw e;
             } catch (Exception e) {
                 log.warn("刷新 -unique 独有区图失败（{} 个同尺寸分类）：{}", cls.size(), e.toString());
             }
@@ -1921,6 +1845,7 @@ public class ThinkService {
         Map<Path, Map<String, Double>> covOf = new LinkedHashMap<>();
         int kindIndex = 0;
         for (String kind : UNIQUE_BASE_KINDS) {
+            checkSuperseded();
             kindIndex++;
             if (t != null) {
                 t.current = kindLabel(kind) + "（" + kindIndex + "/" + UNIQUE_BASE_KINDS.size() + "）";
@@ -2066,10 +1991,10 @@ public class ThinkService {
      * clickKinds），不再逐张 hand-write 文件名清单。方法统一 hasXxx* 命名：
      *   hasCoreArtifacts     主产物 10 张基础图（交集 90% 档 + 多数/均值/去重均值/8·32 块族）
      *   hasBaseArtifacts     全部 15 张基础图
-     *   hasCoreUniqueArtifacts / hasUniqueArtifacts   10 / 15 张 -unique 独有区图
+     *   hasUniqueArtifacts   15 张 -unique 独有区图
      *   hasAttnArtifacts（90% 档两图）/ hasAttnLowArtifacts（100% 与低档 10 张）/ hasAttnAllArtifacts
      *   hasClickArtifacts / hasClickLowArtifacts / hasClickAllArtifacts（仅 click 分类要求，其余视为通过）
-     *   hasAllArtifacts      42 / 54 张全齐（识别门禁口径，与 FrameClassifier 同源） */
+     *   hasAllArtifacts      42 / 54 张全齐（产物齐全口径，与 FrameClassifier 同源） */
 
     /** 指定 kind 分组的产物是否全部就位 */
     private static boolean hasArtifacts(Path gdir, List<String> kinds) {
@@ -2099,11 +2024,6 @@ public class ThinkService {
     /** 全部 15 张基础图是否齐全（主产物 10 张 + 交集 100/80/70/60/50 档） */
     private boolean hasBaseArtifacts(Path gdir) {
         return hasCoreArtifacts(gdir) && hasArtifacts(gdir, ArtifactKind.extraBaseKinds());
-    }
-
-    /** 主产物对应的 10 张 -unique 独有区图是否齐全 */
-    private boolean hasCoreUniqueArtifacts(Path gdir) {
-        return hasArtifacts(gdir, ArtifactKind.primaryUniqueKinds());
     }
 
     /** 全部 15 张 -unique 独有区图是否齐全 */
@@ -2609,6 +2529,7 @@ public class ThinkService {
         all.sort(Comparator.reverseOrder());   // 先删子项再删目录
         int done = 0;
         for (Path p : all) {
+            checkSuperseded();     // 清场期间数据又变 → 本任务作废，让最新一轮从干净目录重来
             try {
                 Files.deleteIfExists(p);
             } catch (IOException e) {
@@ -2624,7 +2545,7 @@ public class ThinkService {
 
     /* ---------------------------------------------------------------- 模型 */
 
-    /** 后台分析任务（running → done / error） */
+    /** 后台分析任务（running → done / error；跑一半被更新请求取代 → superseded，不算失败） */
     public static class Task {
         public final String taskId;
         public final boolean force;
@@ -2649,12 +2570,8 @@ public class ThinkService {
         public volatile int prepTotal;
         /** 准备阶段当前对象（被删产物文件名 / 正在核对的「分类标注 ｜ 动作」） */
         public volatile String prepCur = "";
-        /** 任务提交时刻（毫秒）：前端据此显示已耗时，排队/长计算期间能判断仍在推进而非卡死 */
+        /** 任务提交时刻（毫秒）：前端据此显示已耗时，长计算期间能判断仍在推进而非卡死 */
         public final long submittedAtMs = System.currentTimeMillis();
-        /** 计算池内位置：-1 = 不在队（已结束/未知）；0 = 正在执行；>0 = 前面还有多少个任务在排队 */
-        public volatile int queuePos = -1;
-        /** queuePos > 0 时队列头正在执行的任务标签（自动重算 / 重新生成全部 / 批量汇总分析） */
-        public volatile String queueActiveLabel = "";
 
         Task(String taskId, boolean force) {
             this(taskId, force, false);

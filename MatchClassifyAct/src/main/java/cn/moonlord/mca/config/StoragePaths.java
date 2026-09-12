@@ -20,6 +20,10 @@ import java.nio.file.Paths;
  *              根目录另有几个非产物的数据文件（可手删）：verify.json = 特征验证结果的完整缓存（见 VerifyService）、
  *              opt-result.json = 算法调优结果的完整缓存、opt-weights.json = 算法调优的特征选择 + 权重数值快照（见 OptimizeService），
  *              它们都不参与指纹统计（写自己不会把自己判成过期）
+ *   runtime/   运行时算法：算法调优每跑完一轮把选出的「综合最佳算法」落地到这里（&lt;分类&gt;/ 下只放该算法
+ *              「生效特征」（权重 Y &gt; 0）那几个 kind 的对照图产物 + algorithm.json 记算法特征与各分类动作 / 坐标），
+ *              执行模式与「未标注」的单图智能推荐只认这份落地物、也只按生效特征比对与加权
+ *              （不再直接读 summary/）；整个目录可随时删除后重跑算法调优重建
  * </pre>
  *
  * <p>均以进程工作目录为基准取绝对路径，便于直接查看/备份数据目录。</p>
@@ -43,6 +47,11 @@ public class StoragePaths {
     /** 汇总分析产物目录 */
     public Path summary() {
         return resolve(properties.getSummaryDir());
+    }
+
+    /** 运行时算法目录（算法调优「综合最佳算法」生效特征的对照图 + algorithm.json；执行模式与单图智能推荐只认它、也只按生效特征比对） */
+    public Path runtime() {
+        return resolve(properties.getRuntimeDir());
     }
 
     private Path resolve(String name) {

@@ -40,7 +40,7 @@ import java.util.Map;
  *   <li>{@code savedSeq}：已成功保存截图的总次数。前端每 2 秒轮询 meta，发现它比上次大，
  *       说明刚有新截图落盘，随即静默刷新截图列表（保证截图保存后约 2 秒内界面可见）；</li>
  *   <li>{@code startupDedupNotice}（{at, threshold, scanned, removed, costMs, compared, reused, minDiff}）：本次启动的历史重复清理结果
- *       （自动截图与手动去重任一开启时执行）——按两个启用阈值中较低者（默认 min(5, 0.5)=0.5）与保留图
+ *       （自动截图与手动去重任一开启时执行）——按两个启用阈值中较低者与保留图
  *       全尺寸逐像素比对，不一致像素点占比 ≤ 阈值即删（近似但不相同的画面一律保留）。不论是否删除了图片，
  *       前端都会据此在右下角提示一次清理完成
  *       （有删除：删除重复 N 张；无删除：检查完成、未发现重复图片），并附判定量
@@ -49,7 +49,8 @@ import java.util.Map;
  *   <li>{@code startupDedup}（{at, done, total, current, compared, reused, removed, costMs, running}）：启动历史重复清理的**进行态**
  *       快照。清理可能持续很久（历史全量逐像素比对，第二轮起大量命中缓存会明显变快），前端据此先提示一条
  *       「开始检查」，并在 running=true 期间显示一条一直刷新的进度消息（已判定 / 待判定张数、当前文件、
- *       已耗时、已比对 / 复用次数，同批量任务的「正在第 N 轮…（已耗时 X 秒）」）；running 变 false 后
+ *       已耗时、逐像素比对 / 复用历史比对结果的个数 —— 前端按**逗号串联、不套括号**拼成
+ *       「正在检查重复图片：849/877 张，当前文件名：IMG_xxx.png，已耗时 8 秒，复用历史比对结果 N 个」）；running 变 false 后
  *       撤掉进度消息，最终结果仍由 {@code startupDedupNotice} 给出。</li>
  * </ul></p>
  */
@@ -111,7 +112,7 @@ public class AppMetaController {
             }
         }
         // 启动历史重复清理结果：无论是否删除都提示一次，removed 供前端区分「删除重复 N 张 / 检查完成未发现重复」，
-        // compared / reused / minDiff 供前端补一句「比对 N 次（复用 M 次）、最低不一致 X%」（minDiff < 0 = 没有可比对的对、
+        // compared / reused / minDiff 供前端补一句「逐像素比对 N 个，复用历史比对结果 M 个，最低不一致 X%」（minDiff < 0 = 没有可比对的对、
         // reused > 0 = 这些比对里有多少是复用 dedup-cache.json 已存结果、没再逐像素重算）
         ScreenCaptureService.StartupDedupNotice dedup = screenCaptureService.getStartupDedupNotice();
         if (dedup != null) {

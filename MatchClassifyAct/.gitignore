@@ -10,5 +10,9 @@ summary/
 !**/src/main/**/summary/
 !**/src/test/**/summary/
 
+runtime/
+!**/src/main/**/runtime/
+!**/src/test/**/runtime/
+
 *.exe
 *.json

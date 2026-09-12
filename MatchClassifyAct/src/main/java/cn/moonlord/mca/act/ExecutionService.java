@@ -14,7 +14,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
@@ -22,7 +21,6 @@ import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -36,35 +34,41 @@ import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 执行模式的运行主轴：每轮 = 找到目标窗口 → 截取最新画面（必要时先 resize 把窗口强制对齐到
- * 与标注样本相同的尺寸）→ 把画面与各分类 summary/ 产物（对照图，15 张基础合成图 + 15 张 -unique 独有区图
- * + 12 张注意区交集图（以注意点为中心，未设 = 屏幕中心）+ 点击分类 12 张点击区交集图（以点击点为中心））
- * 逐点比对识别出当前状态 →
- * 解析该状态定义的动作与点击坐标 → 对外发布 Snapshot（含当前画面缓存，供控制台页实时展示与执行）。
+ * 执行模式的运行主轴：周期性截取目标窗口画面（必要时先 resize 对齐到与标注样本相同的尺寸），
+ * 按<b>运行时算法</b>（{@code runtime/}，算法调优选出的「综合最佳算法」，见 {@link RuntimeService}）
+ * 识别当前状态，并把结果连同动作 / 点击坐标发布成 Snapshot 供控制台页展示与执行。
  *
- * <p>与「标注模式的截图循环」是同一层截图/调窗机制，但各自独立调度：
- * 执行循环按 {@code execute.interval-ms}（默认 2s）周期运行，截图只用于识别与展示、不写盘；
- * 两种循环可同时开启（都朝同一目标尺寸收敛，互不破坏）。执行动作（{@link #act()}）不重新
- * 截图识别，直接按最近一次识别结果的动作/坐标向目标窗口发送鼠标点击事件。</p>
+ * <p>没有 runtime/ 落地物（还没跑过算法调优、或整目录被删）时不识别，直接给「先完成算法调优」的提示；
+ * 无法区分（最高匹配度被 ≥2 个分类并列）时同样不动作，并把并列的分类名称交代给页面。
+ *
+ * <p>与「标注模式的截图循环」是同一层截图 / 调窗机制，但触发方式不同：这里每一轮识别都由控制台页按需触发
+ * （「立即识别」单次，或页面「开启自动识别」逐轮调用），服务端不自己起周期任务；
+ * 截图只用于识别与展示、不写盘。</p>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ExecutionService {
 
-    /** 与截图循环一致：强制缩放窗口后，等窗口完成重排再重截验证的时长（毫秒）。 */
+    /** 与截图循环一致：强制缩放窗口后，等窗口完成重排再重截验证的时长（毫秒） */
     private static final int RESIZE_SETTLE_MS = 400;
-    /** 单轮内「截图 → 调窗 → 重截」的最多轮数。 */
+    /** 单轮内「截图 → 调窗 → 重截」的最多轮数 */
     private static final int MAX_VERIFY_ATTEMPTS = 3;
-    /** 找不到目标窗口时的告警节流。 */
+    /** 找不到目标窗口时的告警节流间隔（毫秒） */
     private static final long FIND_FAIL_LOG_INTERVAL = 20 * 1000L;
-    /** 识别一轮抛出异常时的告警节流（错误已进快照由页面展示，日志无需每轮刷屏）。 */
+    /** 识别异常时的告警节流间隔（毫秒）：错误已进快照由页面展示，无需每轮刷屏 */
     private static final long CLASSIFY_FAIL_LOG_INTERVAL = 20 * 1000L;
+    /** 等待「在途识别轮」完成的上限（毫秒）：超过则不再等，直接返回当前已有快照 */
+    private static final long BUSY_WAIT_MS = 4000;
+
+    /** 没有 runtime/ 落地物时的提示：本轮不识别，让用户先完成算法调优 */
+    private static final String NO_RUNTIME_HINT = "还没有可用于执行的运行时算法：请先到「算法调优」完成一轮"
+            + "（「刷新算法特征」或「自动调整参数」），把综合最佳算法落地到 runtime/ 后，执行与智能推荐会自动按它识别。";
 
     private final WindowFinder windowFinder;
     private final ScreenCaptureService screenCaptureService;
     private final WindowResizer windowResizer;
-    private final FrameClassifier frameClassifier;
+    private final RuntimeService runtimeService;
     private final WindowClicker windowClicker;
     private final ClassifyStore classifyStore;
     private final CaptureProperties captureProperties;
@@ -73,10 +77,7 @@ public class ExecutionService {
     /** 标注分析服务：执行页存入分类样本后请求其自动补齐/刷新汇总产物。 */
     private final ThinkService thinkService;
 
-    /** 执行循环开关：true = 周期自动截图识别；false = 停止（页面始终可「立即识别」一次）。 */
-    private final AtomicBoolean running = new AtomicBoolean(false);
-
-    /** 防重入：定时轮与手动触发可能重叠，只允许一个真正执行截图/识别。 */
+    /** 防重入：页面可能并发触发（「立即识别」与「开启自动识别」循环重叠），只允许一个真正执行截图 / 识别。 */
     private final AtomicBoolean busy = new AtomicBoolean(false);
 
     /** 最近一次识别快照（含画面缓存）。 */
@@ -89,25 +90,6 @@ public class ExecutionService {
     private long nextClassifyFailLogTime = 0;
 
     /* ================================================================ 对外控制 ========== */
-
-    public boolean isRunning() {
-        return running.get();
-    }
-
-    /** 开始执行循环：置运行标志并立即异步跑一轮，让页面尽快出第一张识别结果。 */
-    public void start() {
-        running.set(true);
-        log.info("执行循环已开启：按 {} ms 间隔周期截图识别目标窗口", executeProperties.getIntervalMs());
-        Thread first = new Thread(this::refreshNow, "exec-first-shot");
-        first.setDaemon(true);
-        first.start();
-    }
-
-    /** 停止执行循环：保留最后一次识别结果供界面查看。 */
-    public void stop() {
-        running.set(false);
-        log.info("执行循环已停止（最后一次识别结果保留在界面上）");
-    }
 
     /** 当前生效的鼠标点击方式（运行期切换值优先；未切换时用 execute.click-mode 默认）。 */
     public String getClickMode() {
@@ -131,12 +113,12 @@ public class ExecutionService {
     }
 
     /**
-     * 立即触发一轮「截图 + 识别」（等后台忙完后再执行）。供页面「立即识别」按钮使用。
+     * 立即触发一轮「截图 + 识别」。供页面「立即识别」按钮与「开启自动识别」循环逐轮调用。
      *
-     * @return 本轮产生的最新快照（若后台正忙且等待超时，则返回当前已有快照）
+     * @return 本轮产生的最新快照（若已有在途轮且等待超时，则返回当前已有快照）
      */
     public Snapshot refreshNow() {
-        long deadline = System.currentTimeMillis() + Math.max(4000, executeProperties.getIntervalMs() * 2L);
+        long deadline = System.currentTimeMillis() + BUSY_WAIT_MS;
         while (busy.get() && System.currentTimeMillis() < deadline) {
             sleepQuiet(100);
         }
@@ -149,23 +131,6 @@ public class ExecutionService {
             busy.set(false);
         }
         return latestSnapshot();
-    }
-
-    /** 定时轮询入口：只有执行循环开启时才工作；撞上忙则跳过本轮（不排队）。 */
-    @Scheduled(initialDelayString = "${execute.interval-ms:2000}",
-            fixedRateString = "${execute.interval-ms:2000}")
-    public void scheduledTick() {
-        if (!running.get()) {
-            return;
-        }
-        if (!busy.compareAndSet(false, true)) {
-            return;
-        }
-        try {
-            latest = doSnapshot();
-        } finally {
-            busy.set(false);
-        }
     }
 
     /** 最近一次识别快照；尚未产生任何一轮时给出占位快照。 */
@@ -205,7 +170,7 @@ public class ExecutionService {
             FrameCapture cap = captureCompliant(window, targetW, targetH, enforce);
             if (cap == null || cap.image == null) {
                 String msg = "截图失败：目标窗口未捕获到画面"
-                        + (enforce ? "，或窗口尺寸尚未调整到目标 " + targetW + "x" + targetH + "（执行循环会持续调整重试）" : "");
+                        + (enforce ? "，或窗口尺寸尚未调整到目标 " + targetW + "x" + targetH + "（每轮识别都会先调整重试）" : "");
                 return errorSnapshot(window, msg, System.currentTimeMillis() - t0);
             }
             // 截图成功后再取一次窗口几何信息，保证展示的是最新（resize 可能已移动/缩放窗口）
@@ -215,10 +180,18 @@ public class ExecutionService {
                 finalWin = fresh;
             }
 
-            FrameClassifier.Outcome oc = frameClassifier.classify(cap.image);
+            FrameClassifier.Outcome oc = runtimeService.classify(cap.image);
+            if (oc == null) {
+                return errorSnapshot(finalWin, NO_RUNTIME_HINT, System.currentTimeMillis() - t0);
+            }
+            if (oc.ambiguous) {
+                return errorSnapshot(finalWin, "无法区分：当前画面与「" + String.join("」「", oc.tiedStates)
+                        + "」这几个分类的匹配度并列最高，本轮不执行动作。请到「算法调优」调整权重或补充标注"
+                        + "（扩大分类间的区分度）后再执行。", System.currentTimeMillis() - t0);
+            }
             return snapshotNow(finalWin, cap.image, oc, null, System.currentTimeMillis() - t0, oc.elapsedMs);
         } catch (Exception e) {
-            // 识别异常兜底：出错误快照供页面展示，绝不丢空 latest / 让定时轮重复抛栈
+            // 异常兜底：出错误快照供页面展示，不让定时轮重复抛栈
             if (System.currentTimeMillis() > nextClassifyFailLogTime) {
                 nextClassifyFailLogTime = System.currentTimeMillis() + CLASSIFY_FAIL_LOG_INTERVAL;
                 log.warn("执行模式识别一轮异常（页面已展示错误，下轮自动重试）：{}", e.toString());
@@ -229,8 +202,8 @@ public class ExecutionService {
     }
 
     /**
-     * 截图并校验尺寸：截图尺寸一旦不是目标尺寸，就强制缩放窗口后当轮内重截验证（最多 3 次）。
-     * 与截图循环同一套调窗逻辑，保证「画面 = 目标窗口内容像素」、图片坐标可直接用于点击。
+     * 截图并校验尺寸：不符则强制调窗后当轮内重截验证（与截图循环同一套逻辑），
+     * 保证「画面 = 目标窗口内容像素」、图片坐标可直接用于点击。
      */
     private FrameCapture captureCompliant(WindowInfo window, int targetW, int targetH, boolean enforce) {
         WindowInfo current = window;
@@ -330,54 +303,8 @@ public class ExecutionService {
                 candidates = oc.candidates;
             }
 
-            // 「按已分类原图匹配」候选：把画面与 classify/ 全部已标注原始截图逐像素完全一致直比，
-            // 取不匹配点占比最低的一张（命中样本的归属分类 / 动作 / 点击坐标按标注解析），
-            // 与对照图候选按同一差异分值口径统一排序，谁最低谁就是顶部识别结果。
-            String rawState = null;
-            double rawDiff = Double.POSITIVE_INFINITY;
-            String rawFile = null;
-            String rawAction = null;
-            Integer rawLeft = null;
-            Integer rawTop = null;
-            if (oc.rawHit != null) {
-                CaptureMark m = classifyStore.readSample(oc.rawHit.file());
-                if (m != null && m.getState() != null && !m.getState().trim().isEmpty()) {
-                    rawState = m.getState();
-                    rawDiff = Math.round(oc.rawHit.diffPercent() * 100.0) / 100.0;
-                    rawFile = oc.rawHit.file();
-                    rawAction = m.getAction();
-                    rawLeft = m.getLeft();
-                    rawTop = m.getTop();
-                }
-            }
-
-            if (rawState != null) {
-                // 直比行并入候选列表并统一升序（raw 来源行不带产物 kinds、由前端据此标识为原图匹配行）
-                List<FrameClassifier.Candidate> merged = new ArrayList<>(candidates.size() + 1);
-                merged.addAll(candidates);
-                merged.add(new FrameClassifier.Candidate(rawState, rawDiff, rawFile, List.of(), true));
-                merged.sort(Comparator.comparingDouble(FrameClassifier.Candidate::diffPercent));
-                candidates = merged;
-            }
-
-            boolean useRaw = rawState != null && (!oc.recognized || rawDiff <= oc.bestDiffPercent);
-            if (useRaw) {
-                // 原图直比最低（或尚无对照候选）→ 识别结果以它为准
-                recognized = true;
-                state = rawState;
-                bestDiff = rawDiff;
-                matched = rawFile;
-                action = rawAction == null ? CaptureMark.ACTION_NONE : rawAction;
-                if (CaptureMark.ACTION_CLICK.equals(action)) {
-                    left = rawLeft;
-                    top = rawTop;
-                } else {
-                    left = null;
-                    top = null;
-                }
-            } else if (oc.recognized) {
-                // 对照图候选最低 → 识别结果照旧（动作定义由识别器随最近似分类带回，
-                // 读自该分类汇总产物 summary/<dir>/info.json：动作类型 + 点击坐标（图片像素 = 窗口坐标））
+            // 动作 / 点击坐标直接取自命中分类（runtime/algorithm.json 与标注同源）
+            if (oc.recognized) {
                 recognized = true;
                 state = oc.bestState;
                 bestDiff = Double.isNaN(oc.bestDiffPercent) ? -1 : oc.bestDiffPercent;
@@ -385,7 +312,7 @@ public class ExecutionService {
                 if (oc.action != null) {
                     action = oc.action;
                 }
-                // 关注点坐标只对「鼠标点击」分类对外暴露：无动作分类的关注点只用于产物生成/匹配，不执行动作
+                // 坐标只对「鼠标点击」分类对外暴露：无动作分类的注意点只用于产物生成 / 匹配
                 left = CaptureMark.ACTION_CLICK.equals(action) ? oc.clickLeft : null;
                 top = CaptureMark.ACTION_CLICK.equals(action) ? oc.clickTop : null;
             }
@@ -451,15 +378,15 @@ public class ExecutionService {
 
     /* ================================================================ 动作执行 ========== */
 
-    /** 触发执行：直接按「最近一次识别结果」的动作/坐标发送鼠标左键点击，不重新截图识别
-     *  （本页为人工复核/测试：画面已变化时请先点「立即识别」取得新结果再执行）。
+    /** 触发执行：按最近一次识别结果的动作 / 坐标发送鼠标左键点击，不重新截图识别。
+     *  本页为人工复核 / 测试，画面已变化时请先点「立即识别」取新结果。
      *
      *  @return 执行结果（业务未就绪时也返回 200 + ok=false + message，便于前端直接提示）
      */
     public Map<String, Object> act() {
         Map<String, Object> res = new LinkedHashMap<>();
-        Snapshot s = latestSnapshot();      // 不重新思考：直接复用最近一次识别的动作/坐标
-        // 以最近似分类为准执行，不设识别阈值门槛（差异分值仅作界面参考展示）
+        Snapshot s = latestSnapshot();
+        // 不设识别阈值门槛：以最近似分类为准（差异分值仅作界面参考）
         if (s.state() == null || s.state().isBlank()) {
             res.put("ok", false);
             res.put("message", "还没有可执行的识别结果：请先点「立即识别」识别出已标注分类后再执行。");
@@ -495,14 +422,11 @@ public class ExecutionService {
     private static final DateTimeFormatter SAMPLE_TS = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
 
     /**
-     * 快速标记（识别纠错）：把最近一次识别画面另存为所选分类的新样本，
-     * 让后续识别把该画面也归入此分类，减少“同一画面反复认错”。
+     * 快速标记（识别纠错）：把最近一次识别画面另存为所选分类的新样本，减少「同一画面反复认错」。
      *
-     * <p>写入前与「存到待标注」同一套去重判定（{@link ScreenCaptureService#duplicateReference}，
-     * 套手动保存阈值 {@code capture.diff-threshold-manual-percent}，默认 0.5%）：把画面与 capture/ +
-     * classify/ 全部同尺寸 PNG 逐像素比对、统计不一致像素点占比；与任意一张占比 ≤ 阈值即视为与
-     * 既有样本几乎重复而拒绝，避免分类样本重复堆叠。被拦截时返回 kind=dup（含 dupOf / diffPercent /
-     * threshold）便于页面提示用户改标既有样本。</p>
+     * <p>写入前去重，口径与「存到待标注」完全一致（{@link ScreenCaptureService#duplicateReference} +
+     * 手动保存阈值），避免分类样本重复堆叠；被拦截时返回 kind=dup（含 dupOf / diffPercent / threshold），
+     * 便于页面提示用户改标既有样本。</p>
      *
      * @return ok=true + 新样本文件名；失败时 ok=false + message（HTTP 200，便于前端直接提示）
      */
@@ -525,10 +449,7 @@ public class ExecutionService {
             res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
             return res;
         }
-        // 与「存到待标注」同一套去重：写入 classify/ 前把画面与 capture/ + classify/ 全部同尺寸 PNG
-        // 逐像素比对、统计不一致像素点占比（套用手动保存阈值 capture.diff-threshold-manual-percent，
-        // 默认 0.5%）；与任意一张占比 ≤ 阈值即视为与既有样本（或 capture/ 待标注图）几乎重复而拒绝，
-        // 避免 classify/ 堆叠几乎一样的重复样本。阈值 ≤ 0（去重关闭）时不检查
+        // 与「存到待标注」同一套去重；阈值 ≤ 0（去重关闭）时不检查
         double threshold = Math.round(captureProperties.getDiffThresholdManualPercent() * 100.0) / 100.0;
         if (threshold > 0) {
             ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame(), threshold);
@@ -538,7 +459,7 @@ public class ExecutionService {
                 res.put("ok", false);
                 res.put("kind", "dup");
                 res.put("dupOf", dup.name());
-                res.put("diffPercent", dup.diffPercent());   // 画面与该重复参考图的不一致像素点占比（%），前端/日志提示用
+                res.put("diffPercent", dup.diffPercent());
                 res.put("threshold", threshold);
                 if (dup.refState() != null && dup.refState().equals(st)) {
                     res.put("message", "当前画面与分类「" + st + "」的样本「" + dup.name() + "」仅 "
@@ -596,18 +517,15 @@ public class ExecutionService {
     /* ================================================================ 另存为待标注截图 ===== */
 
     /**
-     * 把当前识别画面另存为 capture/ 下的原始截图（未标注，不写标注数据）：当执行画面需要人工
-     * 精确标注 / 修正点击坐标时，先把它放进截图区，再到「标注模式」的「未标注」列表按正常流程
-     * 标注即可。执行画面本身不落盘，因此这里以「另存」方式与截图循环产物同目录、同命名风格。
+     * 把当前识别画面另存为 capture/ 下的原始截图（未标注，不写标注数据）：执行画面本身不落盘，
+     * 这里以「另存」方式与截图循环产物同目录、同命名，需要人工精确标注 / 修正坐标时再走「标注模式」。
      *
      * <p>保存前执行与自动截图循环同一套去重判定（{@link ScreenCaptureService#duplicateReference}），
-     * 但套用「手动保存」阈值 {@code capture.diff-threshold-manual-percent}（默认 0.5%，比自动截图
-     * 的 5% 更严苛）：把画面与 capture/ + classify/ 全部同尺寸 PNG 逐像素比对、统计不一致像素点占比，
-     * 须与每一张的占比都 &gt; 阈值才算「新画面」才允许另存；与任意一张占比 ≤ 阈值（几乎同一画面）即
-     * 拒绝保存，避免手工存到待标注又落盘一张几乎一样的截图。阈值 ≤ 0（关闭去重）时不检查、直接保存。
-     * 差异值与阈值在判定与提示前均先四舍五入到两位小数，拦截效果与提示文字严格一致。</p>
+     * 但套「手动保存」阈值 {@code capture.diff-threshold-manual-percent}：与任一张历史画面几乎相同即
+     * 拒绝另存，避免堆积重复的待标注图；差异与阈值都先四舍五入到两位小数，拦截效果与提示文字一致。
+     * 阈值 ≤ 0（关闭去重）时直接保存。</p>
      *
-     * @return ok=true + 新文件名；ok=false + kind=dup（不一致像素占比不达标被拦截）/ message（HTTP 200，便于前端直接提示）
+     * @return ok=true + 新文件名；ok=false + kind=dup（被去重拦截）/ message（HTTP 200，便于前端直接提示）
      */
     public Map<String, Object> saveFrameToCapture() {
         Map<String, Object> res = new LinkedHashMap<>();
@@ -617,13 +535,11 @@ public class ExecutionService {
             res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
             return res;
         }
-        // 与去重判定同一口径：阈值先四舍五入到两位小数再参与比较与提示（配置常为 5 / 0.5 这类 ≤2 位值，此处幂等）
+        // 与去重判定同一口径：阈值先四舍五入到两位小数再参与比较与提示（配置值通常 ≤2 位小数，此处幂等）
         double threshold = Math.round(captureProperties.getDiffThresholdManualPercent() * 100.0) / 100.0;
         if (threshold > 0) {
             ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame(), threshold);
             if (dup != null) {
-                // 手动另存去重：与自动截图用同一判定方法、但套手动阈值（默认 0.5%，更严苛），
-                // 只拦与某张历史画面不一致像素占比 ≤ 阈值的另存，避免堆积重复待标注图
                 String who = dup.refState() != null
                         ? "分类「" + dup.refState() + "」的样本「" + dup.name() + "」"
                         : "截图「" + dup.name() + "」";
@@ -632,7 +548,7 @@ public class ExecutionService {
                 res.put("ok", false);
                 res.put("kind", "dup");
                 res.put("dupOf", dup.name());
-                res.put("diffPercent", dup.diffPercent());   // 画面与该重复参考图的不一致像素点占比（%），前端/日志提示用
+                res.put("diffPercent", dup.diffPercent());
                 res.put("threshold", threshold);
                 res.put("message", "当前画面与" + who + "仅 " + pctText(dup.diffPercent())
                         + "% 像素点不同（≤ " + pctText(threshold) + "% 阈值，视为同一画面），本次未另存。");
@@ -671,17 +587,16 @@ public class ExecutionService {
         }
     }
 
-    /** 百分比显示文本：整数直显（1.0 → "1"）；非整数保留两位小数并去尾零（0.5 → "0.5"、0.98 → "0.98"）。
-     *  拒存提示把实际差异与阈值并排比较：若只留一位小数，0.96%~1.0% 的差异会被四舍五入显示成 1%，
-     *  与 1% 阈值并列就出现「差异为 1%（低于 1% 阈值）」的观感矛盾——两位精度让“确实低于阈值”在文字上自洽。
-     *  （判定本身始终用原始差异值比较，与这里的展示精度无关。） */
+    /** 百分比显示文本：整数直显，非整数留两位小数并去尾零。
+     *  拒存提示会把实际差异与阈值并排比较：精度不足时「确实低于阈值」的差异会被显示成与阈值相等，
+     *  观感矛盾；判定始终用原始值比较，与此处展示精度无关。 */
     private static String pctText(double v) {
         if (v == Math.rint(v)) {
             return String.valueOf((long) v);
         }
         String s = String.format(Locale.ROOT, "%.2f", v).replaceAll("0+$", "");
         if (s.endsWith(".")) {
-            // 两位四舍五入后恰好成整数（如 0.998 → "1.00" → "1"）：距阈值太近仍可能观感并排相等，改三位
+            // 两位四舍五入后恰好成整数：仍可能与阈值并排相等，改三位小数
             s = String.format(Locale.ROOT, "%.3f", v).replaceAll("0+$", "");
             s = s.endsWith(".") ? s.substring(0, s.length() - 1) : s;
         }

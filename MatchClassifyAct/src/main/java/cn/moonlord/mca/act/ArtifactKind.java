@@ -10,7 +10,7 @@ import java.util.Map;
  * {@code mark.ThinkService} 共用的唯一权威定义。
  *
  * <p>此前 kind 字面量在识别端（EXACT_KINDS / KIND_DOWN / CLICK_CROP_KINDS / ATTN_CROP_KINDS /
- * KIND_FILE / KIND_ORDER / FAMILY_KINDS / MATCH_*_FILES）与产物端（FILE_* / SAME_TIERS /
+ * KIND_FILE / KIND_ORDER / MATCH_*_FILES）与产物端（FILE_* / SAME_TIERS /
  * BASE_KINDS / UNIQUE_BASE_KINDS / ATTN_ALL_KINDS / CLICK_ALL_KINDS / KIND_FILE /
  * 各 *ArtifactsComplete）各写一遍，加一个 kind 要改十多处、极易漏改。现在全部由本表派生：
  * 新增 / 改名 / 删除一个产物 kind 只改本文件。</p>
@@ -28,7 +28,7 @@ public final class ArtifactKind {
     /** 产物形态：非方框图（全幅/块图）、注意区方框图（框心 = 注意点）、点击区方框图（框心 = 鼠标点击点） */
     public enum Crop { NONE, ATTN, CLICK }
 
-    /** 差异度权重族（下标即五族权重数组下标）：A 全图交集 / B 多数 / C 均值 / D 去重均值 / E 方框交集区 */
+    /** 产物族（只用于展示分组与命名）：交集 / 多数 / 均值 / 去重均值 / 方框交集区 */
     public enum Family { INTERSECT, MAJOR, AVG, DEDUP_AVG, CROP }
 
     /** 一个产物维度 */
@@ -100,7 +100,6 @@ public final class ArtifactKind {
 
     private static final List<String> KINDS = ALL.stream().map(Def::kind).toList();
     private static final Map<String, Def> BY_KIND = index(ALL);
-    private static final List<List<String>> FAMILY_KINDS = familyIndex(ALL);
 
     private ArtifactKind() {
     }
@@ -165,20 +164,6 @@ public final class ArtifactKind {
         return Map.copyOf(m);
     }
 
-    private static List<List<String>> familyIndex(List<Def> all) {
-        List<List<String>> out = new ArrayList<>();
-        for (Family f : Family.values()) {
-            List<String> l = new ArrayList<>();
-            for (Def d : all) {
-                if (d.family() == f) {
-                    l.add(d.kind());
-                }
-            }
-            out.add(List.copyOf(l));
-        }
-        return List.copyOf(out);
-    }
-
     /** 全部产物维度（固定展示/比较顺序） */
     public static List<Def> all() {
         return ALL;
@@ -204,29 +189,9 @@ public final class ArtifactKind {
         return d == null ? null : d.file();
     }
 
-    /** 五族权重族数 */
-    public static int familyCount() {
-        return FAMILY_KINDS.size();
-    }
-
-    /** 第 i 族的 kind 清单（0..familyCount()-1，顺序与固定展示顺序一致） */
-    public static List<String> familyKinds(int i) {
-        return FAMILY_KINDS.get(i);
-    }
-
     /** 指定形态的全部 kind */
     public static List<String> cropKinds(Crop crop) {
         return ALL.stream().filter(d -> d.crop() == crop).map(Def::kind).toList();
-    }
-
-    /** 非方框图（全幅/块图）kind：15 基础 + 15 -unique，共 30 张 */
-    public static List<String> coreKinds() {
-        return cropKinds(Crop.NONE);
-    }
-
-    /** 15 张基础图 kind（不含 -unique） */
-    public static List<String> baseKinds() {
-        return ALL.stream().filter(d -> d.crop() == Crop.NONE && d.uniqueOf() == null).map(Def::kind).toList();
     }
 
     /** 15 张 -unique 独有区图 kind */
@@ -247,11 +212,6 @@ public final class ArtifactKind {
     /** 另 5 张交集档基础图 kind */
     public static List<String> extraBaseKinds() {
         return EXTRA_BASE_KINDS;
-    }
-
-    /** 主产物 10 张基础图对应的 -unique kind */
-    public static List<String> primaryUniqueKinds() {
-        return PRIMARY_BASE_KINDS.stream().map(k -> k + "-unique").toList();
     }
 
     /** 注意区交集图全部 kind（12 张，每个分类都有） */

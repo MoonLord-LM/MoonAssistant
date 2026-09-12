@@ -141,8 +141,10 @@
   /* 「取消修改」（原「使用上次标记」）：白字白描边，便于在深色面板上辨认 */
   #btnLast{border-color:rgba(255,255,255,.85);color:#fff;background:rgba(255,255,255,.07)}
   #btnLast:hover{background:rgba(255,255,255,.18)}
-  /* 汇总分析右栏两个按钮：重新生成全部 = 清空重建（amber 琥珀色，样式同「自动调整参数」，紧接标题在左）、
-     开始分析 = 增量分析（绿主按钮，靠最右）。#btnRebuild 直接复用 .btn.amber，这里只留两按钮共用的置灰态 */
+  /* 汇总分析右栏两个按钮：一律**靠右成组、紧挨在一起**（同「算法调优」右侧两个按钮）——
+     重新生成全部 = 清空重建（amber 琥珀色，样式同「自动调整参数」，`margin-left:auto` 起头靠右）+ 开始分析 =
+     增量分析（绿主按钮，紧随其右，间隔就是 .edHead 的 8px gap）。#btnRebuild 直接复用 .btn.amber，
+     这里只留两按钮共用的置灰态 */
   #btnThinkStart{background:var(--green);border-color:var(--green);color:#fff}
   #btnThinkStart:hover{filter:brightness(1.08)}
   #btnThinkStart:disabled,#btnRebuild:disabled{opacity:.45;cursor:not-allowed}
@@ -333,12 +335,13 @@
   #coordBox .hint.bad{background:rgba(255,90,90,.10);border-left-color:var(--danger)}
   .hint.bad{color:#ffd2c9;background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.4);padding:6px 9px;border-radius:8px}
   kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
-  /* 全局底部 tips 行（每个页面各自的进度区）：常驻一行「当前进度」，居中、超长省略、只读不拦鼠标；
+  /* 全局底部 tips 行（每个页面各自的进度区）：常驻一行「当前进度」，**靠左对齐**、超长省略；
+     **进度文本可鼠标选中 / 复制**（不设 pointer-events:none、不设 user-select:none，光标为文本光标）；
      本页没任务时不显示任何文本 —— 只剩这条上边框 + 面板底色，起一条分隔线的作用。
      尺寸恒定：固定占住窗口最下 30px（--tips-h）+ 整屏宽，有无进度都不变（空态只是没字，元素不隐藏、不塌陷）——
      主区高度与右下角提示都已按它让位，故不遮挡任何内容 */
-  .tipsbar{position:fixed;left:0;right:0;bottom:0;height:var(--tips-h);z-index:45;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 14px;background:var(--panel);border-top:1px solid var(--border);color:var(--muted);font-size:12px;pointer-events:none}
-  .tipsbar .tipstx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tipsbar{position:fixed;left:0;right:0;bottom:0;height:var(--tips-h);z-index:45;display:flex;align-items:center;justify-content:flex-start;gap:8px;padding:0 14px;background:var(--panel);border-top:1px solid var(--border);color:var(--muted);font-size:12px;cursor:text}
+  .tipsbar .tipstx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;user-select:text}
   .tipsbar.on{color:#e8edf7;border-top-color:var(--border-strong)}   /* 有进度在跑：字色提亮、分界线更清楚 */
   #toasts{position:fixed;right:14px;bottom:calc(var(--tips-h) + 12px);display:flex;flex-direction:column;gap:8px;z-index:50}
   .toast{background:#20293d;color:#e8edf7;border:1px solid #33405e;border-left:3px solid var(--accent);padding:9px 14px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-width:420px;animation:fadein .18s ease}
@@ -373,10 +376,11 @@
   .smartbar .sb-title{flex:none;color:#9db4ff;font-weight:600;letter-spacing:.3px}
   .smartbar .sug b{color:var(--green);font-weight:600}
   .smartbar .cand b{color:#ffd24d}
-  .smartbar .expl{font-size:11px;color:#5f6c88}
   .smartbar.bad{color:#ffd2c9;background:rgba(255,90,90,.08)}
   .sb-btn{flex:none;border:1px solid rgba(79,140,255,.5);background:transparent;color:#9db4ff;font-size:11px;padding:1px 9px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
   .sb-btn:hover{background:var(--accent);color:#fff}
+  /* 候选行里每个候选自己的「填入」：比主按钮更小、更低调，点哪个就把哪个填成分类标注 */
+  .sb-btn.mini{margin-left:4px;padding:0 6px;font-size:10.5px;border-color:rgba(79,140,255,.35);color:#8ea6dd}
   /* 汇总分析 · 对照图卡片：卡片宽固定 = 原图 1/2 + 边框（仅当主图区窄到连一张整卡都放不下时，
      单卡由 JS 收窄到可用宽、图等比缩小完整可见，绝不横向裁掉右半）。
      #thinkPane 自身就是滚动容器（高度撑满主图区、overflow:auto）：卡片行列超出时由它出纵向滚动条，
@@ -470,13 +474,14 @@
   #vkDetailModal .row img{width:58px;height:33px;object-fit:contain;background:#0b0f18;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;flex:none}
   #vkDetailModal .row .f{flex:1;min-width:0;word-break:break-all;color:var(--muted)}
   #vkDetailModal .row .s{flex:none;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
-  /* 算法调优 · 详细说明弹窗：与 #vkDetailModal 同一套版式，但正文是一整篇说明（长、可内部滚动） */
-  #optHelpModal{background:rgba(2,4,9,.92)}
-  #optHelpModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:760px;width:100%;text-align:left;box-shadow:0 12px 32px rgba(0,0,0,.35)}
-  #optHelpModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
-  #optHelpModal .sub{color:var(--muted);font-size:11.5px;line-height:1.9;margin:2px 0 10px}
-  #optHelpModal .hlist{max-height:min(62vh,560px);overflow:auto;padding-right:6px;font-size:12px;color:var(--muted);line-height:1.9}
-  #optHelpModal .hlist b{font-weight:600}
+  /* 「算法调优 / 特征验证 / 智能分析」· 详细说明弹窗：与 #vkDetailModal 同一套版式，但正文是一整篇说明（长、可内部滚动）；
+     三处共用同一组样式（右栏 / 提示条不再常驻长文，统一改由标题后的「!」按钮点开） */
+  #optHelpModal,#vfyHelpModal,#sugHelpModal{background:rgba(2,4,9,.92)}
+  #optHelpModal .xcard,#vfyHelpModal .xcard,#sugHelpModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:760px;width:100%;text-align:left;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #optHelpModal .xt2,#vfyHelpModal .xt2,#sugHelpModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #optHelpModal .sub,#vfyHelpModal .sub,#sugHelpModal .sub{color:var(--muted);font-size:11.5px;line-height:1.9;margin:2px 0 10px}
+  #optHelpModal .hlist,#vfyHelpModal .hlist,#sugHelpModal .hlist{max-height:min(62vh,560px);overflow:auto;padding-right:6px;font-size:12px;color:var(--muted);line-height:1.9}
+  #optHelpModal .hlist b,#vfyHelpModal .hlist b,#sugHelpModal .hlist b{font-weight:600}
   /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */
   .vkwarn{color:var(--amber)}
   .vkbad{color:var(--danger)}
@@ -504,9 +509,10 @@
   #imgLightbox #lbClose:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
   .edHead{display:flex;align-items:center;gap:8px}
   .edHead h3{margin:0;font-size:14px}
-  /* 算法调优标题后的「!」说明按钮：点开详细说明弹窗（右栏不再常驻那篇长文）；小圆钮，hover 转主题蓝 */
-  .edHead .hbtn{flex:none;width:19px;height:19px;padding:0;font-size:11px;font-weight:700;line-height:1;border:1px solid var(--border-strong);border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
-  .edHead .hbtn:hover{color:#fff;border-color:var(--accent);background:rgba(79,140,255,.22)}
+  /* 「算法调优 / 特征验证」标题后与「智能分析」提示条标题后的「!」说明按钮：点开详细说明弹窗
+     （右栏 / 提示条不再常驻那篇长文）；小圆钮，hover 转主题蓝 */
+  .edHead .hbtn,.smartbar .hbtn{flex:none;width:19px;height:19px;padding:0;font-size:11px;font-weight:700;line-height:1;border:1px solid var(--border-strong);border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .edHead .hbtn:hover,.smartbar .hbtn:hover{color:#fff;border-color:var(--accent);background:rgba(79,140,255,.22)}
   .miniDot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
   .miniDot.g{background:var(--green)}
   .miniDot.d{background:var(--danger)}

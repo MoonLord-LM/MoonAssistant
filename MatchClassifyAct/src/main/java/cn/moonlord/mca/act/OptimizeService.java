@@ -45,7 +45,7 @@ import java.util.stream.Stream;
  * <li><b>单一最佳+70+%正确率特征</b>：同上，种子换成 D ≥ 70%（含 100%）的全部特征。补不满时给出界面提示。</li>
  * </ol>
  *
- * <p>每个特征的基础分 {@code X = B（自分类平均匹配值）− C（其它分类平均匹配值）}；界面权重 Y ∈ [0, 10]，默认 1。
+ * <p>每个特征的基础分 {@code X = B（自分类平均匹配值）− C（其它分类平均匹配值）}；界面权重 Y ∈ [0, 10]。
  * 某分类的总分 = Σ「(100 − 不匹配占比) × X × Y」/ Σ「X × Y」（只累加该分类能判定的特征），总分唯一最高的分类
  * 即判定结果，与样本归属分类一致即命中。
  *
@@ -88,6 +88,13 @@ import java.util.stream.Stream;
  * 所以两份任务都不会让权重只留在内存里：重启后界面与后续功能读到的就是最近一次算过的值。
  * 另有一份<b>特征选择 + 权重数值快照</b>始终保存到 {@code summary/opt-weights.json}（每次跑完覆写，
  * 供后续功能 / 开发验证直接读取，见 {@link #snapshotFile()}）。
+ *
+ * <p><b>综合最佳算法落地</b>（{@link #buildRuntime}）：无论「刷新算法特征」还是「自动调整参数」，跑完都按
+ * <b>综合分 = （1 − 无法区分率）× 匹配正确率</b> 最高的那种算法，把它的<b>生效特征</b>（权重 Y &gt; 0 的那些：
+ * kind + 基础分 X + 权重 Y）与各分类动作 / 点击坐标 / 分辨率写进 {@code runtime/algorithm.json}，
+ * 各分类对照图产物从 summary/ 复制一份到 {@code runtime/&lt;分类&gt;/}（只复制生效特征那几个 kind 的产物，
+ * summary/ 原件保留，见 {@link RuntimeService}）——执行模式与「未标注」的单图智能推荐只认这份落地物、
+ * 也只用生效特征比对与加权（见 {@link RuntimeAlgorithm#effective}），于是运行时与标注 / 汇总分析过程解耦。
  * <b>单一特征算法的权重固定 1</b>：界面不可编辑、也不参与自动调整——只有一个特征时 Y 在 Σ「X × Y」里被约掉，
  * 改它对加权平均（因而对结果）没有任何影响。评估矩阵与「刷新算法特征」共用一套，且与权重无关的部分只算一次
  * （见 {@link AlgoEval}），所以换一组权重评估一次很便宜；全部调完后用最终权重重算一遍，界面直接看到新数值。
@@ -102,6 +109,7 @@ public class OptimizeService {
     private final FrameClassifier classifier;
     private final VerifyService verify;
     private final VerifyMatrixCache matrix;
+    private final RuntimeService runtime;
 
     /** 单线程后台执行器（矩阵内逐样本比对用并行流加速）。 */
     private final ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
@@ -116,6 +124,12 @@ public class OptimizeService {
 
     /** 当前 / 最近一次任务进度。 */
     private volatile Run run;
+
+    /** 任务代次：每次新请求（刷新算法特征 / 自动调整参数）都 +1，用于把正在跑的旧任务当场作废。 */
+    private final java.util.concurrent.atomic.AtomicLong runGen = new java.util.concurrent.atomic.AtomicLong();
+
+    /** 正在跑的任务线程：新请求直接打断它（阻塞式解码立刻退出，循环在下个检查点收手）。 */
+    private final java.util.concurrent.atomic.AtomicReference<Thread> runThread = new java.util.concurrent.atomic.AtomicReference<>();
 
     /** 最近一次验证结果。 */
     private volatile Result result;
@@ -226,7 +240,7 @@ public class OptimizeService {
         }
     }
 
-    /** 一个「匹配算法」= 若干特征 + 各自的界面权重 Y（默认 1）。 */
+    /** 一个「匹配算法」= 若干特征 + 各自的界面权重 Y。 */
     public static final class Algo {
         public final String id;
         public final String name;
@@ -250,6 +264,10 @@ public class OptimizeService {
         public volatile boolean finished;
         public volatile String error;
         public volatile String stage = "准备数据";
+        /** 本次任务代次（新请求一进来就 +1，旧代次的结果一律作废）。 */
+        public final long gen;
+        /** 已被更新的请求取代：输入数据已变动，本轮结果不再有意义（不是失败），前端据此提示而不报错。 */
+        public volatile boolean superseded;
         /** 外层进度（阶段一 = 特征个数，阶段二 = 算法个数）与当前外层项。 */
         public volatile int done;
         public volatile int total;
@@ -287,6 +305,10 @@ public class OptimizeService {
         public volatile Double bestTie;
         public final long startedMs = System.currentTimeMillis();
         public volatile long endedMs;
+
+        Run(long gen) {
+            this.gen = gen;
+        }
     }
 
     /** 某特征的不匹配占比矩阵 + 各分类该特征是否「生成了有效产物」（与特征验证 Cand.valid 同口径）。 */
@@ -379,10 +401,11 @@ public class OptimizeService {
         return !algorithms().isEmpty();
     }
 
-    /** 「自动调整参数」的前置：不在跑任务、算法特征已刷新（结果已完成）且没过期，并且存在可调的权重（算法特征数 ≥ 2）。 */
+    /** 「自动调整参数」的前置：算法特征已刷新（结果已完成）且没过期，并且存在可调的权重（算法特征数 ≥ 2）。
+     *  **不再要求「当前不在跑任务」** —— 抢断式：正在跑的那一轮会被新请求当场作废并重跑。 */
     public boolean tunable() {
         ensureCacheLoaded();
-        if (running() || !ready()) {
+        if (!ready()) {
             return false;
         }
         Result res = result;
@@ -420,7 +443,8 @@ public class OptimizeService {
             return false;
         }
         List<Algo> algos = algorithms();
-        Run r = new Run();
+        long gen = supersede();
+        Run r = new Run(gen);
         r.mode = "tune";
         run = r;
         exec.submit(() -> doTune(r, algos, weightsByAlgo == null ? Map.of() : weightsByAlgo));
@@ -435,18 +459,40 @@ public class OptimizeService {
      * @return 是否成功启动
      */
     public synchronized boolean start(Map<String, List<Double>> weightsByAlgo, Collection<String> onlyIds) {
-        if (running()) {
-            return false;
-        }
         List<Algo> algos = algorithms();
         if (algos.isEmpty()) {
             return false;
         }
-        Run r = new Run();
+        long gen = supersede();
+        Run r = new Run(gen);
         r.only = onlyIds == null ? List.of() : onlyIds.stream().filter(s -> s != null && !s.isBlank()).toList();
         run = r;
         exec.submit(() -> doRun(r, algos, weightsByAlgo == null ? Map.of() : weightsByAlgo, r.only));
         return true;
+    }
+
+    /** 抢断：把正在跑的旧任务当场作废（输入已过期、跑完也没意义）并打断它，返回本次新代次。 */
+    private long supersede() {
+        long gen = runGen.incrementAndGet();
+        Run prev = run;
+        if (prev != null && !prev.finished) {
+            prev.superseded = true;
+        }
+        Thread th = runThread.get();
+        if (th != null) {
+            th.interrupt();   // 阻塞式解码立刻抛错；矩阵 / 评分循环在下个检查点收手
+        }
+        return gen;
+    }
+
+    /** 收尾：本轮被更新的请求取代 —— 结果已无意义，不覆盖 result、不落盘，只把状态标出来。 */
+    private void finishSuperseded(Run r) {
+        r.stage = "已被最新一轮取代";
+        r.finished = true;
+        r.endedMs = System.currentTimeMillis();
+        r.running = false;
+        runThread.compareAndSet(Thread.currentThread(), null);
+        Thread.interrupted();   // 清掉打断标志，避免污染串行池的后续任务
     }
 
     /** 状态 / 结果（供前端 1 秒轮询）：前置验证情况 + 算法及其特征（X）+ 任务进度 + 最近结果。 */
@@ -506,6 +552,7 @@ public class OptimizeService {
             Map<String, Object> task = new LinkedHashMap<>();
             task.put("finished", r.finished);
             task.put("error", r.error);
+            task.put("superseded", r.superseded);   // 跑一半被新请求作废：界面提示「已被最新一轮取代」而不是失败
             task.put("stage", r.stage);
             task.put("done", r.done);
             task.put("total", r.total);
@@ -861,6 +908,7 @@ public class OptimizeService {
     // ---------------------------------------------------------------- 验证
 
     private void doRun(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo, List<String> onlyIds) {
+        runThread.set(Thread.currentThread());   // 记下本轮线程：新请求会直接打断它
         // 只重算被改动的算法（onlyIds）：其余算法直接沿用上次结果里的行 —— 同一批样本 / 产物、同一份比对矩阵、
         // 权重又没变，重算只会得到一模一样的数值，省下时间的同时界面也不必把它们标成「等待刷新」
         String sig = sigOf(algos);
@@ -881,14 +929,27 @@ public class OptimizeService {
         }
         if (todo.isEmpty()) {
             // 点名的算法全都可直接复用（权重其实没改 / id 已不存在）：不跑评估，上次结果原样生效
+            // 特例：runtime/ 缺失（被清理过 / 还没落地过）时顺手按上次结果重建一次，
+            // 免得用户点了「刷新算法特征」却仍被提示「先完成算法调优」。
+            if (!runtime.ready() && prev != null && prev.algos != null) {
+                buildRuntime("verify", algos, new ArrayList<>(prev.algos), scanGroups(), 0);
+            }
             r.stage = "完成";
             r.finished = true;
             r.endedMs = System.currentTimeMillis();
             r.running = false;
+            runThread.compareAndSet(Thread.currentThread(), null);
             return;
         }
         Env env = prepare(r, todo);
         if (env == null) {
+            if (r.superseded) {
+                finishSuperseded(r);   // 建矩阵期间数据又变了：本轮作废（结果已过期），交给最新一轮
+            }
+            return;
+        }
+        if (r.superseded) {
+            finishSuperseded(r);
             return;
         }
         List<Ctx> groups = env.groups();
@@ -905,6 +966,10 @@ public class OptimizeService {
         Map<String, Map<String, Object>> fresh = new HashMap<>();
         long t0 = System.currentTimeMillis();
         for (int ai = 0; ai < todo.size(); ai++) {
+            if (r.superseded) {
+                finishSuperseded(r);   // 数据又变了：本轮评估作废（结果已过期），不落盘
+                return;
+            }
             Algo a = todo.get(ai);
             r.cur = a.name;
             r.processed = 0;
@@ -914,6 +979,10 @@ public class OptimizeService {
             r.done = ai + 1;
             r.processed = sn;
             r.allDone = baseEval + (ai + 1) * sn;
+        }
+        if (r.superseded) {
+            finishSuperseded(r);   // 中途被作废：本次结果不采用、不落盘
+            return;
         }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Algo a : algos) {
@@ -934,11 +1003,14 @@ public class OptimizeService {
         saveSnapshot(res.fp, res.sig, algos, rows);
         saveWeightsOf(rows);   // 本次算过的权重同样落盘：文件始终 = 最近一次「刷新算法特征」的生效权重
         matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
+        buildRuntime("verify", algos, rows, groups, res.costMs);   // 选出综合最佳算法落到 runtime/（执行与推荐只认它）
 
         r.stage = "完成";
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
+        runThread.compareAndSet(Thread.currentThread(), null);
+        Thread.interrupted();   // 清掉打断标志，避免污染串行池的后续任务
     }
 
     /**
@@ -989,6 +1061,9 @@ public class OptimizeService {
         r.totalSamples = sn;
         r.processed = 0;
         for (int ki = 0; ki < kinds.size(); ki++) {
+            if (r.superseded) {
+                return null;   // 数据又变了：本轮作废（调用方按 superseded 收尾）
+            }
             String kind = kinds.get(ki);
             r.cur = kind;
             r.processed = 0;
@@ -1023,8 +1098,16 @@ public class OptimizeService {
      * 全部调完用最终权重重算一遍全部算法：界面直接看到新数值、新权重（矩阵已就绪，只跑评分）。
      */
     private void doTune(Run r, List<Algo> algos, Map<String, List<Double>> weightsByAlgo) {
+        runThread.set(Thread.currentThread());   // 记下本轮线程：新请求会直接打断它
         Env env = prepare(r, algos);
         if (env == null) {
+            if (r.superseded) {
+                finishSuperseded(r);
+            }
+            return;
+        }
+        if (r.superseded) {
+            finishSuperseded(r);   // 建矩阵期间数据又变了：本轮作废，交给最新一轮
             return;
         }
         List<Ctx> groups = env.groups();
@@ -1066,6 +1149,10 @@ public class OptimizeService {
         List<Map<String, Object>> summary = new ArrayList<>();
         Random rnd = new Random();
         for (Algo a : algos) {
+            if (r.superseded) {
+                finishSuperseded(r);   // 数据又变了：本轮调整作废（结果已过期），不落盘
+                return;
+            }
             AlgoEval ev = evalOf(evals, a, env.mats(), gn, sn);
             double[] y = cur.get(a.id);
             double[] y0 = y.clone();
@@ -1101,6 +1188,9 @@ public class OptimizeService {
                 int nf = a.features.size();
                 double[] keep = new double[nf];   // 本次尝试前的值：没被采纳就还原（采纳则留下当后面尝试的起点）
                 for (int t = 1; t <= TUNE_COMBO_TRIALS; t++) {
+                    if (r.superseded) {
+                        break;                                // 已作废：本次尝试不再继续（由外层收尾）
+                    }
                     int k = 1 + rnd.nextInt(nf);              // 随机个数：1 ~ 全部特征
                     int[] idx = new int[k];
                     int picked = 0;
@@ -1162,6 +1252,9 @@ public class OptimizeService {
                 r.processed = 0;
             }
             for (int i = 0; a.features.size() >= 2 && i < a.features.size(); i++) {
+                if (r.superseded) {
+                    break;   // 已作废：这个权重不再调（由外层收尾）
+                }
                 r.done = ++done;
                 r.tuneKind = a.features.get(i).kind;
                 boolean madeSimpler = false;   // 第 4 轮里这个权重被换成过更简单的值（计数按权重算一次）
@@ -1188,6 +1281,9 @@ public class OptimizeService {
                         double pickAcc = 0;
                         double pickTie = 0;
                         for (int t = 1; t <= trials; t++) {
+                            if (r.superseded) {
+                                break;   // 已作废：这一轮尝试不再继续
+                            }
                             double cand;
                             if (round == 0) {
                                 cand = rnd.nextInt((int) (Y_MAX * Y_SCALE) + 1) / (double) Y_SCALE;   // [0, 10] 整段随机，精确到 0.001
@@ -1284,6 +1380,10 @@ public class OptimizeService {
         r.processed = 0;
         List<Map<String, Object>> rows = new ArrayList<>();
         for (int ai = 0; ai < algos.size(); ai++) {
+            if (r.superseded) {
+                finishSuperseded(r);   // 数据又变了：本次调整作废，不落盘
+                return;
+            }
             Algo a = algos.get(ai);
             r.cur = a.name;
             r.processed = 0;
@@ -1322,17 +1422,102 @@ public class OptimizeService {
         saveCache(res, t);
         saveSnapshot(res.fp, res.sig, algos, rows);
         matrix.save(res.fp);   // 逐图比对结果也落盘（特征验证没跑过时，本次算出来的矩阵同样留给下次复用）
+        buildRuntime("tune", algos, rows, groups, res.costMs);   // 选出综合最佳算法落到 runtime/（执行与推荐只认它）
 
         r.stage = "完成";
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
+        runThread.compareAndSet(Thread.currentThread(), null);
+        Thread.interrupted();   // 清掉打断标志，避免污染串行池的后续任务
         log.info("自动调整参数完成：每个算法先随机组合尝试 {} 次（随机取 1~全部 个特征、Y 随机取 [0, {}]，其余特征保持当前值），再试探 {} 个权重 × {} 轮（随机 / 网格 / 微调 / 四舍五入）× 每权重 {} 次（找到更好值后追加 {} 遍只跑随机的重试、每遍 {} 个随机值），采纳 {} 个（其中随机组合 {} 个），第 4 轮四舍五入微调把 {} 个权重换成更简单的值，权重写入 {}",
                 TUNE_COMBO_TRIALS, Y_MAX, weightsTotal, TUNE_ROUNDS, TUNE_TRIALS_ALL, repeats, TUNE_RETRY_TRIALS,
                 improved, combos, simplified, t.file);
     }
 
+    /**
+     * 把本轮选出的「综合最佳算法」落到 {@code runtime/}：综合分 = （1 − 无法区分率）× 匹配正确率，
+     * 取最高的那一种算法（与界面「综合最佳算法」同一口径）。执行模式与「未标注」的单图智能推荐只认这份落地物
+     * （见 {@link RuntimeService#classify}）：算法<b>生效特征</b>（权重 Y &gt; 0）的各分类对照图产物复制到
+     * {@code runtime/&lt;分类&gt;/}（每个分类只复制这么几个 kind：Y = 0 的特征对匹配没有贡献，不复制、也不写进定义），
+     * 特征（kind + 基础分 X + 权重 Y）与各分类动作 / 点击坐标 / 分辨率写进 {@code runtime/algorithm.json}。
+     *
+     * <p>落盘失败不影响本轮算法调优本身（下次跑完会再试一遍），执行与推荐继续用上一版 runtime/。
+     *
+     * @param source 这一轮是什么任务生成的（verify = 刷新算法特征 / tune = 自动调整参数）
+     */
+    private void buildRuntime(String source, List<Algo> algos, List<Map<String, Object>> rows,
+                              List<Ctx> groups, long costMs) {
+        Map<String, Map<String, Object>> byId = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            if (row != null && row.get("id") != null) {
+                byId.put(String.valueOf(row.get("id")), row);
+            }
+        }
+        Algo best = null;
+        Map<String, Object> bestRow = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (Algo a : algos) {
+            Map<String, Object> row = byId.get(a.id);
+            Double acc = row == null ? null : numOf(row.get("accuracy"));
+            if (acc == null) {
+                continue;   // 无从计算匹配正确率（可判定样本为 0）：这种算法谈不上综合最佳
+            }
+            Double tie = numOf(row.get("tieRate"));
+            double score = (1.0 - (tie == null ? 0.0 : tie) / 100.0) * acc;
+            if (score > bestScore) {
+                bestScore = score;
+                best = a;
+                bestRow = row;
+            }
+        }
+        if (best == null || bestRow == null) {
+            log.warn("算法调优{}完成，但没有任何算法算得出匹配正确率，跳过运行时算法落地（runtime/ 保持原样）", source);
+            return;
+        }
+        List<Double> ys = weightsOf(bestRow, best.features.size());
+        List<RuntimeAlgorithm.Feature> features = new ArrayList<>(best.features.size());
+        for (int i = 0; i < best.features.size(); i++) {
+            features.add(new RuntimeAlgorithm.Feature(best.features.get(i).kind, best.features.get(i).x, ys.get(i)));
+        }
+        List<RuntimeAlgorithm.State> states = new ArrayList<>(groups.size());
+        for (Ctx c : groups) {
+            states.add(new RuntimeAlgorithm.State(c.state(), dirName(c.dir()), c.action(), c.attnLeft(), c.attnTop(),
+                    c.actLeft(), c.actTop(), c.w(), c.h(), Map.of()));
+        }
+        RuntimeAlgorithm meta = new RuntimeAlgorithm(best.id, best.name, numOf(bestRow.get("accuracy")),
+                numOf(bestRow.get("tieRate")), bestScore, 0, 0, source, List.of(), List.of());
+        runtime.build(source, costMs, meta, features, states);
+    }
+
+    /** summary/ 分类目录的绝对路径 → 目录名（runtime/ 下的子目录名与它同名）。 */
+    private static String dirName(String dir) {
+        Path p = Path.of(dir);
+        Path name = p.getFileName();
+        return name == null ? dir : name.toString();
+    }
+
+    /** 结果行里的权重 Y（补齐 / 截断到算法特征数；缺项按 1）。 */
+    private static List<Double> weightsOf(Map<String, Object> row, int nf) {
+        List<?> ws = row != null && row.get("weights") instanceof List<?> w ? w : List.of();
+        List<Double> out = new ArrayList<>(nf);
+        for (int i = 0; i < nf; i++) {
+            Object v = i < ws.size() ? ws.get(i) : null;
+            out.add(v instanceof Number n ? roundY(clampY(n.doubleValue())) : 1.0);
+        }
+        return out;
+    }
+
+    /** 结果行里的可空数值（缺失 / null → null）。 */
+    private static Double numOf(Object o) {
+        return o instanceof Number n ? n.doubleValue() : null;
+    }
+
     private void fail(Run r, String msg) {
+        if (r.superseded) {
+            finishSuperseded(r);   // 打断造成的异常：本轮已被新请求取代，不当失败报错
+            return;
+        }
         Result res = new Result();
         res.finished = true;
         res.error = msg;
@@ -1341,6 +1526,7 @@ public class OptimizeService {
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
+        runThread.compareAndSet(Thread.currentThread(), null);
         log.warn("算法调优失败: {}", msg);
     }
 
@@ -1397,6 +1583,9 @@ public class OptimizeService {
         // 只有「没命中缓存行」的样本才会真的比对，故多数情况下一张产物都不解
         java.util.concurrent.ConcurrentHashMap<Integer, FrameClassifier.CachedPx> lazyArts = new java.util.concurrent.ConcurrentHashMap<>();
         java.util.stream.IntStream.range(0, sn).parallel().forEach(i -> {
+            if (r.superseded) {
+                return;   // 数据又变了：剩余样本不再比对（本轮作废）
+            }
             Smp smp = samples.get(i);
             r.sample = smp.png().getFileName().toString();   // 精确到张：界面显示正在比对哪一张
             int n = step.incrementAndGet();

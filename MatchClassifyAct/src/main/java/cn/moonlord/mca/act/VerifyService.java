@@ -25,6 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -84,6 +86,12 @@ public class VerifyService {
     /** 正在跑 / 刚跑完的任务进度（volatile 快照式，每次轮询读取）。 */
     private volatile Run run;
 
+    /** 任务代次：每次新请求（点「开始验证」/ 数据变动后自动重跑）都 +1，用于把正在跑着的旧任务当场作废。 */
+    private final AtomicLong runGen = new AtomicLong();
+
+    /** 正在跑的验证线程：新请求直接打断它（阻塞式解码立刻退出，样本循环在下个检查点收手）。 */
+    private final AtomicReference<Thread> runThread = new AtomicReference<>();
+
     /** 指纹缓存（3 秒 TTL，避免每次轮询全量 stat 产物/样本）。 */
     private volatile long fpAt;
     private volatile String fpLast;
@@ -96,9 +104,13 @@ public class VerifyService {
     private static final Set<String> NON_ARTIFACT =
             Set.of(CACHE_FILE, VerifyMatrixCache.CACHE_FILE, "opt-result.json", "opt-weights.json", "dedup-cache.json");
 
-    /** 是否是非产物数据文件（落盘用的 {@code *.tmp} 临时名同样排除，避免写盘瞬间把指纹带跑偏）。 */
+    /** 是否是不计入指纹的文件：① 任何 {@code *.tmp} —— 写端统一「先写 .tmp 再原子改名」，.tmp 一定是写了一半的
+     *  半成品（产物换新时它先出现、改名后又消失，计入只会让指纹在写盘瞬间抖动）；② 上面那份非产物数据文件名单。 */
     private static boolean isDataFile(String name) {
-        return NON_ARTIFACT.contains(name.endsWith(".tmp") ? name.substring(0, name.length() - 4) : name);
+        if (name.endsWith(".tmp")) {
+            return true;
+        }
+        return NON_ARTIFACT.contains(name);
     }
 
     /** JSON 读写（缓存的解析与落盘）。 */
@@ -176,8 +188,16 @@ public class VerifyService {
         public volatile int reuseKinds;
         public final long startedMs;
         public volatile long endedMs;   // 结束时刻（finished 置位时记录；0 = 尚未结束）
+        /** 本次任务代次：新请求（点开始验证 / 数据变动后重跑）一进来就 +1，旧代次的结果一律作废。 */
+        public final long gen;
+        /** 已被更新的请求取代（数据又变了）：本轮结果不再有意义，不是失败（前端据此提示而不是报错）。 */
+        public volatile boolean superseded;
+        /** 本轮运行期间样本 / 产物变动过（标注保存、汇总分析自动重算产物等）：本轮结果算的是变动之前的数据，
+         *  跑完必然被判「需重算」——界面据此说明原因，而不是让用户看着算完的结果莫名又变回「需重算」。 */
+        public volatile boolean dataChanged;
 
-        Run(String fp, int total) {
+        Run(long gen, int total) {
+            this.gen = gen;
             this.total = total;
             this.startedMs = System.currentTimeMillis();
         }
@@ -217,7 +237,8 @@ public class VerifyService {
     }
 
     /** 产物是否有有效像素（存在任一点不透明，命中即返回）；解码失败 / 全透明空图 = 生成不出有效图。
-     *  算法调优（OptimizeService）判定「可匹配样本」时共用同一口径，保证 D 与算法匹配正确率可对齐。 */
+     *  算法调优（OptimizeService）判定「可匹配样本」、画面识别（FrameClassifier）判定「并列」都用它
+     *  （空图恒 0 分、不数进并列），保证 D / 匹配正确率与运行时识别完全对齐。 */
     static boolean hasPixels(FrameClassifier.CachedPx art) {
         if (art == null) {
             return false;
@@ -239,11 +260,6 @@ public class VerifyService {
         return r != null && r.running && !r.finished;
     }
 
-    /** 当前任务进度（无任务时 null）。 */
-    public Run currentRun() {
-        return run;
-    }
-
     /** 当前样本 / 产物指纹（供算法调优判断验证结果是否新鲜；内部 3 秒缓存）。 */
     public String fingerprint() {
         return fp();
@@ -255,20 +271,45 @@ public class VerifyService {
         return kind == null ? null : results.get(kind);
     }
 
-    /** 启动一次完整验证（计算全部 kind）；已有任务在跑时拒绝并返回 false。 */
+    /**
+     * 启动一次完整验证（计算全部 kind）：**抢断式** —— 已有任务在跑就当场作废它
+     *（它读的是变动前的样本 / 产物，跑完也没有意义）并按最新状态立刻重跑，不再「等它跑完再点」。
+     */
     public synchronized boolean start() {
-        if (running()) {
-            return false;
-        }
+        long gen = supersede();
         String fp = fpNow();
         List<String> order = classifier.verifyOrder();
-        Run r = new Run(fp, order.size());
+        Run r = new Run(gen, order.size());
         run = r;
         exec.submit(() -> doRun(r, fp, order));
         return true;
     }
 
+    /** 抢断：把正在跑的旧任务当场作废（输入已过期）并打断它，返回本次新代次。 */
+    private long supersede() {
+        long gen = runGen.incrementAndGet();
+        Run prev = run;
+        if (prev != null && !prev.finished) {
+            prev.superseded = true;
+        }
+        Thread th = runThread.get();
+        if (th != null) {
+            th.interrupt();   // 阻塞式解码立刻抛错；样本循环在下个检查点收手
+        }
+        return gen;
+    }
+
+    /** 收尾：置结束标记并解绑本轮线程（被取代的任务同样走它，只是结果不落盘）。 */
+    private void endRun(Run r) {
+        r.finished = true;
+        r.endedMs = System.currentTimeMillis();
+        r.running = false;
+        runThread.compareAndSet(Thread.currentThread(), null);
+        Thread.interrupted();   // 清掉打断标志，避免污染串行池的后续任务
+    }
+
     private void doRun(Run r, String fp, List<String> order) {
+        runThread.set(Thread.currentThread());   // 记下本轮线程：新请求会直接打断它
         cacheRestored = false;   // 本轮算出来的结果即将覆盖「从缓存文件恢复」的旧结果
         // 验证逐 kind 解码全部参与分类的产物像素，走不写缓存的按需解码、每 kind 用后即释放；
         // 常驻软引用缓存是否回收交给 JVM 的 GC 决定，这里不做任何手动清理
@@ -278,10 +319,12 @@ public class VerifyService {
             groups = scanGroups();
             samples = scanSamples(groups);
         } catch (Exception e) {
+            if (r.superseded) {
+                endRun(r);   // 打断造成的异常：本轮已被最新一次验证取代，不当失败
+                return;
+            }
             r.error = "准备数据失败：" + e;
-            r.finished = true;
-            r.endedMs = System.currentTimeMillis();
-            r.running = false;
+            endRun(r);
             log.warn("特征验证准备失败: {}", e.toString());
             return;
         }
@@ -289,13 +332,31 @@ public class VerifyService {
         // 复用 FrameClassifier 缓存，这里只多放每样本一份小体积的 8/32 块序列）
         Map<String, FrameClassifier.FrameWork> works = new ConcurrentHashMap<>();
         for (int i = 0; i < order.size(); i++) {
+            if (r.superseded) {
+                break;   // 数据又变了：本任务当场作废，让最新一轮接着跑（旧结果算出来也没有意义）
+            }
+            // 每个 kind 开始前轻量比一次指纹（fp() 带 3 秒缓存，不会反复全量 stat）：样本 / 产物一旦在本轮
+            // 运行期间变过，本轮算的就仍是变动前的数据、跑完必然被判「需重算」——记下来，界面要说明原因
+            if (i > 0 && !r.dataChanged) {
+                String now = fp();
+                if (!now.equals(fp)) {
+                    r.dataChanged = true;
+                    log.warn("特征验证运行期间数据发生变动（指纹 {} → {}）：本轮结果将标记为需重算", fp, now);
+                }
+            }
             String kind = order.get(i);
             r.cur = kind;
             r.done = i;
             try {
-                KindStat st = computeKind(kind, fp, groups, samples, works);
+                KindStat st = computeKind(r, kind, fp, groups, samples, works);
+                if (st == null) {
+                    break;   // 被新请求作废：一个不完整的 kind 结果也不该采用
+                }
                 results.put(kind, st);
             } catch (Throwable e) {
+                if (r.superseded) {
+                    break;   // 打断造成的异常（解码途中被打断等）：本轮已被取代，不当失败
+                }
                 r.error = "验证 kind=" + kind + " 失败：" + e;
                 log.warn("特征验证 kind={} 失败: {}", kind, e.toString());
                 break;
@@ -303,14 +364,16 @@ public class VerifyService {
             r.done = i + 1;
         }
         // 一轮完整跑完（无中断）→ 结果完整落盘 + 逐图比对结果一起落盘：下次启动只要指纹没变就直接复用，
-        // 指纹变了也能按「每张图的大小 / 修改时间」把没变过的部分接着复用（算法调优同样直接取用）
-        if (r.error == null) {
+        // 指纹变了也能按「每张图的大小 / 修改时间」把没变过的部分接着复用（算法调优同样直接取用）；
+        // 被新请求作废的那一轮不落盘（结果既不完整、也已经过期）
+        if (r.error == null && !r.superseded) {
+            if (!r.dataChanged && !fpNow().equals(fp)) {
+                r.dataChanged = true;   // 最后一个 kind 跑完后才发生的变动：同样要把这一轮标出来
+            }
             saveCache(fp, samples.size(), groups.size());
             matrix.save(fp);
         }
-        r.finished = true;
-        r.endedMs = System.currentTimeMillis();
-        r.running = false;
+        endRun(r);
     }
 
     /** 结果 / 总览（供前端轮询）：任务进度 + 全部 kind 的评分与状态。 */
@@ -368,11 +431,14 @@ public class VerifyService {
                 task.put("costMs", Math.max(0, r.endedMs - r.startedMs));
             }
             task.put("error", r.error);
+            task.put("superseded", r.superseded);   // 跑一半被更新的请求作废：界面提示「已被最新一轮取代」而不是失败
+            task.put("dataChanged", r.dataChanged); // 运行期间数据变过：本轮结果算的是变动前的数据，界面说明原因
             task.put("done", r.done);
             task.put("total", r.total);
             task.put("cur", r.cur);
             task.put("processed", r.processed);
             task.put("totalSamples", r.totalSamples);
+            task.put("startedMs", r.startedMs);     // 开始时刻：界面按「当前时间 − 它」显示逐秒走动的已耗时
             task.put("reuseRows", r.reuseRows);     // 本轮直接复用逐图比对结果的样本张数
             task.put("reuseKinds", r.reuseKinds);   // 本轮整表复用的特征数
             out.put("task", task);
@@ -654,10 +720,13 @@ public class VerifyService {
      *  works = 本验证轮共享的每样本画面块压缩缓存（键 = 原图路径）。
      *  逐图比对结果按「原图 + 产物各自的名称/大小/修改时间」记账（{@link VerifyMatrixCache}）：没变过的
      *  整表 / 整行直接复用，连产物与原图都不解码。 */
-    private KindStat computeKind(String kind, String fp, List<Ctx> groups, List<Smp> samples,
+    private KindStat computeKind(Run r, String kind, String fp, List<Ctx> groups, List<Smp> samples,
                                  Map<String, FrameClassifier.FrameWork> works) {
         long t0 = System.currentTimeMillis();
         String file = classifier.verifyFile(kind);
+        if (r.superseded) {
+            return null;   // 已被新请求作废：不再开新的特征计算
+        }
 
         // 参与目录 = 全部分类目录（每个分类都生成全套 42 张产物，含 12 张注意区图；
         // click 分类另有 12 张点击区图 = 54 张；缺该 kind 产物只发生在旧目录尚未重算补齐时）。
@@ -684,10 +753,7 @@ public class VerifyService {
                     real++;
                 }
             }
-            Run rr = run;
-            if (rr != null) {
-                rr.reuseKinds++;
-            }
+            r.reuseKinds++;
         } else {
             boolean[] dec = new boolean[groups.size()];
             boolean[] val = new boolean[groups.size()];
@@ -742,11 +808,8 @@ public class VerifyService {
             selfOf[i] = posOf.get(pop.get(i).own().idx());
         }
 
-        Run r = run;
-        if (r != null) {
-            r.processed = 0;
-            r.totalSamples = n;
-        }
+        r.processed = 0;
+        r.totalSamples = n;
         // 逐样本并行：与全部分类同 kind 汇总图逐点比对（识别同口径）。
         // 逐图比对结果缓存：这张原图（文件名 + 大小 + 修改时间 + 所属分类尺寸）算过的整行直接取用，
         // 连原图都不解码；对不上（新图 / 图被换过）才真比一遍，并把新算的行记回缓存
@@ -756,6 +819,9 @@ public class VerifyService {
         // 只有「没命中缓存行」的样本才会真的比对，故多数情况下一张产物都不解
         ConcurrentHashMap<Integer, FrameClassifier.CachedPx> lazyArts = new ConcurrentHashMap<>();
         Stream.iterate(0, i -> i + 1).limit(n).parallel().forEach(i -> {
+            if (r.superseded) {
+                return;   // 数据又变了：剩余样本不再比对（本轮已作废，省下的是真金白银的解码 + 比对）
+            }
             Smp smp = pop.get(i);
             Ctx own = smp.own();
             Run pr = run;
@@ -884,10 +950,7 @@ public class VerifyService {
                 otherCnt[0] += omCnt;
             }
         });
-        Run runNow = run;
-        if (runNow != null) {
-            runNow.reuseRows += reuse.get();   // 整轮累加（computeKind 按 kind 顺序单线程跑）
-        }
+        r.reuseRows += reuse.get();   // 整轮累加（computeKind 按 kind 顺序单线程跑）
 
         // 整库汇总 + 分类级行（B / C / D 的统计一律排除「该分类没生成有效图」的样本）
         int totalSamples = 0;     // 全部参与分类的样本数（仅用于「样本 N 张」展示）
@@ -985,6 +1048,9 @@ public class VerifyService {
         int decidedValid = totalValid - tieValid;   // D 的分母 = 能给出结果的可匹配样本（命中 + 误判），不含无法区分的
         Double D = decidedValid == 0 ? null : hitValid * 100.0 / decidedValid;   // 匹配正确率（按能给出结果的样本计）
         Double E = totalValid == 0 ? null : tieValid * 100.0 / totalValid;       // 无法区分率（按全部可匹配样本计）
+        if (r.superseded) {
+            return null;   // 中途被作废：这一轮统计不完整（有样本被跳过），直接丢弃
+        }
         return new KindStat(kind, fp, System.currentTimeMillis(), (int) (System.currentTimeMillis() - t0),
                 A, B, OTHER, D, E, tieValid, genOk, cands.size(), totalValid, totalSamples, cands.size(), rows);
     }
