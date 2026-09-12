@@ -3021,6 +3021,7 @@ let vkCnt = null;            // 算法 kind 数（启动即预取一次、进验
 let VK_SEL = null;           // 当前选中的汇总图算法 kind
 let VK_DTL = null;           // 当前选中算法的分类级明细
 let VK_SEQ = "";             // 列表渲染签名（避免无变化时每 1 秒强制重建 DOM）
+let VK_STALE_SEEN = "";      // 已提示过「需重新验证」的指纹（样本 / 产物再变动才会再提示一次）
 let VK_TMR = null;           // 特征验证视图下的专用轮询定时器
 let vkBusy = false;          // 请求去重（防止上一轮未返回时下一轮叠发）
 let vkFil = null;            // 特征验证左栏过滤：null=全部；gen100/c80=只看该条（互斥单选，再点取消）
@@ -3218,6 +3219,14 @@ async function vkPoll(){
   const prev = VER;
   VER = j;
   if(j && j.kinds) vkCnt = j.kinds.length;
+  // 数据一有变动（指纹变了）就提示一次「需重新验证」；数据重新一致后再变动会再提示一次
+  const staleN = (j && Array.isArray(j.kinds)) ? j.kinds.filter(k => k.state === "stale").length : 0;
+  if(staleN > 0 && j.fp && j.fp !== VK_STALE_SEEN){
+    VK_STALE_SEEN = j.fp;
+    toast("已标注 / 汇总分析的数据有变动，特征验证结果已过期（" + staleN + " 种算法需重算），请重新验证。", "warn");
+  }else if(staleN === 0){
+    VK_STALE_SEEN = "";
+  }
   const sig = vkSig(j);
   if(sig !== VK_SEQ){ VK_SEQ = sig; renderVerifyList(); }
   vkTaskUi(j);
@@ -3293,12 +3302,13 @@ function renderVerifyDetail(){
     '<div class="vsub">全部可匹配样本里，与全部分类的该算法生成图比对后<b>无法给出最高值的结果</b>（最高分被 ≥2 个分类并列，分值一样、分不出该选哪一类）的占比 ' + eTxt + '，越低越好；分母 = 全部可匹配样本（命中 + 无法区分 + 误判 = 可匹配样本数），与 D 的分母不同（D 只算能给出结果的）</div></div>' +
     '<div class="vmeta">样本 ' + d.samples + ' 张 · 参与分类 ' + d.groups + ' 个</div>';
   const tb = $("vdRows"); tb.innerHTML = "";
-  // D 列「查看详细」小按钮：表格每次重渲染都是新节点，用事件委托只绑一次（弹窗内容现从 VK_DTL 取）
+  // 「查看详细」小按钮（D 列看匹配错误、E 列看无法区分）：表格每次重渲染都是新节点，用事件委托只绑一次；
+  // 按钮自带 data-m 标明要哪种明细（内容现从 VK_DTL 取，不缓存节点引用）
   tb.onclick = e => {
     const b = e.target.closest(".vkw");
     if(!b) return;
     const row = (VK_DTL && VK_DTL.rows || [])[Number(b.getAttribute("data-i"))];
-    if(row) openVkWrong(row);
+    if(row) openVkDetail(row, b.getAttribute("data-m") === "tie" ? "tie" : "wrong");
   };
   if(!d.rows || !d.rows.length || d.samples === 0){
     const tr = document.createElement("tr");
@@ -3317,11 +3327,14 @@ function renderVerifyDetail(){
     // 是否生成成功：是 / 否 + 原因（原因随本列给出，动作列只留动作本身）
     const gen = ok ? "是" : '<span class="vmiss">否，'
       + (r.missing ? "未生成对应产物" : "生成结果为全透明图") + '</span>';
-    // 确有误判或无法区分样本 → 正确率后跟一个「查看详细」小按钮（弹窗逐图列出两类明细）；
-    // 不再限定 D < 100%：D 的分母已排除无法区分样本，可能出现「D = 100% 但仍有无法区分样本」
+    // D 列（匹配正确率）与 E 列（无法区分率）各跟一个「查看详细」小按钮，分别只看匹配错误 / 无法区分；
+    // 本列没有对应样本就不出现该按钮（另一列仍可单独打开）。不再限定 D < 100%：D 的分母已排除无法区分样本，
+    // 可能出现「D = 100% 但仍有无法区分样本」
     const wrongN = Array.isArray(r.wrong) ? r.wrong.length : 0;
     const tiedN = Array.isArray(r.tied) ? r.tied.length : 0;
-    const canVkw = ok && (wrongN + tiedN) > 0;
+    const detBtn = (m, n, title) => (ok && n > 0)
+      ? '<button type="button" class="vkw" data-i="' + ri + '" data-m="' + m + '" title="' + title + '">查看详细</button>'
+      : "";
     // D 的分母（能给出结果 = 命中 + 误判）；E 的分母 = 本分类全部可匹配样本
     const decidedN = ok && r.decided != null ? r.decided : null;
     tr.innerHTML =
@@ -3329,16 +3342,21 @@ function renderVerifyDetail(){
       '<td class="ac">' + escHtml(act) + '</td>' +
       '<td class="nu">' + (ok ? fmtV(r.a) : dash) + '</td>' +
       '<td class="nu nugen">' + gen + '</td>' +
-      // D：匹配正确率（分母 = 命中 + 误判，不含无法区分）
+      // D：匹配正确率（分母 = 命中 + 误判，不含无法区分）→「查看详细」只列匹配错误
       '<td class="nu ' + (ok ? vkBC(r.c) : "") + '">' + (ok ? fmtV(r.c) : dash)
-        + (canVkw ? '<button type="button" class="vkw" data-i="' + ri + '"'
-            + ' title="逐图列出本分类的明细：' + wrongN + ' 张「最高分唯一但不是本分类」的误判，'
-            + tiedN + ' 张「最高分被 ≥2 个分类并列」的无法区分">查看详细</button>' : '')
+        + detBtn("wrong", wrongN, "逐图列出本分类的 " + wrongN + " 张匹配错误：最高分唯一（不是并列）但不是自家分类，"
+            + "按被误判到的分类分组，每行「命中 x% · 自家 y%」＝ 与误判分类生成图／与自家生成图的匹配占比；"
+            + "这些样本只进 D 的分母、不进 D 的分子")
         + '</td>' +
       // 匹配正确分类的个数 = 命中 / 能给出结果（D 的分母）
       '<td class="nu">' + (ok && r.hit != null ? r.hit + " / " + (decidedN != null ? decidedN : "—") : dash) + '</td>' +
       // E：无法区分率（最高分被 ≥2 个分类并列 → 分不出该选哪一类），越低越好；分母 = 全部可匹配样本
-      '<td class="nu ' + (ok ? vkE(r.e) : "") + '">' + (ok && r.e != null ? fmtV(r.e) : dash) + '</td>' +
+      // →「查看详细」只列无法区分（既不算命中也不算判错：进 E 的分母、不进 D 的分母）
+      '<td class="nu ' + (ok ? vkE(r.e) : "") + '">' + (ok && r.e != null ? fmtV(r.e) : dash)
+        + detBtn("tie", tiedN, "逐图列出本分类的 " + tiedN + " 张无法区分：最高分被 ≥2 个分类并列（分值一样、"
+            + "分不出该选哪一类），每行「并列 A、B · 最高 x% · 自家 y%」＝ 并列到的分类及两边的匹配占比；"
+            + "这些样本只进 E 的分母、不进 D 的分母")
+        + '</td>' +
       // 无法区分的个数 = 无法区分 / 全部可匹配样本（E 的分母）
       '<td class="nu">' + (ok && r.tie != null ? r.tie + " / " + r.samples : dash) + '</td>';
     tr.title = "样本 " + r.samples + " 张：自分类平均 " + fmtV(r.a) + "，匹配正确率 " + fmtV(r.c)
@@ -3349,19 +3367,24 @@ function renderVerifyDetail(){
   }
 }
 
-/* 分类行「查看详细」弹窗（该分类有误判 / 无法区分样本时出现，不再要求 D < 100%）。两段：① 误判——与
-   全部分类的该算法生成图比对后最高分「唯一但不是自家」的原图，按被误判到的分类分组，便于看出本分类被
-   哪个分类抢走；② 无法区分——最高分被 ≥2 个分类并列的原图，列出并列到的分类（E 的明细，这些样本既不算
-   命中也不算判错，只进 E 的分母、不进 D 的分母）。
+/* 分类行「查看详细」弹窗：D 列（匹配正确率）只看匹配错误、E 列（无法区分率）只看无法区分。
+   两种弹窗共用同一套骨架（标题 + 一行上下文 chip + 口径说明 + 缩略图列表 + 知道了），只是标题、说明段
+   与其数据集不同：① mode = "wrong" —— 与全部分类的该算法生成图比对后最高分「唯一但不是自家」的原图，
+   按被误判到的分类分组，便于看出本分类被哪个分类抢走；② mode = "tie" —— 最高分被 ≥2 个分类并列的原图，
+   列出并列到的分类（这些样本既不算命中也不算判错，只进 E 的分母、不进 D 的分母）。
    缩略图单击可看原图大图。 */
-function openVkWrong(r){
-  const wrong = (r && Array.isArray(r.wrong)) ? r.wrong : [];
-  const tied = (r && Array.isArray(r.tied)) ? r.tied : [];
+function openVkDetail(r, mode){
+  const wrongAll = (r && Array.isArray(r.wrong)) ? r.wrong : [];
+  const tiedAll = (r && Array.isArray(r.tied)) ? r.tied : [];
+  const isTie = mode === "tie";
+  const wrong = isTie ? [] : wrongAll;
+  const tied = isTie ? tiedAll : [];
   if(!wrong.length && !tied.length) return;
   const kind = (VK_DTL && VK_DTL.kind) || "";
   const info = kind ? vkInfo(kind) : { name:"—" };
   const act = ACT_LABEL[r.action] || r.action || "无动作";
-  if($("vkWrongModal")) $("vkWrongModal").remove();
+  if($("vkDetailModal")) $("vkDetailModal").remove();
+  // 匹配错误段：按「被误判到的分类」分组，并把条数多的组排前面（一眼看出本分类主要被谁抢走）
   const groups = [];
   for(const w of wrong){
     let g = groups.find(x => x.state === w.hitState);
@@ -3383,40 +3406,44 @@ function openVkWrong(r){
       '</div>').join("");
     return head + items;
   }).join("");
-  const tieBody = tied.length
-    ? '<div class="ghead">无法区分 <b>' + tied.length + ' 张</b>'
-        + '<span>最高分被 ≥2 个分类并列（分值一样、分不出该选哪一类）</span></div>'
-      + tied.map(w =>
-        '<div class="row">' +
-          '<img loading="lazy" src="' + escHtml(imgUrl(w.file)) + '" alt="' + escHtml(w.file) + '">' +
-          '<span class="f">' + escHtml(w.file) + '</span>' +
-          '<span class="s" title="最高匹配占比与被并列到的分类 / 与自家生成图的匹配占比">'
-            + '并列 ' + escHtml(w.tiedWith || "—") + ' · 最高 ' + fmtV(w.hitScore)
-            + ' · 自家 ' + fmtV(w.selfScore) + '</span>' +
-        '</div>').join("")
-    : "";
+  const tieBody = '<div class="ghead">无法区分 <b>' + tied.length + ' 张</b>'
+      + '<span>最高分被 ≥2 个分类并列（分值一样、分不出该选哪一类）</span></div>'
+    + tied.map(w =>
+      '<div class="row">' +
+        '<img loading="lazy" src="' + escHtml(imgUrl(w.file)) + '" alt="' + escHtml(w.file) + '">' +
+        '<span class="f">' + escHtml(w.file) + '</span>' +
+        '<span class="s" title="最高匹配占比与被并列到的分类 / 与自家生成图的匹配占比">'
+          + '并列 ' + escHtml(w.tiedWith || "—") + ' · 最高 ' + fmtV(w.hitScore)
+          + ' · 自家 ' + fmtV(w.selfScore) + '</span>' +
+      '</div>').join("");
+  const sub = isTie
+    ? '本分类 ' + r.samples + ' 张原图里 ' + tied.length + ' 张最高分被 ≥2 个分类「并列」（分值一样、'
+      + '分不出该选哪一类）。每行「并列 A、B · 最高 x% · 自家 y%」＝ 并列到的分类及两边的匹配占比（越高越像）；'
+      + '这些样本既不算命中也不算判错：只进 E 的分母（无法区分率 = 无法区分 / 可匹配样本）、不进 D 的分母。'
+      + '单击缩略图看原图大图。'
+    : '本分类 ' + r.samples + ' 张原图里 ' + wrong.length + ' 张最高分「唯一但不是自家分类」（匹配错误）。'
+      + '按被误判到的分类分组，每行「命中 x% · 自家 y%」＝ 该原图与「误判分类的生成图」／与「自家生成图」的'
+      + '匹配占比（命中越高、自家越低说明越像对方）；这些样本只进 D 的分母（能给出结果 = 命中 + 匹配错误）、'
+      + '不进 D 的分子。单击缩略图看原图大图。';
   const ov = document.createElement("div");
-  ov.id = "vkWrongModal";
+  ov.id = "vkDetailModal";
   ov.className = "modal-ov";
   ov.innerHTML =
     '<div class="xcard">' +
-      // 标题带上「这是哪个分类（标注 ｜ 动作）的明细」；本弹窗覆盖整页、看不到身后的右栏与表格，
+      // 标题带上「这是哪个分类（标注 ｜ 动作）的哪种明细」；本弹窗覆盖整页、看不到身后的右栏与表格，
       // 故紧随其后再用一行信息条把「哪种汇总图算法 / 几个样本 / D·E·命中」一并摆出来，不用关掉弹窗去回看
-      '<div class="xt2">匹配明细 - ' + escHtml(r.state) + ' ｜ ' + escHtml(act) + '</div>' +
+      '<div class="xt2">' + (isTie ? "无法区分明细" : "匹配错误明细") + ' - ' + escHtml(r.state) + ' ｜ ' + escHtml(act) + '</div>' +
       '<div class="xmeta">' +
         '<span>汇总图算法<b>' + escHtml(info.name) + '</b></span>' +
         '<span>样本<b>' + r.samples + ' 张</b></span>' +
         '<span>匹配正确率<b class="' + vkBC(r.c) + '">' + fmtV(r.c) + '</b></span>' +
         '<span>命中<b>' + (r.hit != null ? r.hit + " / " + (r.decided != null ? r.decided : "—") : "—") + '</b></span>' +
+        '<span>匹配错误<b>' + wrongAll.length + ' 张</b></span>' +
         '<span>无法区分率<b class="' + vkE(r.e) + '">' + fmtV(r.e) + '</b></span>' +
         '<span>无法区分<b>' + (r.tie != null ? r.tie + " / " + r.samples : "—") + '</b></span>' +
       '</div>' +
-      '<div class="sub">' + r.samples + ' 张原图里 ' + wrong.length + ' 张最佳命中「唯一但不是自家分类」'
-        + '（误判）、' + tied.length + ' 张最高分被 ≥2 个分类「并列」（无法区分）。误判段按被误判到的'
-        + '分类分组，每行「命中 x% · 自家 y%」= 该原图与「误判分类的生成图」／与「自家生成图」的匹配占比；'
-        + '无法区分段每行「并列 A、B · 最高 x% · 自家 y%」= 并列到的分类及两边的匹配占比（越高越像）；'
-        + '单击缩略图看原图大图。</div>' +
-      '<div class="list">' + wrongBody + tieBody + '</div>' +
+      '<div class="sub">' + sub + '</div>' +
+      '<div class="list">' + (isTie ? tieBody : wrongBody) + '</div>' +
       '<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="vkwOk">知道了</button></div>' +
     '</div>';
   document.body.appendChild(ov);
@@ -3436,6 +3463,9 @@ function vkTaskUi(j){
   const btn = $("btnVerifyStart"), stat = $("vkStat"), ver = $("vkVerdict");
   let base = "样本库：" + j.samples + " 张原图 · " + j.groups + " 个分类\n已算 " + (doneCount + staleCount) + "/" + total + " 种";
   if(doneCount || staleCount) base += "（已计算 " + doneCount + " · 需重算 " + staleCount + "）";   // 与列表 chip 同口径
+  // 结果来自 summary/verify.json（完整缓存）：已标注与汇总分析的数据没变就直接用上次的，不必重算
+  if(j.cached && (doneCount || staleCount)) base += "\n已从 summary/" + (j.cacheFile || "verify.json") + " 恢复上次结果（数据没变即可直接用）。";
+  if(staleCount) base += "\n注意：已标注 / 汇总分析的数据有变动，需重新验证（" + staleCount + " 种）。";
   if(j.running && t && !t.finished){
     bar.style.display = "block";
     const curName = t.cur ? vkInfo(t.cur).name : "准备中";
@@ -3489,7 +3519,9 @@ let OPT_TMR = null;    // 本视图专用轮询定时器（1 秒，仅停留该�
 let optBusy = false;   // 请求去重（上一轮未返回时不叠发）
 let optSig = "";       // 主图区算法结构签名（算法 + 特征 + 基础分 X），变化才重建（避免轮询打断 Y 输入）
 let optResSig = "";    // 结果区签名（值变化才重建）
-let optY = {};         // 权重草稿 { 算法id: { sig, en:[bool], vals:[num] } }，默认全启用 + Y = 1
+let optY = {};         // 权重草稿 { 算法id: { sig, single, en:[bool], vals:[num] } }，起点 = 后端保存的权重 / 默认全启用 + 1
+let optWSig = "";      // 后端保存的权重签名（「自动调整参数」落盘 / 手改权重文件后，把新值同步回权重框）
+let OPT_STALE_SEEN = ""; // 已提示过「需重新计算」的指纹（三处数据再变动才会再提示一次）
 let optCnt = null;     // 算法个数（顶栏「算法调优(N)」用：启动即预取一次、进本视图轮询刷新，与 vkCnt 同一套做法）
 let optCntBusy = false;// 预取去重（上一轮未返回时不叠发）
 
@@ -3497,18 +3529,30 @@ let optCntBusy = false;// 预取去重（上一轮未返回时不叠发）
 function optFeatSig(a){ return ((a && a.features) || []).map(f => f.kind).join(","); }
 function optAlgo(id){ return ((OPT && OPT.algos) || []).find(a => a.id === id) || null; }
 function optXof(id, i){ const a = optAlgo(id); return a && a.features[i] ? a.features[i].x : 0; }
-/* 取（或初始化）某算法的权重草稿：特征集合未变则沿用用户已改的 Y / 启用状态 */
+/* 取（或初始化）某算法的权重草稿：特征集合未变则沿用用户已改的 Y / 启用状态。
+   起点 = 后端保存的权重（「自动调整参数」落盘的那份，见 /status 的 algos[].weights），没记录才默认「全启用 + Y = 1」 */
 function optYof(a){
   const sig = optFeatSig(a);
   let d = optY[a.id];
   if(!d || d.sig !== sig || d.en.length !== a.features.length){
-    d = { sig:sig, en:a.features.map(()=>true), vals:a.features.map(()=>1) };
+    // 单一特征算法：权重固定 1、恒启用（只有一个特征时 Y 在加权平均里被约掉，改它没有意义）
+    const single = a.features.length <= 1;
+    const arr = Array.isArray(a.weights) ? a.weights : [];
+    const en = [], vals = [];
+    for(let i = 0; i < a.features.length; i++){
+      const y = Number(arr[i]);
+      const ok = arr[i] != null && !isNaN(y) && y > 0;
+      en.push(single ? true : (arr[i] == null || isNaN(y) ? true : y > 0));
+      vals.push(single || !ok ? 1 : Math.round(y * 1000) / 1000);
+    }
+    d = { sig:sig, single:single, en:en, vals:vals };
     optY[a.id] = d;
   }
   return d;
 }
 function fmtX(v){ if(v == null || isNaN(v)) return "—"; return (Math.round(v * 100) / 100).toFixed(2); }
-function fmtY(v){ if(v == null || isNaN(v)) return "1"; return String(Math.round(v * 100) / 100); }
+/* 权重 Y：步进 0.001，故按三位小数显示（0.37 → 0.37、0.333 → 0.333、整数 1 → 1） */
+function fmtY(v){ if(v == null || isNaN(v)) return "1"; return String(Math.round(v * 1000) / 1000); }
 
 /* 进入算法调优工作台（左栏 = 算法列表；主图区 = 算法特征与权重 Y + 结果；右栏 = 进度与结论） */
 function enterOpt(){
@@ -3537,6 +3581,7 @@ function enterOpt(){
   $("thinkBar").hidden = true;
   optSig = "";
   optResSig = "";
+  optWSig = "";
   optY = {};
   $("optPane").style.display = "block";
   renderOptList();
@@ -3554,6 +3599,7 @@ function exitOpt(){
   OPT = null;
   optSig = "";
   optResSig = "";
+  optWSig = "";
   optY = {};
 }
 
@@ -3593,7 +3639,7 @@ function renderOptList(){
       '<span class="chip vkc ' + chipCls + '">' + (r ? (acc == null ? "—" : fmtV(acc)) : "未计算") + '</span></div>' +
       '<div class="r2">' + (r ? a.features.length + ' 个特征' +
         (a.note ? ' · <span style="color:var(--amber)">' + escHtml(a.note) + '</span>'
-                : (acc != null ? ' · 命中 ' + r.hit + '/' + r.samples
+                : (acc != null || r.tie ? ' · 命中 ' + r.hit + '/' + optDecided(r)
                     + (r.tie ? ' · 无法区分 ' + r.tie + '（' + fmtV(r.tieRate) + '）' : '') : ''))
         : '未计算 · ' + ((j.verify && j.verify.running) ? '特征验证运行中…' : '先完成「特征验证」，算法与特征会自动组合')) + '</div>';
     li.addEventListener("click", ()=>{ const el = $("optA" + a.id); if(el) el.scrollIntoView({ behavior:"smooth", block:"center" }); });
@@ -3628,19 +3674,26 @@ function optEnsureMain(){
     if(!a.features.length){
       rows = '<tr><td colspan="5" style="color:var(--muted)">未计算：先完成「特征验证」，这里会自动列出参与的特征与基础分 X</td></tr>';
     }
+    // 单一特征算法：权重固定 1（不可编辑、不参与「自动调整参数」），启用勾也一并锁上（取消它 = 这个算法没有特征了）
+    const single = a.features.length <= 1;
     for(let i = 0; i < a.features.length; i++){
       const f = a.features[i];
       const eff = d.en[i] ? f.x * d.vals[i] : 0;
       rows +=
         '<tr>' +
           '<td><input type="checkbox" class="optYen" data-a="' + a.id + '" data-i="' + i + '"' + (d.en[i] ? " checked" : "") +
-            ' title="取消勾选 = 该特征不参与本算法（等价于权重 0）"></td>' +
+            (single ? " disabled" : "") +
+            ' title="' + (single ? "单一特征算法：权重固定 1、不可取消（只有一个特征时权重在加权平均里被约掉）"
+                               : "取消勾选 = 该特征不参与本算法（等价于权重 0）") + '"></td>' +
           '<td><span class="t">' + escHtml(vkInfo(f.kind).name) + '</span>' +
             '<div class="ocap" style="margin:0">' + escHtml(f.why || "") +
-            '　A ' + fmtV(f.b) + ' · B ' + fmtV(f.a) + ' · C ' + fmtV(f.other) + ' · D ' + fmtV(f.c) + '</div></td>' +
+            '　A ' + fmtV(f.b) + ' · B ' + fmtV(f.a) + ' · C ' + fmtV(f.other) + ' · D ' + fmtV(f.c) +
+            ' · E ' + fmtV(f.e) + '</div></td>' +
           '<td class="nu">' + fmtX(f.x) + '</td>' +
-          '<td><input type="number" class="optYin" data-a="' + a.id + '" data-i="' + i + '" min="0" max="1" step="0.01" value="' + d.vals[i] +
-            '" title="该特征在本算法里的权重 Y（0~1，默认 1，步进 0.01）；点右上角「验证所有算法」生效"></td>' +
+          '<td><input type="number" class="optYin" data-a="' + a.id + '" data-i="' + i + '" min="0" max="1" step="0.001" value="' + d.vals[i] +
+            (single ? " disabled" : "") +
+            ' title="' + (single ? "单一特征算法：权重固定 1、不可编辑（只有一个特征时 Y 在加权平均里被约掉），也不需要自动调整"
+                                : "该特征在本算法里的权重 Y（0~1，默认 1，步进 0.001，上下箭头 / 手输都按 0.001 收齐）；点右上角「验证所有算法」生效") + '"></td>' +
           '<td class="nu" id="optEff-' + a.id + '-' + i + '">' + fmtX(eff) + '</td>' +
         '</tr>';
     }
@@ -3648,7 +3701,8 @@ function optEnsureMain(){
       '<div class="optcard" id="optA' + a.id + '">' +
         '<h4>' + escHtml(a.name) + '</h4>' +
         '<div class="ocap">' + escHtml(a.desc) +
-          (a.note ? '<br><b style="color:var(--amber)">' + escHtml(a.note) + '</b>' : '') + '</div>' +
+          (a.note ? '<br><b style="color:var(--amber)">' + escHtml(a.note) + '</b>' : '') +
+          (single ? '<br><b style="color:var(--muted)">单一特征算法：权重固定 1、不可编辑，也不参与「自动调整参数」。</b>' : '') + '</div>' +
         '<div class="optTblWrap" style="max-height:none"><table class="optTbl"><thead><tr>' +
           '<th>启用</th><th>特征（A 生成成功率 / B 自分类 / C 其它 / D 正确率）</th><th>基础分 X = B − C</th><th>权重 Y</th><th>生效 X × Y</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
@@ -3666,8 +3720,8 @@ function optEnsureMain(){
       if(!d) return;
       const i = Number(inp.dataset.i);
       const v = Number(inp.value);
-      // 夹到 [0,1] 并对齐输入框步进（step=0.01）取两位小数：手输 0.333 也统一成 0.33
-      d.vals[i] = isNaN(v) ? 1 : Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
+      // 夹到 [0,1] 并对齐输入框步进（step=0.001）取三位小数：手输 0.3333 也统一成 0.333
+      d.vals[i] = isNaN(v) ? 1 : Math.round(Math.max(0, Math.min(1, v)) * 1000) / 1000;
       const cell = $("optEff-" + inp.dataset.a + "-" + i);
       if(cell) cell.textContent = fmtX(d.en[i] ? d.vals[i] * optXof(inp.dataset.a, i) : 0);
       optSyncRunBtn();
@@ -3690,6 +3744,12 @@ function optEnsureMain(){
   });
 }
 
+/* 正确率分母 = 能给出结果的样本（命中 + 判错）= 可判定样本 − 无法区分，与特征验证的 D 同口径 */
+function optDecided(r){
+  if(r && r.decided != null) return r.decided;
+  return ((r && Number(r.samples)) || 0) - ((r && Number(r.tie)) || 0);
+}
+
 /* 单个算法的结果卡（大数字 = 匹配正确率 + 无法区分率 + 各分类明细，details 折叠） */
 function optResCard(r){
   const rows = Array.isArray(r.rows) ? r.rows : [];
@@ -3698,7 +3758,8 @@ function optResCard(r){
   for(const x of rows){
     trs += '<tr><td>' + escHtml(x.state) + '</td>' +
       '<td style="color:var(--muted)">' + escHtml(x.action || "") + '</td>' +
-      '<td class="nu">' + x.samples + '</td><td class="nu">' + x.hit + '</td>' +
+      '<td class="nu">' + x.samples + '</td>' +
+      '<td class="nu">' + x.hit + ' / ' + optDecided(x) + '</td>' +
       '<td class="nu ' + (x.tieRate == null ? "" : vkE(x.tieRate)) + '">' + (x.tie || 0) + '</td>' +
       '<td class="nu ' + (x.acc == null ? "" : vkBC(x.acc)) + '">' + fmtV(x.acc) + '</td>' +
       '<td class="nu ' + (x.tieRate == null ? "" : vkE(x.tieRate)) + '">' + fmtV(x.tieRate) + '</td></tr>';
@@ -3708,21 +3769,23 @@ function optResCard(r){
   return '<div class="vcard">' +
     '<div class="vcap">匹配正确率</div>' +
     '<div class="vval' + (r.accuracy == null ? "" : " " + vkBC(r.accuracy)) + '">' + fmtV(r.accuracy) + '</div>' +
-    // 口径与「特征验证」的匹配正确率（D）一致：命中 = 自家匹配度唯一最高；打平不再算命中，改单列「无法区分」
+    // 口径与「特征验证」的匹配正确率（D）一致：命中 = 自家匹配度唯一最高；打平不算命中、不算判错、不进分母
     '<div class="vsub" title="命中 = 该样本的自家匹配度是全场唯一最高（并列不算命中）。无法区分 = 放弃分不开的特征后，' +
-      '最高匹配度仍被 ≥2 个分类并列（或本样本可用特征被全部放弃），既不算命中也不算判错。' +
+      '最高匹配度仍被 ≥2 个分类并列（或本样本可用特征被全部放弃）：既不算命中也不算判错，也不进正确率的分母。' +
       '跳过 = 归属分类在本算法参与的特征上都没有有效产物，计入不了对错。">' +
-      '命中 ' + r.hit + ' / ' + r.samples + ' · 判错 ' + miss(r) +
+      '命中 ' + r.hit + ' / ' + optDecided(r) + '（判错 ' + miss(r) + '）' +
+      (r.tie ? ' · 无法区分 ' + r.tie + ' 张（' + fmtV(r.tieRate) + '，不计入正确率）' : '') +
       (r.skipped ? ' · 跳过 ' + r.skipped + ' 张（归属分类无有效产物）' : '') + ' · 耗时 ' + vkCost(r.costMs) + '</div>' +
     '<div class="vcap" style="margin-top:8px">无法区分率</div>' +
     '<div class="vval' + (eCls ? " " + eCls : "") + '">' + fmtV(r.tieRate) + '</div>' +
     '<div class="vsub">最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类）的样本占比：' +
-      (r.tie || 0) + ' / ' + r.samples + ' 张。逐张样本先放弃「分不开」的特征再重新加权，仍并列才算无法区分，' +
+      (r.tie || 0) + ' / ' + r.samples + ' 张（分母 = 可判定样本、含无法区分；正确率的分母不含它，' +
+      '故正确率 + 无法区分率不一定等于 100%）。逐张样本先放弃「分不开」的特征再重新加权，仍并列才算无法区分，' +
       '与特征验证的 E 同口径</div>' +
     (w.length ? '<div class="vsub">权重 Y：' + w.map(fmtY).join(" / ") + '</div>' : '') +
     '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看各分类准确率与无法区分率</summary>' +
       '<div class="optTblWrap" style="max-height:32vh;margin-top:6px"><table class="optTbl"><thead><tr>' +
-        '<th>分类</th><th>动作</th><th>样本</th><th>命中</th><th>无法区分</th><th>准确率</th><th>无法区分率</th>' +
+        '<th>分类</th><th>动作</th><th>样本</th><th>命中/能给出结果</th><th>无法区分</th><th>准确率</th><th>无法区分率</th>' +
       '</tr></thead><tbody>' + (trs || '<tr><td colspan="7" style="color:var(--muted)">无数据</td></tr>') + '</tbody></table></div>' +
     '</details>' +
   '</div>';
@@ -3731,32 +3794,37 @@ function optResCard(r){
 /* 右栏结论：按匹配正确率给算法排序；结果仍分不出唯一一类时给出「无法区分」的最终结论 */
 function optVerdict(res){
   const all = Array.isArray(res.algos) ? res.algos : [];
-  const list = all.filter(r => r.accuracy != null).sort((a, b) => b.accuracy - a.accuracy);
+  // 正确率分母已剔除无法区分样本（与特征验证的 D 同口径）：全部样本都无法区分时 accuracy = null，
+  // 这类算法仍要参与「最终结论 = 无法区分」的判定，所以排序时把 null 当 −1（低于任何有结果的算法）
+  const accOf = r => (r.accuracy == null ? -1 : r.accuracy);
+  const list = all.filter(r => r.accuracy != null || r.tie > 0).sort((a, b) => accOf(b) - accOf(a));
   if(!list.length) return "";
   const top = list[0];
   const miss = r => (r.miss == null ? (r.samples - r.hit - (r.tie || 0)) : r.miss);
-  // 最终结论 = 无法区分：最高正确率的算法下，全部可判定样本都分不出唯一一类
-  if(top.tieRate != null && top.tieRate >= 100 && top.tie > 0){
+  // 最终结论 = 无法区分：最高正确率的算法下，全部可判定样本都分不出唯一一类（没一张能给出结果 → accuracy 为 null）
+  if(top.accuracy == null && top.tie > 0){
     return '<div class="optcard"><h4>结论</h4><div class="ocap">' +
       '<b style="color:var(--text)">无法区分</b>：' + escHtml(top.name) + ' 下 ' + top.tie + ' / ' + top.samples +
-      ' 张样本全部无法区分——最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类），没有任何一张能判出唯一一类。' +
+      ' 张样本全部无法区分——最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类），没有任何一张能判出唯一一类' +
+      '（该算法的匹配正确率因此无从计算，卡片里显示「——」）。' +
       '<br>说明这些特征分不开彼此（常见于交集图命中的只是一小块「样本间完全一致的静态区域」，别的分类截图也能整块复现）。' +
-      '建议改用在生成成功率 100% 的特征里挑 <b style="color:var(--text)">独有区（-unique）</b> 或 <b style="color:var(--text)">去重均值</b> 那几档，' +
-      '或把区分度低的特征权重 Y 调低后重跑。' +
-      (res.stale ? '<br><b style="color:var(--amber)">样本 / 产物已变动，以上结果可能过期，建议重新验证。</b>' : '') +
+      '建议改用 <b style="color:var(--text)">独有区（-unique）</b> 或 <b style="color:var(--text)">去重均值</b> 那几档特征' +
+      '（它们的「(生成成功率 A − 无法区分率 E) × 匹配正确率 D」更高），或把区分度低的特征权重 Y 调低后重跑。' +
+      (res.stale ? '<br><b style="color:var(--amber)">已标注 / 汇总分析 / 特征验证的数据已变动，以上结果可能过期，建议重新计算。</b>' : '') +
       '</div></div>';
   }
   const tie = list.length > 1 && list[1].accuracy === top.accuracy;
   return '<div class="optcard"><h4>结论</h4><div class="ocap">' +
     (tie ? '各算法匹配正确率并列最高：' + fmtV(top.accuracy) + '。'
          : '匹配正确率最高：<b style="color:var(--text)">' + escHtml(top.name) + '</b> ' + fmtV(top.accuracy) +
-           '（命中 ' + top.hit + ' / ' + top.samples + ' · 判错 ' + miss(top) + '）。') +
+           '（命中 ' + top.hit + ' / 能给出结果 ' + optDecided(top) + ' · 判错 ' + miss(top) + '）。') +
     (top.tie ? '<br>另有 <b style="color:var(--text)">' + fmtV(top.tieRate) + '</b> 的样本<b style="color:var(--text)">无法区分</b>（'
-      + top.tie + ' / ' + top.samples + ' 张）：放弃有问题的特征后最高匹配度仍被 ≥2 个分类并列，既不算命中也不算判错。'
+      + top.tie + ' / ' + top.samples + ' 张）：放弃有问题的特征后最高匹配度仍被 ≥2 个分类并列，既不算命中也不算判错，'
+      + '也不进匹配正确率的分母（正确率分母 = 命中 + 判错）。'
       + (top.tieRate >= 20 ? '<br><b style="color:var(--amber)">无法区分率偏高（≥20%）：建议改用独有区（-unique）或去重均值特征，或把区分度低的特征权重 Y 调低后重跑。</b>' : '')
       : '') +
     '<br>排序：' + list.map(r => escHtml(r.name) + ' ' + fmtV(r.accuracy) + '（无法区分 ' + fmtV(r.tieRate) + '）').join('　＞　') +
-    (res.stale ? '<br><b style="color:var(--amber)">样本 / 产物已变动，以上结果可能过期，建议重新验证。</b>' : '') +
+    (res.stale ? '<br><b style="color:var(--amber)">已标注 / 汇总分析 / 特征验证的数据已变动，以上结果可能过期，建议重新计算。</b>' : '') +
   '</div></div>';
 }
 
@@ -3770,10 +3838,15 @@ function optRender(){
   const res = (j.ready && j.result && j.result.finished && !j.result.error) ? j.result : null;
   const fatal = (j.result && j.result.error) ? j.result.error : null;
 
+  const tuning = run && t && t.mode === "tune";
   const meta = $("optMeta");
   if(meta) meta.textContent = "样本 " + j.samples + " 张 · 分类 " + j.groups + " 个 · " +
-    (run ? "验证运行中" : ("算法 " + algos.length + " 个" + (j.ready ? "" : "（未计算：缺少特征验证结果）")));
-  document.querySelectorAll("#optPane .optYin, #optPane .optYen").forEach(el => el.disabled = run);
+    (run ? (tuning ? "自动调整参数中" : "验证运行中") : ("算法 " + algos.length + " 个" + (j.ready ? "" : "（未计算：缺少特征验证结果）")));
+  // 运行中禁用输入；单一特征算法的权重固定 1（结构里本来就带 disabled），这里不能把它解除
+  document.querySelectorAll("#optPane .optYin, #optPane .optYen").forEach(el => {
+    const a = optAlgo(el.dataset.a);
+    el.disabled = run || !a || a.features.length <= 1;
+  });
 
   const taskBox = $("optTask"), fill = $("optFill"), tStat = $("optTaskStat"), tTxt = $("optTaskTxt"), stat = $("optStat");
   const err = (t && t.error) || fatal;
@@ -3782,9 +3855,13 @@ function optRender(){
     // 精确到张：外层（特征 / 算法）跑到第几项 + 本项内已比对张数 + 最近一张文件名 + 已耗时（后端按张回报）
     const sn = Math.max(0, Number(t.totalSamples) || 0);
     const isMat = t.stage === "逐特征比对矩阵";
+    const tuneStage = t.mode === "tune" && t.stage === "自动调整参数";
     let st = "阶段：" + (t.stage || "准备中");
-    if(t.total) st += "　" + Math.min(t.done || 0, t.total) + "/" + t.total + " 个" + (isMat ? "特征" : "算法");
-    if(t.cur) st += "（" + (isMat ? vkInfo(t.cur).name : t.cur) + "）";
+    if(t.total) st += "　" + Math.min(t.done || 0, t.total) + "/" + t.total + " 个" + (isMat ? "特征" : (tuneStage ? "权重" : "算法"));
+    // 自动调整参数阶段：当前是「哪个算法 · 哪个特征」的第几次随机尝试、这次随机到的 Y 是多少
+    if(tuneStage && t.cur) st += "（" + t.cur + (t.tuneKind ? " · " + vkInfo(t.tuneKind).name : "")
+      + (t.trial ? " · 第 " + t.trial + "/" + (t.trials || 10) + " 次随机 Y=" + fmtY(t.trialY) : "") + "）";
+    else if(t.cur) st += "（" + (isMat ? vkInfo(t.cur).name : t.cur) + "）";
     if(sn) st += "　第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张";
     tStat.textContent = st;
     // 进度条走「合计张数」（跨特征 / 跨算法连续、每张都推进，不再等整张矩阵跑完才跳一格）；拿不到张数时退回外层项占比
@@ -3794,10 +3871,17 @@ function optRender(){
     fill.style.width = Math.round(pct) + "%";
     const sec = Math.max(0, Math.round((Number(t.elapsedMs) || 0) / 1000));
     tTxt.textContent = (t.sample ? "正在比对 " + t.sample : "正在准备（扫描样本 / 分类产物）…")
+      + (tuneStage && t.baseAcc != null ? " · 该权重当前基线 正确率 " + fmtV(t.baseAcc < 0 ? null : t.baseAcc)
+          + " / 无法区分 " + fmtV(t.baseTie) : "")
+      + (tuneStage && t.bestAcc != null ? " · 已找到最好 正确率 " + fmtV(t.bestAcc < 0 ? null : t.bestAcc)
+          + " / 无法区分 " + fmtV(t.bestTie) : "")
       + (sec ? " · 已耗时 " + durTxt(sec) : "");
-    if(stat) stat.textContent = "正在后台验证全部算法的分类准确率…（" + (t.stage || "准备中")
-      + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "") + "）\n"
-      + "建议先停掉特征验证 / 执行模式自动识别，避免两者互相争抢 CPU 与磁盘 IO。";
+    if(stat) stat.textContent = (t.mode === "tune"
+        ? "正在后台自动调整参数：逐权重在 0~1 之间随机试 10 次（步进 0.001），只有匹配正确率上升、或无法区分率下降才采纳，"
+          + "新权重保存到 classify/opt-weights.json。\n（" + st + "）"
+        : "正在后台验证全部算法的分类准确率…（" + (t.stage || "准备中")
+          + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "") + "）")
+      + "\n建议先停掉特征验证 / 执行模式自动识别，避免两者互相争抢 CPU 与磁盘 IO。";
   }else{
     taskBox.style.display = "none";
     fill.style.width = "0%";
@@ -3809,16 +3893,46 @@ function optRender(){
       else if(res && Array.isArray(res.algos) && res.algos.length){
         const best = res.algos.filter(r => r.accuracy != null).sort((a, b) => b.accuracy - a.accuracy)[0];
         stat.textContent = "上次验证完成" + fmtCostSuffix(Number(res.costMs)) + "：样本 " + res.samples + " 张 · 分类 " + res.groups + " 个" +
-          (best ? "\n最高匹配正确率：" + best.name + " " + fmtV(best.accuracy) + "（命中 " + best.hit + "/" + best.samples
+          (best ? "\n最高匹配正确率：" + best.name + " " + fmtV(best.accuracy) + "（命中 " + best.hit + "/" + optDecided(best)
             + " · 判错 " + (best.miss == null ? (best.samples - best.hit - (best.tie || 0)) : best.miss)
             + (best.tie ? " · 无法区分 " + best.tie + "（" + fmtV(best.tieRate) + "）" : "") + "）" : "") +
-          (res.stale ? "\n注意：样本 / 产物已变动，结果可能过期，建议重新验证。" : "");
+          // 结果来自 summary/opt-result.json（完整缓存）：三处数据都没变就直接用上次的，不必重算
+          (j.cached ? "\n已从 summary/" + (j.cacheFile || "opt-result.json") + " 恢复上次结果（数据没变即可直接用）。" : "") +
+          (res.stale ? "\n注意：已标注 / 汇总分析 / 特征验证的数据已变动，结果可能过期，建议重新计算。" : "") +
+          (j.tune && j.tune.finished ? "\n自动调整参数上一次完成" + fmtCostSuffix(Number(j.tune.costMs)) + "：采纳 "
+            + (j.tune.improved || 0) + " 处权重调整（共试探 " + (j.tune.weights || 0) + " 个权重），权重文件 "
+            + (j.tune.file || "") : "") +
+          // 特征选择 + 权重数值始终另存一份最新的（后续功能 / 开发验证直接读，不必解析界面状态）
+          "\n特征选择与权重数值快照：summary/" + (j.snapshotFile || "opt-weights.json") + "（每次跑完覆写最新的）。";
       }else stat.textContent = "已组合 " + algos.length + " 个算法，点右上角「验证所有算法」开始。";
     }
   }
 
+  // 后端保存的权重变了（自动调整参数采纳了新值 / 手改了权重文件）：把新值同步回权重草稿与输入框
+  const wSig = algos.map(a => a.id + ":" + ((a.weights || []).join(","))).join(";");
+  if(wSig !== optWSig){
+    const first = optWSig === "";
+    let dirty = false;
+    for(const a of algos){
+      if(a.features.length <= 1) continue;      // 单一特征算法固定 1，不跟着权重文件走
+      const d = optY[a.id];
+      if(!d) continue;
+      const w = Array.isArray(a.weights) ? a.weights : [];
+      let changed = false;
+      for(let i = 0; i < d.vals.length; i++){
+        const y = Number(w[i]);
+        const en = (w[i] == null || isNaN(y)) ? true : y > 0;
+        const v = (w[i] != null && !isNaN(y) && y > 0) ? Math.round(y * 100) / 100 : 1;
+        if(d.en[i] !== en || d.vals[i] !== v){ d.en[i] = en; d.vals[i] = v; changed = true; }
+      }
+      if(changed){ syncOptRow(a.id); dirty = true; }
+    }
+    optWSig = wSig;
+    if(dirty && !first) toast("已应用后端保存的权重 Y（自动调整参数 / 权重文件）。", "ok");
+  }
+
   const resSig = (j.ready ? "R|" : "P|") + (res
-    ? res.algos.map(r => [r.id, r.accuracy, r.tieRate, r.hit, r.tie, r.miss, r.samples, r.skipped, r.costMs, (r.weights || []).join(",")].join("|")).join(";") + (res.stale ? "|stale" : "")
+    ? res.algos.map(r => [r.id, r.accuracy, r.tieRate, r.hit, r.tie, r.miss, r.decided, r.samples, r.skipped, r.costMs, (r.weights || []).join(",")].join("|")).join(";") + (res.stale ? "|stale" : "")
     : "none");
   if(resSig !== optResSig){
     optResSig = resSig;
@@ -3833,7 +3947,7 @@ function optRender(){
     }
   }
   const ver = $("optVerdict");
-  if(ver) ver.innerHTML = res ? optVerdict(res) : "";
+  if(ver) ver.innerHTML = (j.tune ? optTuneCard(j.tune) : "") + (res ? optVerdict(res) : "");
 }
 
 /* 启动即预取算法个数（顶栏「算法调优(N)」不依赖先进本视图）：特征验证未就绪时后端同样下发全部算法骨架，
@@ -3868,28 +3982,41 @@ async function optPoll(){
   OPT = j;
   const nAlgo = Array.isArray(j.algos) ? j.algos.length : null;
   if(nAlgo != null) optCnt = nAlgo;    // 顶栏「算法调优(N)」：下面的 renderOptList → setSegState 会写进按钮
+  // 已标注 / 汇总分析 / 特征验证的数据一有变动（指纹或算法口径变了）就提示一次重新计算；数据回一致后再变动会再提示
+  const optStale = !!((j.result && j.result.finished && j.result.stale) || (j.tune && j.tune.stale));
+  if(optStale && j.fp && j.fp !== OPT_STALE_SEEN){
+    OPT_STALE_SEEN = j.fp;
+    toast("已标注 / 汇总分析 / 特征验证的数据有变动，算法调优结果已过期，请重新计算。", "warn");
+  }else if(!optStale){
+    OPT_STALE_SEEN = "";
+  }
   optEnsureMain();
   optRender();
   renderOptList();
   optSyncRunBtn();
   if(prevRun && !j.running){
     const err = j.task ? j.task.error : (j.result ? j.result.error : null);
-    if(err) toast("算法验证中断：" + err, "err");
+    const isTune = !!(j.task && j.task.mode === "tune");
+    if(err) toast((isTune ? "自动调整参数中断：" : "算法验证中断：") + err, "err");
+    else if(isTune) toast("自动调整参数已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "：采纳 "
+      + ((j.tune && j.tune.improved) || 0) + " 处权重调整，新权重已保存并应用到界面。", "ok");
     else toast("算法验证已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "，可在主图区查看各算法分类准确率。", "ok");
   }
 }
 
-/* 收集界面上的权重草稿 Y（未启用 / 无特征 → 0）：{ 算法id: [Y...] } */
+/* 收集界面上的权重草稿 Y（未启用 / 无特征 → 0；单一特征算法固定 1，与后端强制口径一致）：{ 算法id: [Y...] } */
 function optCollect(){
   const out = {};
   for(const a of ((OPT && OPT.algos) || [])){
     const d = optY[a.id] || optYof(a);
-    out[a.id] = a.features.map((f, i) => d.en[i] ? d.vals[i] : 0);
+    const single = a.features.length <= 1;
+    out[a.id] = a.features.map((f, i) => single ? 1 : (d.en[i] ? d.vals[i] : 0));
   }
   return out;
 }
 
-/* 运行按钮可用性：未就绪 / 运行中 / 某算法一个特征都没启用时禁用 */
+/* 运行按钮可用性：未就绪 / 运行中 / 某算法一个特征都没启用时禁用；
+   「自动调整参数」更严：必须「验证所有算法」已经跑完且结果没过期（后端 tunable） */
 function optSyncRunBtn(){
   const b = $("optRunBtn");
   if(!b) return;
@@ -3902,6 +4029,14 @@ function optSyncRunBtn(){
   b.title = !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
     : !any ? "每个算法至少要启用一个特征"
     : "按当前特征组合与权重 Y 验证全部算法的分类准确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动";
+  const ab = $("optAutoBtn");
+  if(!ab) return;
+  ab.disabled = run || !(OPT && OPT.tunable);
+  ab.title = run ? "正在跑任务，等它结束"
+    : !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
+    : !(OPT && OPT.tunable) ? "请先点「验证所有算法」并等它跑完（结果要能对上当前的样本 / 产物），之后才能自动调整参数"
+    : "对每个可调的权重 Y 在 0~1 之间随机试 10 次（步进 0.001）：只要匹配正确率上升、或无法区分率下降就采纳，" +
+      "并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；单一特征算法的权重固定 1、不参与调整";
 }
 
 async function optStartRun(){
@@ -3916,6 +4051,59 @@ async function optStartRun(){
   optPoll();
 }
 $("optRunBtn").addEventListener("click", optStartRun);
+
+/* 把某算法的权重草稿写回界面控件（同步后端保存的权重时用：值 / 勾选 / 生效 X × Y 一起写） */
+function syncOptRow(id){
+  const d = optY[id];
+  if(!d) return;
+  for(let i = 0; i < d.vals.length; i++){
+    const inp = document.querySelector('#optPane .optYin[data-a="' + id + '"][data-i="' + i + '"]');
+    if(inp) inp.value = d.vals[i];
+    const cb = document.querySelector('#optPane .optYen[data-a="' + id + '"][data-i="' + i + '"]');
+    if(cb) cb.checked = d.en[i];
+    const cell = $("optEff-" + id + "-" + i);
+    if(cell) cell.textContent = fmtX(d.en[i] ? d.vals[i] * optXof(id, i) : 0);
+  }
+}
+
+/* 「自动调整参数」结果卡（右栏结论上方）：试探了多少权重、采纳了几处、每个算法的前后对比、落盘位置 */
+function optTuneCard(t){
+  const rows = Array.isArray(t.algos) ? t.algos : [];
+  let lines = "";
+  for(const x of rows){
+    const before = (Array.isArray(x.before) ? x.before : []).map(fmtY);
+    const after = (Array.isArray(x.after) ? x.after : []).map(fmtY);
+    lines += '<br>· <b style="color:var(--text)">' + escHtml(x.name || "") + '</b>：正确率 ' + fmtV(x.accBefore) +
+      ' → ' + fmtV(x.accAfter) + ' · 无法区分率 ' + fmtV(x.tieBefore) + ' → ' + fmtV(x.tieAfter);
+    if(!x.tunable) lines += '（单一特征：权重固定 1，不参与调整）';
+    else if(x.changed) lines += '　权重 Y ' + before.join(" / ") + ' → <b style="color:var(--text)">' + after.join(" / ") + '</b>';
+    else lines += '　10 次随机都没改善，权重 Y 保持 ' + after.join(" / ");
+  }
+  return '<div class="optcard"><h4>自动调整参数</h4><div class="ocap">' +
+    (t.improved ? '共采纳 <b style="color:var(--text)">' + t.improved + '</b> 处权重调整' : '本轮没有找到更好的权重') +
+    '（共试探 ' + (t.weights || 0) + ' 个权重 × 每个 10 次随机；口径 = 匹配正确率上升、或无法区分率下降）' +
+    (t.costMs != null ? '，耗时 ' + durTxt(Math.max(0, Math.round((Number(t.costMs) || 0) / 1000))) : '') + '。' +
+    (t.file ? '<br>权重已保存到 <b style="color:var(--text)">' + escHtml(t.file) + '</b>（可随时手删，删了回到默认全 1）。' : '') +
+    '<br>特征选择与权重数值快照：<b style="color:var(--text)">summary/' + escHtml((OPT && OPT.snapshotFile) || "opt-weights.json") +
+      '</b>（每次跑完覆写一份最新的，供后续功能读取）。' +
+    lines +
+    (t.stale ? '<br><b style="color:var(--amber)">已标注 / 汇总分析 / 特征验证的数据已变动，以上权重只对当时的特征组合有意义。</b>' : '') +
+  '</div></div>';
+}
+
+/* 启动「自动调整参数」（后端只在「验证所有算法」跑完且结果没过期时才受理） */
+async function optAutoStart(){
+  if(OPT && OPT.running) return;
+  if(!OPT || !OPT.tunable){ toast("请先点「验证所有算法」并等它跑完，再自动调整参数。", "err"); return; }
+  try{
+    const r = await fetchT("/api/optimize/auto", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights: optCollect() }) }, 9000);
+    const j = r && r.ok ? await r.json().catch(()=>null) : null;
+    if(j && j.started) toast("开始自动调整参数：逐权重在 0~1 之间随机试 10 次，正确率上升或无法区分率下降才采纳…", "ok");
+    else toast("启动失败：" + ((j && j.error) || "请求失败"), "err");
+  }catch(e){ toast("启动失败：请求异常", "err"); }
+  optPoll();
+}
+$("optAutoBtn").addEventListener("click", optAutoStart);
 
 /* ---------------- 自动刷新 ---------------- */
 const POLL_MS = 10000;   // 后台每 10 秒悄悄同步一次列表

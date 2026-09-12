@@ -3,6 +3,9 @@ package cn.moonlord.mca.act;
 import cn.moonlord.mca.config.StoragePaths;
 import cn.moonlord.mca.mark.CaptureMark;
 import cn.moonlord.mca.mark.ClassifyStore;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -10,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -48,7 +52,10 @@ import java.util.stream.Stream;
  * 完全不匹配，但不进任何一个指标的分母（其明细行的数值列显示「——」而不是 0%），也不因缺产物而
  * 跳过这些分类及其原图的枚举。
  * 按算法逐 kind 独立计算、完成后按「当前样本/产物指纹」缓存结果并标记是否过期（样本或产物有
- * 改动后需重新验证）。独立后台任务线程跑，结果只存内存不落盘。
+ * 改动后需重新验证）。独立后台任务线程跑，一次完整跑完后把全部 kind 的结果（五种指标 + 分类级明细
+ * + 逐图明细）<b>完整落盘到 summary/verify.json</b>；进程启动后首次访问本服务时若该文件还在且
+ * 「classify/ 已标注 + summary/ 产物」的指纹与缓存里记录的一致，则直接恢复上次结果（界面显示「已计算」，
+ * 无需重算）；指纹变了则恢复出来的结果一律标记为过期（界面「需重算」并提示重新验证）。
  */
 @Slf4j
 @Service
@@ -75,6 +82,27 @@ public class VerifyService {
     /** 指纹缓存（3 秒 TTL，避免每次轮询全量 stat 产物/样本）。 */
     private volatile long fpAt;
     private volatile String fpLast;
+
+    /** 结果缓存文件名（放 summary/ 根，与产物目录并列：可手删、随 *.json 一并被 git 忽略）。 */
+    private static final String CACHE_FILE = "verify.json";
+
+    /** 指纹不统计的非产物数据文件（本服务缓存 + 其它模块的缓存 / 权重 / 去重数据）：写这些文件不能反过来把自己判成过期。 */
+    private static final Set<String> NON_ARTIFACT =
+            Set.of(CACHE_FILE, "opt-result.json", "opt-weights.json", "dedup-cache.json");
+
+    /** 是否是非产物数据文件（落盘用的 {@code *.tmp} 临时名同样排除，避免写盘瞬间把指纹带跑偏）。 */
+    private static boolean isDataFile(String name) {
+        return NON_ARTIFACT.contains(name.endsWith(".tmp") ? name.substring(0, name.length() - 4) : name);
+    }
+
+    /** JSON 读写（缓存的解析与落盘）。 */
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** 是否已尝试从缓存文件恢复（每个进程只试一次）。 */
+    private volatile boolean cacheTried;
+
+    /** 本次进程的结果是否来自缓存文件（前端提示「已恢复上次结果」用；跑完一次新验证即清零）。 */
+    private volatile boolean cacheRestored;
 
     /** 一个 kind 的完整验证结果。 */
     public static class KindStat {
@@ -206,6 +234,7 @@ public class VerifyService {
 
     /** 某 kind 的验证结果（未验证返回 null）：算法调优读取 A/B/C/D 与分类级明细来组合特征、算基础分 X。 */
     public KindStat statOf(String kind) {
+        ensureCacheLoaded();
         return kind == null ? null : results.get(kind);
     }
 
@@ -223,6 +252,7 @@ public class VerifyService {
     }
 
     private void doRun(Run r, String fp, List<String> order) {
+        cacheRestored = false;   // 本轮算出来的结果即将覆盖「从缓存文件恢复」的旧结果
         // 验证逐 kind 解码全部参与分类的产物像素，走不写缓存的按需解码、每 kind 用后即释放；
         // 常驻软引用缓存是否回收交给 JVM 的 GC 决定，这里不做任何手动清理
         List<Ctx> groups = new ArrayList<>();
@@ -255,6 +285,10 @@ public class VerifyService {
             }
             r.done = i + 1;
         }
+        // 一轮完整跑完（无中断）→ 把全部 kind 的结果完整落盘：下次启动只要指纹没变就直接复用
+        if (r.error == null) {
+            saveCache(fp, samples.size(), groups.size());
+        }
         r.finished = true;
         r.endedMs = System.currentTimeMillis();
         r.running = false;
@@ -262,11 +296,16 @@ public class VerifyService {
 
     /** 结果 / 总览（供前端轮询）：任务进度 + 全部 kind 的评分与状态。 */
     public Map<String, Object> status() {
+        ensureCacheLoaded();
         Map<String, Object> out = new LinkedHashMap<>();
         String fp = fp();
         out.put("running", running());
         out.put("samples", classifyStore.listClassifiedPngs().size());
         out.put("groups", scanGroups().size());
+        // 结果从缓存文件恢复（本进程）与缓存文件名：界面据此提示「已加载上次结果 / 结果落在哪」
+        out.put("cached", cacheRestored);
+        out.put("cacheFile", CACHE_FILE);
+        int staleCount = 0;
         List<Map<String, Object>> kinds = new ArrayList<>();
         for (String kind : classifier.verifyOrder()) {
             KindStat st = results.get(kind);
@@ -283,6 +322,9 @@ public class VerifyService {
                 k.put("samples", 0);
             } else {
                 boolean fresh = fp.equals(st.fp);
+                if (!fresh) {
+                    staleCount++;   // 需重算的算法数（前端提示「数据有变动，请重新验证」）
+                }
                 k.put("state", fresh ? "done" : "stale");
                 k.put("a", st.a);
                 k.put("b", st.b);          // 生成成功率（%）
@@ -294,6 +336,8 @@ public class VerifyService {
             }
             kinds.add(k);
         }
+        out.put("stale", staleCount);   // 数据有变动、需重算的算法数
+        out.put("fp", fp);              // 当前样本/产物指纹（前端按它去重「需重新验证」提示）
         out.put("kinds", kinds);
         Run r = run;
         if (r != null) {
@@ -315,6 +359,7 @@ public class VerifyService {
 
     /** 某 kind 的分类级明细（未计算返回 null；fresh 表示与当前样本/产物一致）。 */
     public Map<String, Object> detail(String kind) {
+        ensureCacheLoaded();
         if (kind == null || !classifier.verifyOrder().contains(kind)) {
             return null;
         }
@@ -377,6 +422,9 @@ public class VerifyService {
         }
         files.sort((a, b) -> a.toString().compareTo(b.toString()));
         for (Path p : files) {
+            if (isDataFile(p.getFileName().toString())) {
+                continue;   // 缓存 / 结果 / 权重 / 去重数据不是产物：写它们（含本服务自己的缓存）不能反过来改变指纹
+            }
             try {
                 BasicFileAttributes at = Files.readAttributes(p, BasicFileAttributes.class);
                 sb.append(p.toString()).append('|').append(at.size()).append('|')
@@ -384,6 +432,124 @@ public class VerifyService {
             } catch (IOException ignored) {
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 落盘缓存（summary/verify.json）
+
+    /** 缓存文件：summary/verify.json（完整缓存 = 五种指标 + 分类级明细 + 「查看详细」的逐图明细）。 */
+    public Path cacheFile() {
+        return storage.summary().resolve(CACHE_FILE);
+    }
+
+    /** 首次访问时从缓存文件完整恢复上次结果（幂等；文件不存在 / 解析失败只记日志）。
+     *  恢复出来的 {@link KindStat} 带的是「上次计算时」的指纹，与当前指纹不符即自动判为过期
+     *  （{@link #status()} 里 state=stale）→ 界面提示重新验证。 */
+    private synchronized void ensureCacheLoaded() {
+        if (cacheTried) {
+            return;
+        }
+        cacheTried = true;
+        Path f = cacheFile();
+        if (!Files.isRegularFile(f)) {
+            return;
+        }
+        try {
+            JsonNode root = JSON.readTree(f.toFile());
+            JsonNode kinds = root == null ? null : root.get("kinds");
+            if (kinds == null || !kinds.isObject()) {
+                return;
+            }
+            int n = 0;
+            var it = kinds.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                KindStat st = parseStat(e.getKey(), e.getValue());
+                if (st != null) {
+                    results.put(e.getKey(), st);
+                    n++;
+                }
+            }
+            cacheRestored = n > 0;
+            log.info("特征验证结果已从缓存恢复（{}）：{} 种算法，缓存指纹 {}；与当前指纹一致才显示「已计算」",
+                    f, n, root.path("fp").asText(""));
+        } catch (Exception e) {
+            log.warn("特征验证缓存读取失败 {}：{}", f, e.toString());
+        }
+    }
+
+    /** 把本轮全部 kind 的结果完整落盘（一次完整跑完后调用；先写 .tmp 再原子改名）。 */
+    private synchronized void saveCache(String fp, int samples, int groups) {
+        Map<String, Object> kinds = new LinkedHashMap<>();
+        for (String kind : classifier.verifyOrder()) {
+            KindStat st = results.get(kind);
+            if (st != null) {
+                kinds.put(kind, statJson(st));
+            }
+        }
+        if (kinds.isEmpty()) {
+            return;
+        }
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("fp", fp);                       // 计算时的样本/产物指纹：与当前不一致 = 需重算
+        root.put("savedMs", System.currentTimeMillis());
+        root.put("samples", samples);
+        root.put("groups", groups);
+        root.put("kinds", kinds);
+        Path f = cacheFile();
+        Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
+        try {
+            Files.createDirectories(f.getParent());
+            JSON.writeValue(tmp.toFile(), root);
+            Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
+            log.info("特征验证结果已缓存：{}（{} 种算法）", f, kinds.size());
+        } catch (IOException e) {
+            log.warn("特征验证缓存写入失败 {}：{}", f, e.toString());
+        }
+    }
+
+    /** {@link KindStat} → JSON 节点（rows 里的 wrong / tied 逐图明细一并写入，供前端离线打开「查看详细」）。 */
+    private static Map<String, Object> statJson(KindStat st) {
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("fp", st.fp);
+        o.put("doneMs", st.doneMs);
+        o.put("costMs", st.costMs);
+        o.put("a", st.a);
+        o.put("b", st.b);
+        o.put("other", st.other);
+        o.put("c", st.c);
+        o.put("e", st.e);
+        o.put("tie", st.tie);
+        o.put("genOk", st.genOk);
+        o.put("genTotal", st.genTotal);
+        o.put("cSamples", st.cSamples);
+        o.put("samples", st.samples);
+        o.put("groups", st.groups);
+        o.put("rows", st.rows);
+        return o;
+    }
+
+    /** JSON 节点 → {@link KindStat}（缺字段按 null / 0 兜底；rows 反序列化回原本的 Map / List 结构）。 */
+    private KindStat parseStat(String kind, JsonNode n) {
+        if (n == null || !n.isObject()) {
+            return null;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        JsonNode arr = n.get("rows");
+        if (arr != null && arr.isArray()) {
+            for (JsonNode r : arr) {
+                rows.add(JSON.convertValue(r, new TypeReference<LinkedHashMap<String, Object>>() {}));
+            }
+        }
+        return new KindStat(kind, n.path("fp").asText(""), n.path("doneMs").asLong(0), n.path("costMs").asInt(0),
+                numOf(n, "a"), numOf(n, "b"), numOf(n, "other"), numOf(n, "c"), numOf(n, "e"),
+                n.path("tie").asInt(0), n.path("genOk").asInt(0), n.path("genTotal").asInt(0),
+                n.path("cSamples").asInt(0), n.path("samples").asInt(0), n.path("groups").asInt(0), rows);
+    }
+
+    /** JSON 里的可空数值（null / 缺失 → null，界面显示「——」）。 */
+    private static Double numOf(JsonNode n, String key) {
+        JsonNode v = n.get(key);
+        return v == null || v.isNull() ? null : v.asDouble();
     }
 
     // ---------------------------------------------------------------- 计算
@@ -668,10 +834,10 @@ public class VerifyService {
             // E（该分类行）= 无法区分率：分母 = 本分类全部可匹配样本（命中 + 无法区分 + 误判）
             row.put("e", cd.valid ? tieCnt[j] * 100.0 / c : null);
             row.put("tie", tieCnt[j]);
-            // D 的误判明细（前端「查看详细」弹窗逐图列出）：可匹配样本里最佳命中「唯一且」不是自家分类的，
+            // D 列「查看详细」（匹配错误明细）弹窗逐图列出：可匹配样本里最佳命中「唯一且」不是自家分类的，
             // 按「被误判到的分类」再按原图名排序；命中 / 自家分值 = 匹配占比（100 − 不匹配占比），越高越像
             List<Map<String, Object>> wrongs = new ArrayList<>();
-            // E 的无法区分明细：最佳匹配并列 ≥2 个分类的样本，列出并列到的分类名
+            // E 列「查看详细」（无法区分明细）弹窗逐图列出：最佳匹配并列 ≥2 个分类的样本，列出并列到的分类名
             List<Map<String, Object>> tieds = new ArrayList<>();
             if (cd.valid) {
                 for (int i = 0; i < n; i++) {

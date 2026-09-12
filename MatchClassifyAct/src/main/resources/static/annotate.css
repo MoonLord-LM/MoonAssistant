@@ -104,7 +104,8 @@
     .exec-area{min-height:260px}
   }
   .seg{display:flex;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px}
-  .seg button{border:0;background:transparent;color:var(--muted);padding:4px 16px;border-radius:6px;min-width:64px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+  /* 六视图标签（全部/未标注/已标注/汇总分析/特征验证/算法调优）：左右内边距与最小宽度收紧，整体更紧凑 */
+  .seg button{border:0;background:transparent;color:var(--muted);padding:4px 11px;border-radius:6px;min-width:52px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
   .seg button.on{background:var(--accent);color:#fff}
   .meta{color:var(--muted);font-size:12px;white-space:nowrap}
   .spacer{flex:1}
@@ -423,25 +424,26 @@
   .vtable td.nugen{white-space:normal}
   .vtable td.nu{text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
   .vtable .vdnone{text-align:center;color:var(--muted);padding:22px 12px}
-  /* D 匹配正确率 < 100% 的行：紧跟数值的「查看详细」小按钮 + 误判明细弹窗 */
+  /* D 列（匹配正确率）与 E 列（无法区分率）：紧跟数值的「查看详细」小按钮（各列只看自己的那一类明细：
+     匹配错误 / 无法区分）+ 两者共用的明细弹窗 #vkDetailModal（同一套版式，仅标题与说明段不同） */
   .vtable .vkw{margin-left:7px;padding:1px 7px;font-size:11px;line-height:16px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;vertical-align:middle}
   .vtable .vkw:hover{color:#fff;border-color:var(--border-strong);background:rgba(255,255,255,.06)}
-  #vkWrongModal{background:rgba(2,4,9,.92)}
-  #vkWrongModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:660px;width:100%;text-align:left;position:relative;box-shadow:0 12px 32px rgba(0,0,0,.35)}
-  #vkWrongModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
+  #vkDetailModal{background:rgba(2,4,9,.92)}
+  #vkDetailModal .xcard{background:#121a2a;border:1px solid var(--border);border-radius:10px;padding:18px 20px;max-width:660px;width:100%;text-align:left;position:relative;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+  #vkDetailModal .xt2{font-size:16px;font-weight:700;margin-bottom:8px}
   /* 标题下的信息条：覆盖型弹窗看不到身后的右栏/表格，把「哪种算法 / 哪个分类 / 样本数 / D·E·命中」摆成一行 chip */
-  #vkWrongModal .xmeta,#kindScoreModal .xmeta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
-  #vkWrongModal .xmeta span,#kindScoreModal .xmeta span{display:inline-flex;align-items:baseline;gap:4px;padding:1px 10px;font-size:11.5px;color:var(--muted);background:var(--panel2);border:1px solid var(--border-strong);border-radius:20px;font-variant-numeric:tabular-nums}
-  #vkWrongModal .xmeta b,#kindScoreModal .xmeta b{color:var(--text);font-weight:600}
-  #vkWrongModal .sub{color:var(--muted);font-size:11.5px;line-height:1.9;margin:2px 0 10px}
-  #vkWrongModal .list{max-height:min(52vh,420px);overflow:auto;padding-right:4px}
-  #vkWrongModal .ghead{display:flex;align-items:baseline;gap:8px;margin:10px 0 4px;font-size:12.5px;color:var(--text)}
-  #vkWrongModal .ghead b{color:var(--accent)}
-  #vkWrongModal .ghead span{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
-  #vkWrongModal .row{display:flex;align-items:center;gap:9px;padding:4px 2px;border-bottom:1px solid rgba(38,46,64,.5);font-size:12px}
-  #vkWrongModal .row img{width:58px;height:33px;object-fit:contain;background:#0b0f18;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;flex:none}
-  #vkWrongModal .row .f{flex:1;min-width:0;word-break:break-all;color:var(--muted)}
-  #vkWrongModal .row .s{flex:none;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+  #vkDetailModal .xmeta,#kindScoreModal .xmeta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  #vkDetailModal .xmeta span,#kindScoreModal .xmeta span{display:inline-flex;align-items:baseline;gap:4px;padding:1px 10px;font-size:11.5px;color:var(--muted);background:var(--panel2);border:1px solid var(--border-strong);border-radius:20px;font-variant-numeric:tabular-nums}
+  #vkDetailModal .xmeta b,#kindScoreModal .xmeta b{color:var(--text);font-weight:600}
+  #vkDetailModal .sub{color:var(--muted);font-size:11.5px;line-height:1.9;margin:2px 0 10px}
+  #vkDetailModal .list{max-height:min(52vh,420px);overflow:auto;padding-right:4px}
+  #vkDetailModal .ghead{display:flex;align-items:baseline;gap:8px;margin:10px 0 4px;font-size:12.5px;color:var(--text)}
+  #vkDetailModal .ghead b{color:var(--accent)}
+  #vkDetailModal .ghead span{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+  #vkDetailModal .row{display:flex;align-items:center;gap:9px;padding:4px 2px;border-bottom:1px solid rgba(38,46,64,.5);font-size:12px}
+  #vkDetailModal .row img{width:58px;height:33px;object-fit:contain;background:#0b0f18;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;flex:none}
+  #vkDetailModal .row .f{flex:1;min-width:0;word-break:break-all;color:var(--muted)}
+  #vkDetailModal .row .s{flex:none;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
   /* B 命中比例告警配色：<90 黄、<50 红。vval 用组合选择器压过默认文字色 */
   .vkwarn{color:var(--amber)}
   .vkbad{color:var(--danger)}

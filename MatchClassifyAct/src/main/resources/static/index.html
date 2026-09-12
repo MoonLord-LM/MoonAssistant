@@ -80,7 +80,7 @@
           <div class="vt">汇总图算法 · 自回归验证</div>
           <div class="vs">左侧列表 = 每一种「汇总图算法」（全图交集六档（100% = 样本完全一致，另有 90/80/70/60/50%）、多数 / 均值 / 去重均值三族及 8×8·32×32 块图、各档独有区图、各分类的注意区交集图（以关注点为中心，未设 = 屏幕中心）与鼠标点击分类的点击区交集图（以点击点为中心），与识别参与比对的是同一套产物）。
             验证方式：把每个分类的原图，按该算法生成的汇总图逐张与【全部分类】的同一算法汇总图逐点比对（口径与识别一致），统计五个评价指标——<b>A</b> = 生成成功率：能生成有效合成图（产物存在且非全透明）的分类占参与分类的比例；<b>B</b> = 自分类平均匹配值：分类包含的每张原图与「该分类的该算法生成图」比对的匹配占比均值（越高越好，表明样本比较集中）；<b>C</b> = 其它分类平均匹配值：其它分类的每张原图与「该分类的该算法生成图」比对的匹配占比均值（越低越好，表明该分类的产物不易被别的分类原图匹配）；<b>D</b> = 匹配正确率：在能生成有效图的分类里，原图与「所有分类的该算法生成图」匹配、最高分<b>唯一最高</b>且恰是自己分类的占比，越高越好；无法生成有效图的不参与统计，无法给出最高值的结果的也不参与统计（这些样本只计入 E，故 D 的分母 = 可匹配样本数 − 无法区分数）；<b>E</b> = 无法区分率：全部可匹配样本里，无法给出最高值的结果（最高匹配度被 ≥2 个分类并列，分值一样、分不出该选哪一类）的占比（越低越好；分母 = 全部可匹配样本，与 D 的分母不同）。</div>
-          <div class="vhint">先从左侧选中一个算法查看它的评分与分类明细；或点右栏「开始验证」对全部算法顺序计算（样本较多时耗时较长，完成后结果自动缓存）。</div>
+          <div class="vhint">先从左侧选中一个算法查看它的评分与分类明细；或点右栏「开始验证」对全部算法顺序计算（样本较多时耗时较长）。完成后结果会<b>完整缓存到 summary/verify.json</b>，下次打开只要「已标注 / 汇总分析」的数据没变就直接复用（无需重算）；一旦有变动就会标记「需重算」并提示重新验证。</div>
         </div>
         <div id="verifyDetail" style="display:none">
           <div class="vdbar">
@@ -185,7 +185,7 @@
       <button type="button" class="btn green" id="btnVerifyStart" style="margin-left:auto;font-size:12px"
         title="对左侧全部汇总图算法顺序做一次自回归验证：把 classify/ 每张原图逐张与全部分类同 kind 汇总图按识别口径逐点比对，统计 A/B/C/D/E 五个指标并缓存结果（样本或产物有变动时需重新验证）">开始验证</button>
     </div>
-    <div class="tkstat" id="vkStat" style="margin-top:10px;font-size:12px;line-height:1.8">尚未验证。</div>
+    <div class="tkstat" id="vkStat" style="margin-top:10px;font-size:12px;line-height:1.8;white-space:pre-line">尚未验证。</div>
     <div id="verifyTask" style="display:none;margin-top:10px">
       <div class="vtBar"><div class="vtFill" id="vtFill" style="width:0%"></div></div>
       <div class="vtText" id="vtText" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
@@ -198,13 +198,17 @@
       <div style="margin-top:6px"><b style="color:var(--text)">D</b> 匹配正确率：在能生成有效图的分类里，与全部分类的该算法生成图比对、最高分<b style="color:var(--text)">唯一最高</b>且刚好是自己分类的占比（越高越好，表明算法区分度较好）。无法生成有效图的不参与统计，无法给出最高值的结果（最高分被 ≥2 个分类并列、分不出该选哪一类）的也不参与统计（只计入 E），故分母 = 可匹配样本数 − 无法区分数；明细表里的「匹配正确分类的个数」＝ 命中数 / 该分母。</div>
       <div style="margin-top:6px"><b style="color:var(--text)">E</b> 无法区分率：全部可匹配样本里，与全部分类的该算法生成图比对后无法给出最高值的结果（最高分被 ≥2 个分类并列、分值一样、分不出该选哪一类）的占比（越低越好）。分母 = 全部可匹配样本（命中 + 无法区分 + 误判 = 可匹配样本数），与 D 的分母不同，故 D + E 不一定等于 100%；明细表里的「无法区分的个数」＝ 无法区分数 / 该分母。</div>
       <div style="margin-top:6px">每种 kind 都对全部原图与全部分类比对，不按动作收窄；无法生成有效合成图（无该 kind 产物 / 全透明空图）的分类＝无判别点，它与其样本不参与任何指标的统计，明细行的对应数值显示「——」而不是 0%。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">查看详细</b>：明细表里 <b style="color:var(--text)">D 列（匹配正确率）</b>与 <b style="color:var(--text)">E 列（无法区分率）</b>各自紧跟数值给出一个按钮，分别只看<b style="color:var(--text)">匹配错误</b>样本（最高分唯一但不是自家分类；按被误判到的分类分组，每行「命中 x% · 自家 y%」＝ 该原图与「误判分类生成图」／与「自家生成图」的匹配占比）与<b style="color:var(--text)">无法区分</b>样本（最高分被 ≥2 个分类并列；每行「并列 A、B · 最高 x% · 自家 y%」＝ 并列到的分类及两边的匹配占比）。两个弹窗同一套版式：标题写明主体（匹配错误明细 / 无法区分明细 − 分类 ｜ 动作）、标题下一行 chip 交代汇总图算法与样本口径、说明段讲清读法，单击缩略图看原图大图。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/verify.json</b>（五种指标 + 逐分类明细 + 「查看详细」用的逐图明细），下次打开本页自动恢复上次结果 ——「已标注（classify/ 原图与标注）与汇总分析（summary/ 产物）的数据一个字都没变」就直接显示「已计算」，不必重算；只要这两处有任何变动（增删改原图 / 标注 / 分类定义，或产物与 info.json 有变化），指纹随之变化 → 结果立即标记为「需重算」（左栏 chip 变琥珀、右栏统计行给出提示、并提示一次重新验证，明细页状态显示「已过期 · 需重算」），点「开始验证」重算即覆盖缓存。缓存文件可随时手删（删了回到「未验证」），「重新生成全部」清空 summary/ 时也会一并删除。</div>
     </div>
   </div>
 
   <div id="edOpt" style="display:none">
     <div class="edHead">
       <h3 style="margin:0;font-size:14px">算法调优</h3>
-      <button type="button" class="btn green" id="optRunBtn" style="margin-left:auto;font-size:12px"
+      <button type="button" class="btn" id="optAutoBtn" style="margin-left:auto;font-size:12px"
+        title="自动调整参数：对每个可调的权重 Y 在 0~1 之间随机试 10 次（精确到 0.001），只要匹配正确率上升、或无法区分率下降就采纳，并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；需先点「验证所有算法」并等它跑完；单一特征算法只有一个特征、权重固定 1，不参与调整">自动调整参数</button>
+      <button type="button" class="btn green" id="optRunBtn" style="font-size:12px"
         title="按当前特征组合与权重 Y 验证全部算法的分类准确率（classify/ 全部已标注原图 × 全部分类）；运行中不可再次启动">验证所有算法</button>
     </div>
     <div id="optStat" style="margin-top:10px;font-size:12px;line-height:1.8;white-space:pre-line;color:var(--text)">正在读取状态…</div>
@@ -216,10 +220,13 @@
     <div id="optVerdict" style="margin-top:12px"></div>
     <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.9">
       <div>算法调优建立在<b style="color:var(--text)">特征验证</b>结果之上：先「汇总分析」生成各分类产物，再到「特征验证」算出每个特征的 A/B/C/D/E，本视图据此自动组合算法。</div>
-      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,1]</b> 默认 1 可改。</div>
+      <div style="margin-top:6px">每个特征的基础分 <b style="color:var(--text)">X = B 自分类平均匹配值 − C 其它分类平均匹配值</b>（越大越能区分自己与其它分类），权重 <b style="color:var(--text)">Y ∈ [0,1]</b> 默认 1 可改（步进 <b style="color:var(--text)">0.001</b>，上下箭头 / 手输都按 0.001 收齐）。</div>
       <div style="margin-top:6px">某分类匹配度 = Σ「(100 − 不匹配占比) × X × Y」÷ Σ「X × Y」（加权平均，只累加该分类有有效产物的特征），匹配度<b style="color:var(--text)">唯一最高</b>的分类即判定结果，与样本归属分类一致即命中。</div>
-      <div style="margin-top:6px"><b style="color:var(--text)">打平（并列）处理</b>：逐张样本先看每个特征——某特征的最高匹配值被 <b style="color:var(--text)">≥2 个分类并列</b>（分值一样、分不出该选哪一类）即视为该特征有问题，这张样本的加权平均里<b style="color:var(--text)">整张放弃该特征</b>；放弃后重新加权，若最高匹配度<b style="color:var(--text)">仍然并列</b>（或本张样本的可用特征被全部放弃、无从判定），则给出<b style="color:var(--text)">无法区分</b>的最终结论：既不算命中也不算判错，单独计入「无法区分率」（与特征验证的 E 同口径）。</div>
-      <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 3 个：单一最佳匹配特征 / 所有正确率100%特征 / 所有正确率80%-99%特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">打平（并列）处理</b>：逐张样本先看每个特征——某特征的最高匹配值被 <b style="color:var(--text)">≥2 个分类并列</b>（分值一样、分不出该选哪一类）即视为该特征有问题，这张样本的加权平均里<b style="color:var(--text)">整张放弃该特征</b>；放弃后重新加权，若最高匹配度<b style="color:var(--text)">仍然并列</b>（或本张样本的可用特征被全部放弃、无从判定），则给出<b style="color:var(--text)">无法区分</b>的最终结论：既不算命中也不算判错，单列「无法区分率」（分母 = 可判定样本、含无法区分，与特征验证的 E 同口径）；它<b style="color:var(--text)">也不进「匹配正确率」的分母</b>（正确率 = 命中 /（可判定样本 − 无法区分）= 命中 /（命中 + 判错），与特征验证的 D 同口径），故正确率 + 无法区分率不一定等于 100%。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">自动调整参数</b>：先「验证所有算法」并等它跑完（结果要能对上当前样本 / 产物）才能点。它逐算法逐权重把 Y 在 <b style="color:var(--text)">0~1 之间随机试 10 次</b>（精确到 0.001），只要这次改动让该算法的<b style="color:var(--text)">匹配正确率上升</b>或<b style="color:var(--text)">无法区分率下降</b>就采纳（10 个候选里取「正确率更高、再比无法区分率更低」的那个，一次都没改善就保持原值），采纳后立即把当前权重写入 <b style="color:var(--text)">classify/opt-weights.json</b>（可随时手删，删了回到默认全 1）；全部调完再用最终权重重算一遍全部算法，界面的权重框、结果卡与结论随新权重刷新。界面上的权重框也以这份文件为起点（改了文件刷新页面即生效）。</div>
+      <div style="margin-top:6px">单一特征算法只有一个特征，权重 Y 在 Σ「X × Y」里被约掉、改它对加权平均没有任何影响，因此<b style="color:var(--text)">权重固定 1、不可编辑、也不参与「自动调整参数」</b>（勾选框同样锁上，后端也不把它写进权重文件）。</div>
+      <div style="margin-top:6px">还没做「特征验证」时这里也会先列出全部算法（当前 4 个：单一最佳匹配特征 / 单一最佳+100%正确率特征 / 单一最佳+90+%正确率特征 / 单一最佳+80+%正确率特征）的空位，结果处显示<b style="color:var(--text)">未计算</b>。</div>
+      <div style="margin-top:6px"><b style="color:var(--text)">缓存与过期</b>：验证结果<b style="color:var(--text)">完整缓存</b>到 <b style="color:var(--text)">summary/opt-result.json</b>（各算法结果 + 逐分类明细 + 最近一次「自动调整参数」摘要），下次打开本页自动恢复上次结果 ——「<b style="color:var(--text)">已标注（classify/）、汇总分析（summary/ 产物）、特征验证（各特征的五种指标）</b>三处数据都没变」就直接用上次的，不必重算；只要其中任何一处有变动（含特征验证被重算后特征口径变了），结果立即标记过期：右栏统计行给出提示、并提示一次重新计算，结论卡 / 权重卡里也会标黄说明。另外<b style="color:var(--text)">特征选择 + 权重数值每次跑完都会覆写一份最新的快照</b>到 <b style="color:var(--text)">summary/opt-weights.json</b>（每个算法：特征 kind 清单 + 基础分 X + 权重 Y + 当时指标），方便后续功能 / 开发验证直接读取，不必解析界面状态。</div>
       <div style="margin-top:6px;color:var(--amber)">验证期间建议先停掉「特征验证」与执行模式自动识别（两者都会长时间占用 CPU 与磁盘 IO）。</div>
     </div>
   </div>
