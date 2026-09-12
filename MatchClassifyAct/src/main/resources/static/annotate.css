@@ -279,7 +279,7 @@
   .optWBtnRow{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
   .optWBtnRow .btn{font-size:12px}
   .optResWrap{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
-  .optResWrap .vcard{flex:1 1 380px;min-width:300px}
+  .optResWrap .vcard{flex:1 1 260px;min-width:230px}   /* 结果卡横着并排（匹配正确率 / 无法区分率 / 生效特征），放不下就折行 */
   .optTblWrap{overflow:auto;max-height:46vh;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}
   .optTbl{width:100%;border-collapse:collapse;font-size:12.5px}
   .optTbl th{position:sticky;top:0;z-index:1;background:var(--panel);color:var(--muted);text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}

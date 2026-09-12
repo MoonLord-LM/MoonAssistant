@@ -30,7 +30,7 @@ public class OptimizeController {
     }
 
     /**
-     * 启动一次验证：weights = {算法 id: [权重 Y...]}（与算法特征顺序一一对应，缺省 1）；
+     * 启动一次验证：weights = {算法 id: [权重 Y...]}（与算法特征顺序一一对应，缺省 = 文件里保存的那份 / 1）；
      * only = 只重算这些算法 id（缺省 / 空 = 全部算法；改了某个算法的权重时只传它，其余算法数值不变）。
      */
     @PostMapping("/start")

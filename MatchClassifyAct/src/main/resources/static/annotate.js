@@ -3800,9 +3800,8 @@ function optEnsureMain(){
       rows +=
         '<tr>' +
           '<td><span class="t">' + escHtml(vkInfo(f.kind).name) + '</span>' +
-            '<div class="ocap" style="margin:0">' + escHtml(f.why || "") +
-            '　A ' + fmtV(f.b) + ' · B ' + fmtV(f.a) + ' · C ' + fmtV(f.other) + ' · D ' + fmtV(f.c) +
-            ' · E ' + fmtV(f.e) + '</div></td>' +
+            '<div class="ocap" style="margin:0">A ' + fmtV(f.b) + ' · B ' + fmtV(f.a) + ' · C ' + fmtV(f.other) +
+            ' · D ' + fmtV(f.c) + ' · E ' + fmtV(f.e) + (f.why ? '　' + escHtml(f.why) : '') + '</div></td>' +
           '<td class="nu">' + fmtX(f.x) + '</td>' +
           '<td' + (single ? ' class="nu"' : "") + '>' + (single
             ? '<span id="optYv-' + a.id + '-' + i + '" title="单一特征算法：权重固定 1、只展示不可编辑（只有一个特征时 Y 在加权平均里被约掉），也不参与「自动调整参数」">' + fmtY(d.vals[i]) + '</span>'
@@ -3818,7 +3817,7 @@ function optEnsureMain(){
           (a.note ? '<br><b style="color:var(--amber)">' + escHtml(a.note) + '</b>' : '') +
           (single ? '<br><b style="color:var(--muted)">单一特征算法：权重固定 1、不可编辑，也不参与「自动调整参数」。</b>' : '') + '</div>' +
         '<div class="optTblWrap" style="max-height:none"><table class="optTbl"><thead><tr>' +
-          '<th>特征（A 生成成功率 / B 自分类 / C 其它 / D 正确率）</th><th>基础分 X = B − C</th><th>权重 Y</th><th>生效 X × Y</th>' +
+          '<th>特征（A · 生成成功率 / B · 自分类平均匹配值 / C · 其它分类平均匹配值 / D · 匹配正确率 / E · 无法区分率）</th><th>基础分 X = B − C</th><th>权重 Y</th><th>生效 X × Y</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
         '<div class="optResWrap" id="optRes-' + a.id + '" style="margin-top:10px"></div>' +
       '</div>';
@@ -3856,7 +3855,7 @@ function optDecided(r){
   return ((r && Number(r.samples)) || 0) - ((r && Number(r.tie)) || 0);
 }
 
-/* 单个算法的结果卡（大数字 = 匹配正确率 + 无法区分率 + 各分类明细，details 折叠） */
+/* 单个算法的结果卡（横着并排三张：匹配正确率 / 无法区分率 / 生效特征，下面接各分类明细，details 折叠） */
 function optResCard(r){
   const rows = Array.isArray(r.rows) ? r.rows : [];
   const miss = x => (x.miss == null ? (x.samples - x.hit - (x.tie || 0)) : x.miss);
@@ -3872,8 +3871,11 @@ function optResCard(r){
   }
   const w = Array.isArray(r.weights) ? r.weights : [];
   const eCls = r.tieRate == null ? "" : vkE(r.tieRate);
+  const wait = optWaitTag(r.id);
+  // 生效特征 = 权重 Y > 0 的特征（Y = 0 = 不参与计算）
+  const onCnt = w.filter(y => Number(y) > 0).length;
   return '<div class="vcard">' +
-    '<div class="vcap">匹配正确率' + optWaitTag(r.id) + '</div>' +
+    '<div class="vcap">匹配正确率' + wait + '</div>' +
     '<div class="vval' + (r.accuracy == null ? "" : " " + vkBC(r.accuracy)) + '">' + fmtV(r.accuracy) + '</div>' +
     // 口径与「特征验证」的匹配正确率（D）一致：命中 = 自家匹配度唯一最高；打平不算命中、不算判错、不进分母
     '<div class="vsub" title="命中 = 该样本的自家匹配度是全场唯一最高（并列不算命中）。无法区分 = 放弃分不开的特征后，' +
@@ -3882,14 +3884,22 @@ function optResCard(r){
       '命中 ' + r.hit + ' / ' + optDecided(r) + '（判错 ' + miss(r) + '）' +
       (r.tie ? ' · 无法区分 ' + r.tie + ' 张（' + fmtV(r.tieRate) + '，不计入正确率）' : '') +
       (r.skipped ? ' · 跳过 ' + r.skipped + ' 张（归属分类无有效产物）' : '') + ' · 耗时 ' + vkCost(r.costMs) + '</div>' +
-    '<div class="vcap" style="margin-top:8px">无法区分率' + optWaitTag(r.id) + '</div>' +
+  '</div>' +
+  '<div class="vcard">' +
+    '<div class="vcap">无法区分率' + wait + '</div>' +
     '<div class="vval' + (eCls ? " " + eCls : "") + '">' + fmtV(r.tieRate) + '</div>' +
     '<div class="vsub">最高匹配度被 ≥2 个分类并列（分值一样、分不出该选哪一类）的样本占比：' +
       (r.tie || 0) + ' / ' + r.samples + ' 张（分母 = 可判定样本、含无法区分；正确率的分母不含它，' +
       '故正确率 + 无法区分率不一定等于 100%）。逐张样本先放弃「分不开」的特征再重新加权，仍并列才算无法区分，' +
       '与特征验证的 E 同口径</div>' +
-    (w.length ? '<div class="vsub">权重 Y：' + w.map(fmtY).join(" / ") + '</div>' : '') +
-    '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看各分类匹配正确率与无法区分率</summary>' +
+  '</div>' +
+  (w.length ? '<div class="vcard">' +
+    '<div class="vcap">生效特征' + wait + '</div>' +
+    '<div class="vval">' + onCnt + ' / ' + w.length + '</div>' +
+    '<div class="vsub">Y 权重值大于 0 的特征，视为生效特征，参与最终匹配值的计算；Y 权重等于 0 的不参与计算</div>' +
+    '<div class="vsub">权重 Y：' + w.map(fmtY).join(" / ") + '</div>' +
+  '</div>' : "") +
+    '<details style="flex:1 1 100%"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">查看各分类匹配正确率与无法区分率</summary>' +
       '<div class="optTblWrap" style="max-height:32vh;margin-top:6px"><table class="optTbl"><thead><tr>' +
         '<th>分类</th><th>动作</th><th>样本</th><th>匹配正确/给出结果</th><th>无法区分</th><th>匹配正确率</th><th>无法区分率</th>' +
       '</tr></thead><tbody>' + (trs || '<tr><td colspan="7" style="color:var(--muted)">无数据</td></tr>') + '</tbody></table></div>' +
@@ -3961,7 +3971,7 @@ function optRender(){
     const tuneStage = t.mode === "tune" && t.stage === "自动调整参数";
     let st = "阶段：" + (t.stage || "准备中");
     if(t.total) st += "　" + Math.min(t.done || 0, t.total) + "/" + t.total + " 个" + (isMat ? "特征" : (tuneStage ? "权重" : "算法"));
-    // 自动调整参数阶段：当前是「哪个算法 · 哪个特征 · 第几遍」的哪一轮（随机 / 网格 / 微调，收尾时是「四舍五入」）第几次尝试、这次试到的 Y 是多少
+    // 自动调整参数阶段：当前是「哪个算法 · 哪个特征 · 第几遍」的哪一轮（随机 / 网格 / 微调 / 四舍五入）第几次尝试、这次试到的 Y 是多少
     if(tuneStage && t.cur) st += "（" + t.cur + (t.tuneKind ? " · " + vkInfo(t.tuneKind).name : "")
       + (t.tunePass ? " · 第 " + (+t.tunePass + 1) + " 遍" : "")
       + (t.trial ? " · 第 " + t.trial + "/" + (t.trials || 100) + " 次" + (t.trialRound || "随机") + " Y=" + fmtY(t.trialY) : "") + "）";
@@ -3984,10 +3994,13 @@ function optRender(){
     const onlyNames = (Array.isArray(t.only) ? t.only : [])
       .map(id => { const a = optAlgo(id); return a ? a.name : id; }).join("、");
     if(stat) stat.textContent = (t.mode === "tune"
-        ? "正在后台自动调整参数：逐权重第一遍三轮各试 100 次（①0~10 整段随机 ②0.1~10 递增 0.1 逐个走一遍 ③当前最好值附近 ±0.001~±0.1 就近微调，共 300 次、步进 0.001），只有匹配正确率上升、或无法区分率下降才采纳；"
-          + "某个权重这一遍找到了更好的值，就只跑随机轮重试（一遍 300 个 0~10 随机值，最多追加 3 遍，进度里的「第 N 遍」），"
-          + "每个算法调完再四舍五入收尾（0.01 → 0.1 → 1：重算后两率一点没变就用更简单的值，进度里的「四舍五入」），"
-          + "新权重保存到 classify/opt-weights.json。\n（" + st + "）"
+        ? "正在后台自动调整参数：逐个算法 → 逐个权重 → 逐个轮次，每个权重第一遍 4 轮共 403 次（步进 0.001）：\n"
+          + "　第 1 轮：0~10 整段随机 100 个\n"
+          + "　第 2 轮：0.1~10 递增 0.1 递进扫描 100 个\n"
+          + "　第 3 轮：最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1 逐个走一遍）\n"
+          + "　第 4 轮：四舍五入微调 3 档（0.01 / 0.1 / 1，重算后两率一点没变就换成更简单的值）\n"
+          + "前三轮只有匹配正确率上升、或无法区分率下降才采纳；某个权重这一遍采纳过更好的值，就再只跑随机轮重试"
+          + "（一遍 300 个 0~10 随机值，最多追加 3 遍，进度里的「第 N 遍」）。新权重保存到 classify/opt-weights.json。\n（" + st + "）"
         : "正在后台" + (onlyNames ? "只重新验证「" + onlyNames + "」的分类匹配正确率" : "验证全部算法的分类匹配正确率") + "…（" + (t.stage || "准备中")
           + (sn ? " · 第 " + Math.min(t.processed || 0, sn) + "/" + sn + " 张" : "")
           + (t.reuseRows ? " · 复用 " + t.reuseRows + " 行" : "")
@@ -4013,7 +4026,7 @@ function optRender(){
           (j.tune && j.tune.finished ? "\n自动调整参数上一次完成" + fmtCostSuffix(Number(j.tune.costMs)) + "：采纳 "
             + (j.tune.improved || 0) + " 处权重调整（共试探 " + (j.tune.weights || 0) + " 个权重"
             + (j.tune.repeats ? "，另有 " + j.tune.repeats + " 遍是找到更好值后只跑随机的重试" : "")
-            + (j.tune.simplified ? "，四舍五入收尾把 " + j.tune.simplified + " 个权重简化成更直白的值" : "") + "），权重文件 "
+            + (j.tune.simplified ? "，第 4 轮四舍五入微调把 " + j.tune.simplified + " 个权重换成更直白的值" : "") + "），权重文件 "
             + (j.tune.file || "") : "") +
           // 特征选择 + 权重数值始终另存一份最新的（后续功能 / 开发验证直接读，不必解析界面状态）
           "\n特征选择与权重数值快照：summary/" + (j.snapshotFile || "opt-weights.json") + "（每次跑完覆写最新的）。" +
@@ -4064,7 +4077,7 @@ function optRender(){
     if(box.dataset.sig === sig) continue;
     box.dataset.sig = sig;
     box.innerHTML = r ? optResCard(r)
-      : '<div class="ocap" style="margin:0">未计算' + (j.ready
+      : '<div class="ocap" style="margin:0;flex:1 1 100%">未计算' + (j.ready
           ? '（点右上角「验证所有算法」）。改完特征权重 Y（回车 / 点别处）会自动重算，不必再点按钮。'
           : '：先到「特征验证」视图完成一次验证，算法、特征与基础分 X 会自动组合。') + '</div>';
   }
@@ -4131,7 +4144,7 @@ async function optPoll(){
     else if(isTune) toast("自动调整参数已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "：采纳 "
       + ((j.tune && j.tune.improved) || 0) + " 处权重调整"
       + ((j.tune && j.tune.repeats) ? "，另有 " + j.tune.repeats + " 遍只跑随机的重试" : "")
-      + ((j.tune && j.tune.simplified) ? "，四舍五入收尾把 " + j.tune.simplified + " 个权重简化成更直白的值" : "")
+      + ((j.tune && j.tune.simplified) ? "，第 4 轮四舍五入微调把 " + j.tune.simplified + " 个权重换成更直白的值" : "")
       + "，新权重已保存并应用到界面。", "ok");
     else if(rc) toast(optDoneMsg(rc.prev, j.result, Number(j.task && j.task.costMs)), "ok");
     else toast("算法验证已完成" + fmtCostSuffix(Number(j.task && j.task.costMs)) + "，可在主图区查看各算法分类匹配正确率。", "ok");
@@ -4167,11 +4180,11 @@ function optSyncRunBtn(){
   ab.title = (run || optLock) ? "正在跑任务，等它结束"
     : !ready ? "请先在「特征验证」视图完成验证（算法由验证结果组合而来）"
     : !(OPT && OPT.tunable) ? "请先点「验证所有算法」并等它跑完（结果要能对上当前的样本 / 产物），之后才能自动调整参数"
-    : "对每个可调的权重 Y 第一遍分三轮各试 100 次（步进 0.001）：0~10 整段随机 100 次、0.1~10 递增 0.1 逐个走一遍（100 个值）、" +
-      "再在当前最好值附近按 ±0.001~±0.1 微调 100 次，共 300 次、最终留下这里面的最优值：" +
-      "只要匹配正确率上升、或无法区分率下降就采纳；某个权重这一遍里找到了更好的值，就只跑随机轮重试（一遍 300 个随机值，最多追加 3 遍），" +
+    : "对每个可调的权重 Y 逐个算法 → 逐个权重 → 逐个轮次地试（步进 0.001），第一遍 4 轮共 403 次：" +
+      "第 1 轮 0~10 整段随机 100 个；第 2 轮 0.1~10 递增 0.1 递进扫描 100 个；第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1）；" +
+      "第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1：重算后两率一点没变就换成更简单的值）；" +
+      "前三轮只要匹配正确率上升、或无法区分率下降就采纳；某个权重这一遍里采纳过更好的值，就再只跑随机轮重试（一遍 300 个随机值，最多追加 3 遍）；" +
       "并把新权重保存到 classify/opt-weights.json（界面权重框随更新）；" +
-      "最后每个算法还会四舍五入收尾（依次按 0.01 → 0.1 → 1 四舍五入后重算：匹配正确率与无法区分率一点没变，就留下更简单的值）；" +
       "单一特征算法的权重固定 1、不参与调整";
 }
 
@@ -4235,7 +4248,7 @@ async function optAutoStart(){
   try{
     const r = await fetchT("/api/optimize/auto", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ weights: optCollect() }) }, 9000);
     const j = r && r.ok ? await r.json().catch(()=>null) : null;
-    if(j && j.started) toast("开始自动调整参数：逐权重第一遍分三轮各试 100 次（0~10 随机 / 0.1~10 递增 0.1 网格 / 当前最好值附近 ±0.001~±0.1 微调，共 300 次），正确率上升或无法区分率下降才采纳；某个权重这一遍找到了更好的值就只跑随机轮重试 300 个随机值（最多追加 3 遍），每个算法调完再四舍五入收尾（0.01 → 0.1 → 1，两率没变就用更简单的值）…", "ok");
+    if(j && j.started) toast("开始自动调整参数：逐个算法 → 逐个权重 → 逐个轮次，每个权重第一遍 4 轮共 403 次（步进 0.001）——第 1 轮 0~10 整段随机 100 个；第 2 轮 0.1~10 递增 0.1 递进扫描 100 个；第 3 轮最优值微调 200 个（加法 100 个 + 减法 100 个，±0.001 ~ ±0.1）；第 4 轮四舍五入微调 3 档（0.01 / 0.1 / 1，两率没变就换成更简单的值）；前三轮正确率上升或无法区分率下降才采纳；某个权重这一遍采纳过更好的值就再只跑随机轮 300 个随机值（最多追加 3 遍）…", "ok");
     else toast("启动失败：" + ((j && j.error) || "请求失败"), "err");
   }catch(e){ toast("启动失败：请求异常", "err"); }
   optPoll();
