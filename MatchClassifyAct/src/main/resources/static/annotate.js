@@ -5455,12 +5455,13 @@ async function execAutoLoop(){
     renderExecAll();
     if(!execIsClickable()){
       // 未识别 / 该分类未定义点击动作：确认时间后直接下一轮（没有动作就没有“游戏响应”等待）
+      //    简化文案：不再重复分类名与「跳过动作」—— 右栏「识别结果」已写明识别成哪个分类（用户指定）
       const why = (j.imageWidth <= 0 && j.error)
           ? execEsc(j.error)
           : (j.state
               ? (j.action === "click"
-                  ? "识别为「" + execEsc(j.state) + "」但该分类尚无点击坐标，跳过动作"
-                  : "识别为「" + execEsc(j.state) + "」但该分类无「鼠标点击」动作，跳过动作")
+                  ? "该分类尚无点击坐标"
+                  : "该分类无「鼠标点击」动作")
               : "未识别出已标注分类（可能尚无同尺寸样本），不动作");
       const k1 = await execAutoWait('第 ' + round + ' 轮：' + why + '。<b>{s} 秒后开始下一轮…</b>', 3, seq);
       if(!k1) return;
