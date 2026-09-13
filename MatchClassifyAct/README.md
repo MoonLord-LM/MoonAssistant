@@ -176,8 +176,10 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 - **识别口径（只认 `resource/runtime/`）**：识别完全交给**算法调优落地的「综合最佳算法」**（`resource/runtime/algorithm.json` + `resource/runtime/<分类>/` 下该算法用到的产物），与 `resource/summary/` 的调优过程解耦。算法 = 若干**特征**（产物 kind + 基础分 X + 权重 Y），逐特征把当前帧与各分类在 `resource/runtime/<分类>/` 下的对应产物按既有逐图判据比对（**交集/多数/方框交集类**要求逐像素完全一致；**均值类**用逐通道容差 `execute.rgb-dist-threshold`，默认 255/3=85）得不匹配点占比，**匹配值 = 100 − 占比**；先放弃「最高匹配值被 ≥2 个分类并列（打平）」的特征（并列只在有有效产物的分类之间数：空图恒 0 分、不数进并列），再按 Σ「匹配值 × X × Y」÷ Σ「X × Y」算出各分类**匹配度**，**差异度 = 100 − 匹配度**。识别**不设阈值门槛**：匹配度唯一最高的分类即识别结果；最高被并列 = **无法区分**，本轮不动作并把并列的分类名称交代给页面（提示去算法调优调权重 / 补标注）。**没有 `resource/runtime/`**（从没跑过算法调优、或整目录被删）→ 不识别，直接提示「请先到『算法调优』完成一轮」。
 - **依赖前提**：目标画面需先在标注模式打好标、跑过「汇总分析」，再跑一轮**算法调优**（「特征验证」→「刷新算法特征」，或直接「自动调整参数」）把综合最佳算法落地到 `resource/runtime/`；`resource/runtime/` 里缺该特征产物或尺寸不符的分类不参与比对。**算法调优每次跑完都会按「综合分 =（1 − 无法区分率）× 匹配正确率」最高的算法重刷 `resource/runtime/`**（也就顺手刷掉了执行与推荐用的算法）。
 - **执行动作**：识别出「鼠标点击」动作后点「执行动作」，直接按右侧识别结果的坐标发送点击，**不再重新截图识别**（画面已变化请先点「立即识别」刷新结果）：
-  - `screen`（默认，前台点击）：`SetForegroundWindow + SetCursorPos + mouse_event` 真实输入（要求窗口可见不被遮挡）；
-  - `post`（后台消息）：向目标窗口投递完整点击消息序列，不要求窗口前台/可见、不抢占鼠标（游戏 / 模拟器多忽略合成消息，故不作为默认）。
+  - `mumu`（默认，MuMu 模拟器）：不碰鼠标、不动窗口焦点，把点击交给 `MuMuManager.exe adb -v 0 -c "shell input tap x y"`（`MuMuManager.exe` 位置见 `execute.mumu-manager-path`）由模拟器自己的 adb 通道注入，模拟器在后台 / 窗口被遮挡也能点；**坐标要分两步换算**成模拟器内坐标（`shell input tap` 用的是模拟器实际分辨率坐标，不是窗口截图像素）：① 识别点取自窗口截图，而游戏画面四周那一圈是模拟器自己的边框，先减掉 `execute.mumu-click-offset-x/-y`（默认 55 / 60 —— 游戏画面 1170×660 嵌在 1280×720 的模拟器窗口里，左右各让出 (1280−1170)/2、上方让出 60、下方 0），减成负数按 0 处理；② 再按「游戏画面 1170×660 → 模拟器实际分辨率 2560×1440」等比放大（窗口是被强制缩小到截图尺寸的，模拟器里的画面仍是原始分辨率；尺寸在 `WindowClicker` 里是常量，换分辨率改那里）；
+  - `screen`（前台点击）：`SetForegroundWindow + SetCursorPos + mouse_event` 真实输入（要求窗口可见不被遮挡）；
+  - `rawinput`（RawInput 输入）：坐标换算同 `screen`，但**不做前台切换**（不调 `SetForegroundWindow`、不轮询前台），直接注入**系统级真实鼠标输入** `SendInput`（绝对移动 → 左键按下 → 抬起，点完把光标移回原位）；注入的事件会进系统输入链，认 RawInput / DirectInput（或轮询 `GetCursorPos`）的程序也能收到（`screen` 用的 `mouse_event` 是遗留接口，这类程序常常收不到）。真实鼠标语义是「投给光标下的窗口」，所以**要求目标点在屏幕上没被别的窗口挡住**（注入前核对归属，被挡住就取消本次点击并说明命中的是谁），需要完全后台用 `mumu` / `post`；
+  - `post`（后台消息）：向目标窗口投递完整点击消息序列，不要求窗口前台/可见、不抢占鼠标（游戏 / 模拟器多忽略合成消息）。
 - 画面区实时帧上用**红白准星**叠加标出识别命中点（点击坐标），右栏展示识别结果与**候选分类（展示最优的前 7 个）**，按差异度由小到大取前 7，`FrameClassifier` 里限流）。
 
 ---
@@ -200,7 +202,9 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `ui.window-size` `ui.center` | `1760x990` `true` | 控制台窗口尺寸 / 是否居中 |
 | `execute.match-threshold-percent` | `25` | 差异度参考阈值：识别不设判定门槛，仅随识别结果返回供界面参考 |
 | `execute.rgb-dist-threshold` | `85`（255/3） | **均值型对照图**（avg/dedup-avg/avg8/dedup-avg8/avg32/dedup-avg32 及各自 -unique）判不匹配的逐通道色差上限：R/G/B 任一通道差 > 它判「不匹配」，三通道都 ≤ 它才匹配；交集/多数/方框交集型（交集六档 same100/90/80/70/60/50、major/major8/major32 及各自 -unique、注意区交集图 attn8/32-same100/90/80/70/60/50、点击区交集图 click8/32-same100/90/80/70/60/50）固定「逐像素完全一致」，不受它影响 |
-| `execute.click-mode` | `screen` | `screen`=真实前台点击（默认）；`post`=后台消息点击。控制台「执行模式」页可实时切换、重启后回到本配置 |
+| `execute.click-mode` | `mumu` | `mumu`=MuMu 模拟器（默认）：走 `MuMuManager.exe` 的 adb 通道注入点击，不抢鼠标前台、模拟器在后台也能点；`screen`=真实前台点击；`rawinput`=RawInput 输入：`SendInput` 注入系统级真实鼠标输入，不抢前台、不做前台等待，要求目标点未被别的窗口遮挡；`post`=后台消息点击。控制台「执行模式」页可实时切换、重启后回到本配置 |
+| `execute.mumu-manager-path` | `C:\Program Files\Netease\MuMuPlayer-12.0\nx_main\MuMuManager.exe` | MuMu 模拟器模式用来发点击的 `MuMuManager.exe` 位置（换机器 / 换安装位置时改这里） |
+| `execute.mumu-click-offset-x` `execute.mumu-click-offset-y` | `55` `60` | MuMu 模拟器模式坐标换算第一步：从识别点（窗口截图坐标）里减掉的横向 / 纵向边框占用（像素）：左右各让出这么多、上方让出这么多、下方 0；减成负数按 0 处理。第二步「游戏画面 → 模拟器实际分辨率」的等比放大不在此处，尺寸是 `WindowClicker` 里的常量 |
 
 ## 五、代码 / 目录结构
 

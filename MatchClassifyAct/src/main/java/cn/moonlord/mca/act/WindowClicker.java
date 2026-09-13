@@ -4,6 +4,9 @@ import cn.moonlord.mca.capture.WindowInfo;
 import cn.moonlord.mca.config.ExecuteProperties;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import com.sun.jna.Structure;
+import com.sun.jna.platform.win32.BaseTSD;
+import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.win32.StdCallLibrary;
@@ -12,19 +15,38 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
 /**
  * 鼠标点击执行器：把「识别出的点击点」（图片像素 = 窗口相对坐标 Left/Top）转成一次真实的鼠标左键点击。
  *
- * <p>两种执行方式（由 {@code execute.click-mode} 控制）：</p>
+ * <p>四种执行方式（由 {@code execute.click-mode} 控制，控制台「执行模式」页可实时切换）：</p>
  * <ul>
- *   <li>{@code screen}（默认）：前台点击。截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
+ *   <li>{@code mumu}（默认）：MuMu 模拟器。不碰鼠标、不动窗口焦点，把点击交给
+ *       {@code MuMuManager.exe adb -v <实例序号> -c "shell input tap x y"} 由模拟器自己的 adb 通道注入
+ *       （模拟器在后台 / 窗口被遮挡也能点）。坐标分两步从「窗口截图坐标」换算成「模拟器内坐标」：
+ *       先减掉模拟器边框占用得到「游戏画面内坐标」（{@code execute.mumu-click-offset-x/-y}），
+ *       再按「游戏画面 → 模拟器实际分辨率」等比放大（见 {@link #MUMU_DEVICE_WIDTH}），见 {@link #mumuClick}；</li>
+ *   <li>{@code screen}：前台点击。截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
  *       因此用「窗口外框左上角 + 图片像素」得到屏幕坐标，再把窗口带到前台并用
- *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。模拟器 / 游戏必须用此项；</li>
+ *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击；</li>
+ *   <li>{@code rawinput}：RawInput 输入。同样用「窗口外框左上角 + 图片像素」得到屏幕坐标，
+ *       但不做前台切换，而是直接注入<b>系统级真实鼠标输入</b>（{@code SendInput}：绝对移动 → 左键按下 → 抬起）。
+ *       注入的事件会进入系统输入链，认 RawInput / DirectInput（或轮询 {@code GetCursorPos}）的程序也能收到
+ *       （{@code screen} 用的 {@code mouse_event} 是遗留接口，这类程序常常收不到）。不要求窗口在前台、
+ *       也不等待前台；但 Windows 的鼠标点击语义是「投给光标下的窗口」，所以仍要求目标点在屏幕上可见 ——
+ *       被别的窗口挡住就取消并说明原因（见 {@link #rawInputClick}），需要完全后台请改用 {@code mumu} / {@code post}；</li>
  *   <li>{@code post}：后台消息。向目标窗口投递一条与真实鼠标路径一致的消息序列：先 3 次
  *       {@code WM_MOUSEMOVE} 模拟滑入轨迹、再 {@code WM_MOUSEACTIVATE} 声明点击意图（是否激活由窗口决定）、
  *       最后 {@code WM_LBUTTONDOWN}/{@code WM_LBUTTONUP}（客户区坐标 = 图片像素 − 标题栏 / 边框偏移）。
  *       不需要窗口在前台、不抢占用户鼠标，比只发「按下/抬起」更易被普通桌面程序接受；
- *       游戏 / 模拟器仍多数会忽略合成消息（点击效果不好时就用默认的前台点击）。</li>
+ *       游戏 / 模拟器仍多数会忽略合成消息。</li>
  * </ul>
  */
 @Slf4j
@@ -32,8 +54,52 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class WindowClicker {
 
-    public static final String MODE_POST = "post";
+    public static final String MODE_MUMU = "mumu";
     public static final String MODE_SCREEN = "screen";
+    public static final String MODE_RAW_INPUT = "rawinput";
+    public static final String MODE_POST = "post";
+
+    /** MuMu 模拟器的实例序号（{@code MuMuManager.exe … adb -v <序号> …}，从 0 开始 = 第一个实例）。 */
+    private static final String MUMU_INSTANCE_INDEX = "0";
+    /** 单次 MuMuManager 命令的等待上限（毫秒）：超时即强杀，避免页面上的点击请求一直悬挂。 */
+    private static final long MUMU_CMD_TIMEOUT_MS = 5000;
+    /** 失败时回显 MuMuManager 输出的字符上限，避免把大段输出塞进页面提示。 */
+    private static final int MUMU_OUTPUT_MAX = 200;
+
+    /**
+     * MuMu 模拟器（Android 侧）的<b>实际分辨率</b>：{@code shell input tap} 用的就是这套坐标空间。
+     * 模拟器窗口会被 {@code capture.resize-width}/{@code capture.resize-height} 强制缩放到截图尺寸，
+     * 但模拟器里的分辨率不跟着变，所以按窗口截图算出来的识别点必须放大回本尺寸才点得准。
+     */
+    private static final int MUMU_DEVICE_WIDTH = 2560;
+    private static final int MUMU_DEVICE_HEIGHT = 1440;
+
+    /**
+     * 窗口截图里「游戏画面」占的像素尺寸：截图范围 = 模拟器窗口整窗外框，四周是模拟器自己的边框
+     * （各让出多少见 {@code execute.mumu-click-offset-x/-y}），游戏画面只占中间这一块。
+     */
+    private static final int MUMU_GAME_WIDTH = 1170;
+    private static final int MUMU_GAME_HEIGHT = 660;
+
+    /** 是否是受支持的点击方式（非法值由调用方忽略并保留原值）。 */
+    public static boolean isSupportedMode(String mode) {
+        return MODE_MUMU.equals(mode) || MODE_SCREEN.equals(mode)
+                || MODE_RAW_INPUT.equals(mode) || MODE_POST.equals(mode);
+    }
+
+    /** 点击方式的中文名（日志口径：「MuMu 模拟器」/「前台点击」/「RawInput 输入」/「后台消息」）。 */
+    public static String modeLabel(String mode) {
+        if (MODE_MUMU.equals(mode)) {
+            return "MuMu 模拟器：走 MuMuManager.exe 的 adb 通道注入点击，不抢鼠标前台";
+        }
+        if (MODE_RAW_INPUT.equals(mode)) {
+            return "RawInput 输入：系统真实鼠标输入注入（SendInput），不做前台切换，要求目标点未被遮挡";
+        }
+        if (MODE_POST.equals(mode)) {
+            return "后台消息：完整点击消息序列，不抢鼠标焦点";
+        }
+        return "前台点击：真实鼠标输入，需要窗口可见、不被遮挡";
+    }
 
     // Windows SDK 鼠标消息 / 事件常量（JNA 平台库未映射这些数值，直接按 SDK 定义）
     private static final int WM_MOUSEMOVE = 0x0200;
@@ -44,6 +110,21 @@ public class WindowClicker {
     private static final int HTCLIENT = 0x0001;   // 命中测试码：客户区（WM_MOUSEACTIVATE 的 LOWORD）
     private static final int MOUSEEVENTF_LEFTDOWN = 0x0002;
     private static final int MOUSEEVENTF_LEFTUP = 0x0004;
+
+    // SendInput 注入用的常量（JNA 平台库未映射 INPUT 结构相关的这些数值，直接按 SDK 定义）
+    private static final int INPUT_MOUSE = 0;
+    private static final int MOUSEEVENTF_MOVE = 0x0001;
+    private static final int MOUSEEVENTF_VIRTUALDESK = 0x4000;
+    private static final int MOUSEEVENTF_ABSOLUTE = 0x8000;
+    /** 绝对坐标的归一化满量程：SDK 约定 dx/dy 取 0 = 虚拟桌面最左 / 最上，取本值 = 最右 / 最下 */
+    private static final int ABSOLUTE_RANGE = 65535;
+    // GetSystemMetrics 的虚拟桌面维度索引（绝对坐标要按整个虚拟桌面归一化，多显示器下才落得准）
+    private static final int SM_XVIRTUALSCREEN = 76;
+    private static final int SM_YVIRTUALSCREEN = 77;
+    private static final int SM_CXVIRTUALSCREEN = 78;
+    private static final int SM_CYVIRTUALSCREEN = 79;
+    /** 读窗口标题的缓冲长度（只在「点到谁身上了」这类错误提示里用） */
+    private static final int TITLE_MAX_CHARS = 256;
 
     // GetAncestor 的检索标志：GA_ROOT = 返回指定窗口所属的顶层根窗口（自身已是顶层则返回自身）
     private static final int GA_ROOT = 2;
@@ -61,6 +142,11 @@ public class WindowClicker {
     private static final int POST_MOVE_STEP_MS = 30;
     private static final int POST_CLICK_GAP_MS = 60;
     private static final int POST_MOVE_STEPS = 3;
+
+    // RawInput 输入的节奏（毫秒）：注入移动后等目标窗口建立 hover 状态、按下与抬起之间、抬起后把光标移回原位前
+    private static final int RAW_INPUT_MOVE_SETTLE_MS = 50;
+    private static final int RAW_INPUT_CLICK_GAP_MS = 60;
+    private static final int RAW_INPUT_BACK_MS = 20;
 
     /**
      * user32.dll 中本次执行需要用到的函数。JNA 平台库 {@code User32} 对其中个别函数
@@ -91,9 +177,58 @@ public class WindowClicker {
         void keybd_event(byte bVk, byte bScan, int dwFlags, Pointer dwExtraInfo);
 
         int GetWindowThreadProcessId(WinDef.HWND hwnd, IntByReference pid);
+
+        int SendInput(int cInputs, Input[] pInputs, int cbSize);
+
+        /** POINT 在 SDK 里是按值传参，JNA 默认按引用传，这里用 {@code ByValue} 版本对齐 ABI。 */
+        WinDef.HWND WindowFromPoint(PointByValue point);
+
+        int GetSystemMetrics(int nIndex);
+
+        int GetWindowText(WinDef.HWND hwnd, char[] text, int maxCount);
     }
 
-    /** 点击结果（screenX/Y 为换算后的屏幕坐标，仅作反馈展示；post 模式不依赖它们）。 */
+    /**
+     * {@code SendInput} 的 {@code INPUT} 结构：只用到鼠标分支，因此直接按「type 字段 + MOUSEINPUT」
+     * 的布局声明，不另建联合体（键盘 / 硬件分支用不到）。字段顺序与对齐交给 JNA 按 ABI 计算，
+     * {@link #sendInput} 把 {@code size()} 结果直接当 {@code cbSize} 传给系统 —— 与 SDK 的
+     * {@code sizeof(INPUT)} 一致（系统会校验这个值，不符即拒绝注入）。
+     */
+    public static class Input extends Structure {
+        public int type;
+        public MouseInput mi = new MouseInput();
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return Arrays.asList("type", "mi");
+        }
+    }
+
+    /** {@code INPUT} 里的鼠标分支 {@code MOUSEINPUT}。 */
+    public static class MouseInput extends Structure {
+        public int dx;
+        public int dy;
+        public int mouseData;
+        public int dwFlags;
+        public int time;
+        public BaseTSD.ULONG_PTR dwExtraInfo = new BaseTSD.ULONG_PTR(0);
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return Arrays.asList("dx", "dy", "mouseData", "dwFlags", "time", "dwExtraInfo");
+        }
+    }
+
+    /** {@code POINT} 的按值传参版本（{@code WindowFromPoint} 用；JNA 的字段顺序注解不会被子类继承，故重写）。 */
+    public static class PointByValue extends WinDef.POINT implements Structure.ByValue {
+        @Override
+        protected List<String> getFieldOrder() {
+            return Arrays.asList("x", "y");
+        }
+    }
+
+    /** 点击结果（screenX/Y 为换算后的坐标：screen / rawinput 模式 = 屏幕坐标、mumu 模式 = 模拟器内坐标，
+     *  都只作反馈展示；post 模式不依赖它们，恒 -1）。 */
     public record Result(boolean ok, String mode, String message,
                          int x, int y, int screenX, int screenY) {
     }
@@ -104,13 +239,90 @@ public class WindowClicker {
      * @param window 目标窗口（需当前仍存在）
      * @param x      相对窗口内容左上角的 x
      * @param y      相对窗口内容左上角的 y
-     * @param mode   {@link #MODE_POST} 或 {@link #MODE_SCREEN}
+     * @param mode   {@link #MODE_MUMU} / {@link #MODE_SCREEN} / {@link #MODE_RAW_INPUT} / {@link #MODE_POST}
      */
     public Result click(WindowInfo window, int x, int y, String mode) {
         if (window == null || window.getHwnd() == null || window.getHwnd().getPointer() == null) {
             return new Result(false, mode, "目标窗口不存在或句柄已失效", x, y, -1, -1);
         }
-        return MODE_SCREEN.equalsIgnoreCase(mode) ? screenClick(window, x, y) : postClick(window, x, y);
+        if (MODE_MUMU.equalsIgnoreCase(mode)) {
+            return mumuClick(x, y);
+        }
+        if (MODE_RAW_INPUT.equalsIgnoreCase(mode)) {
+            return rawInputClick(window, x, y);
+        }
+        return MODE_POST.equalsIgnoreCase(mode) ? postClick(window, x, y) : screenClick(window, x, y);
+    }
+
+    /**
+     * MuMu 模拟器模式：不动鼠标、不抢前台，直接让 {@code MuMuManager.exe} 通过模拟器自己的 adb 通道注入点击。
+     *
+     * <p>坐标换算（{@code shell input tap} 用的是模拟器内的实际分辨率坐标，不是窗口截图像素）：</p>
+     * <ol>
+     *   <li>先减掉模拟器边框占用 {@code execute.mumu-click-offset-x/-y} —— 识别点取自<b>窗口截图</b>，
+     *       而游戏画面四周那一圈是模拟器自己的边框，减成负数按 0 处理，得到「游戏画面内坐标」；</li>
+     *   <li>再按「游戏画面 {@link #MUMU_GAME_WIDTH}×{@link #MUMU_GAME_HEIGHT} → 模拟器实际分辨率
+     *       {@link #MUMU_DEVICE_WIDTH}×{@link #MUMU_DEVICE_HEIGHT}」等比放大 —— 窗口是被强制缩小到
+     *       截图尺寸的，模拟器里的画面仍是原始分辨率，不放大回去点出来的位置就会偏到左上方。</li>
+     * </ol>
+     */
+    private Result mumuClick(int x, int y) {
+        int offsetX = executeProperties.getMumuClickOffsetX();
+        int offsetY = executeProperties.getMumuClickOffsetY();
+        int gx = Math.max(0, x - offsetX);
+        int gy = Math.max(0, y - offsetY);
+        int tx = (int) Math.round(gx * (double) MUMU_DEVICE_WIDTH / MUMU_GAME_WIDTH);
+        int ty = (int) Math.round(gy * (double) MUMU_DEVICE_HEIGHT / MUMU_GAME_HEIGHT);
+        Path exe = Path.of(executeProperties.getMumuManagerPath());
+        if (!Files.isRegularFile(exe)) {
+            return new Result(false, MODE_MUMU,
+                    "没找到 MuMuManager.exe：" + exe + "（MuMu 模拟器模式要靠它注入点击，请确认安装位置，"
+                            + "或改配置 execute.mumu-manager-path）",
+                    x, y, tx, ty);
+        }
+        List<String> command = List.of(exe.toString(), "adb", "-v", MUMU_INSTANCE_INDEX, "-c",
+                "shell input tap " + tx + " " + ty);
+        try {
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            if (!process.waitFor(MUMU_CMD_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                // 超时后进程可能仍在写管道：先强杀使其退出再收尾，避免 readAllBytes 等 EOF 永久阻塞
+                process.destroyForcibly();
+                process.waitFor();
+                log.warn("MuMuManager 执行超时，已强制结束：{}", String.join(" ", command));
+                return new Result(false, MODE_MUMU,
+                        "MuMuManager 执行超时（" + MUMU_CMD_TIMEOUT_MS + "ms），已强制结束", x, y, tx, ty);
+            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int exit = process.exitValue();
+            if (exit != 0) {
+                String detail = output.isEmpty() ? "" : "：" + tail(output);
+                log.warn("MuMuManager 返回 {}: {}", exit, output);
+                return new Result(false, MODE_MUMU,
+                        "MuMuManager 返回非 0 退出码 " + exit + detail, x, y, tx, ty);
+            }
+            log.info("MuMu 模拟器点击已注入：shell input tap {} {}（识别点 {},{} 减边框偏移 {}/{} 得游戏画面内 {},{}，"
+                            + "再按 {}x{} → {}x{} 放大）",
+                    tx, ty, x, y, offsetX, offsetY, gx, gy,
+                    MUMU_GAME_WIDTH, MUMU_GAME_HEIGHT, MUMU_DEVICE_WIDTH, MUMU_DEVICE_HEIGHT);
+            return new Result(true, MODE_MUMU,
+                    "已通过 MuMu 模拟器注入点击：shell input tap (" + tx + ", " + ty + ")"
+                            + "（识别点 (" + x + ", " + y + ") 减去模拟器边框偏移 " + offsetX + "/" + offsetY
+                            + " 得游戏画面内 (" + gx + ", " + gy + ")，再按 "
+                            + MUMU_GAME_WIDTH + "x" + MUMU_GAME_HEIGHT + " → "
+                            + MUMU_DEVICE_WIDTH + "x" + MUMU_DEVICE_HEIGHT + " 放大）",
+                    x, y, tx, ty);
+        } catch (IOException e) {
+            log.warn("调用 MuMuManager 失败：{}", e.getMessage());
+            return new Result(false, MODE_MUMU, "调用 MuMuManager.exe 失败：" + e.getMessage(), x, y, tx, ty);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new Result(false, MODE_MUMU, "MuMuManager 调用被中断", x, y, tx, ty);
+        }
+    }
+
+    /** MuMuManager 输出限长（只保留结尾，报错信息通常在最末几行）。 */
+    private static String tail(String output) {
+        return output.length() <= MUMU_OUTPUT_MAX ? output : "…" + output.substring(output.length() - MUMU_OUTPUT_MAX);
     }
 
     private Result postClick(WindowInfo window, int x, int y) {
@@ -168,6 +380,140 @@ public class WindowClicker {
     /** WM_MOUSEACTIVATE 的 lParam：HIWORD=产生这次点击的鼠标消息、LOWORD=命中测试码（客户区）。 */
     private static int activateLParam() {
         return (WM_LBUTTONDOWN << 16) | HTCLIENT;
+    }
+
+    /**
+     * RawInput 输入模式：不做前台切换，直接注入<b>系统级真实鼠标输入</b>
+     * （{@code SendInput}：绝对移动 → 左键按下 → 抬起），点完把光标移回原位。
+     *
+     * <p>与 {@link #screenClick} 的两点不同：① 注入接口是 {@code SendInput} 而不是遗留的 {@code mouse_event}，
+     * 事件会进入系统输入链，认 RawInput / DirectInput（或轮询 {@code GetCursorPos}）的程序也能收到；
+     * ② 不调用 SetForegroundWindow、不做前台确认，所以不会因为系统前台锁定 / 被别的窗口抢占而失败或等待。</p>
+     *
+     * <p>代价：Windows 的鼠标点击语义是「投给光标下的窗口」，所以仍要求目标点在屏幕上可见 ——
+     * 注入前先用 {@link #topRoot} + {@code WindowFromPoint} 校验该点仍属于目标窗口，被别的窗口挡住
+     * （或已移出屏幕）就取消本次点击并说明命中的是谁，避免误点；需要完全后台（被遮挡也能点）请改用
+     * {@code mumu} / {@code post}。</p>
+     */
+    private Result rawInputClick(WindowInfo window, int x, int y) {
+        WinDef.HWND hwnd = window.getHwnd();
+        WinDef.POINT outer = windowOuterOrigin(hwnd);
+        if (outer == null) {
+            return new Result(false, MODE_RAW_INPUT, "无法读取窗口屏幕位置（窗口可能已销毁）", x, y, -1, -1);
+        }
+        // 截图像素原点 = 窗口外框左上角（与 screen 模式同一套换算）
+        int sx = outer.x + x, sy = outer.y + y;
+        User32Mouse u = User32Mouse.INSTANCE;
+        WinDef.HWND targetRoot = topRoot(hwnd);
+
+        // 误点防线：真实鼠标输入只按「光标下是谁」投递，注入前确认目标点仍属于本窗口
+        PointByValue hitPoint = new PointByValue();
+        hitPoint.x = sx;
+        hitPoint.y = sy;
+        WinDef.HWND hitRoot = topRoot(u.WindowFromPoint(hitPoint));
+        if (hitRoot == null) {
+            return new Result(false, MODE_RAW_INPUT,
+                    "目标屏幕点 (" + sx + ", " + sy + ") 上没有窗口（窗口可能已移出屏幕或被最小化），已取消本次点击。",
+                    x, y, sx, sy);
+        }
+        if (!sameWindow(hitRoot, targetRoot)) {
+            return new Result(false, MODE_RAW_INPUT,
+                    "目标屏幕点 (" + sx + ", " + sy + ") 当前被窗口「" + windowTitle(hitRoot) + "」遮挡："
+                            + "RawInput 输入按真实鼠标语义投递，看不见就会点到上层窗口，已取消本次点击。"
+                            + "请把目标窗口移到可见处、或改用「MuMu 模拟器 / 后台消息」。",
+                    x, y, sx, sy);
+        }
+        boolean foreground = sameWindow(topRoot(u.GetForegroundWindow()), targetRoot);
+        WinDef.POINT origin = new WinDef.POINT();
+        boolean originOk = u.GetCursorPos(origin);
+        if (!rawInputMove(sx, sy)) {
+            return new Result(false, MODE_RAW_INPUT, "SendInput 注入鼠标移动失败（无法把光标移到目标屏幕点）",
+                    x, y, sx, sy);
+        }
+        String landNote = cursorLandNote(sx, sy);
+        sleep(RAW_INPUT_MOVE_SETTLE_MS);
+        if (!rawInputButton(MOUSEEVENTF_LEFTDOWN)) {
+            return new Result(false, MODE_RAW_INPUT, "SendInput 注入左键按下失败（系统未接受该事件）", x, y, sx, sy);
+        }
+        sleep(RAW_INPUT_CLICK_GAP_MS);
+        if (!rawInputButton(MOUSEEVENTF_LEFTUP)) {
+            return new Result(false, MODE_RAW_INPUT, "SendInput 注入左键抬起失败（系统未接受该事件）", x, y, sx, sy);
+        }
+        String back = "";
+        if (originOk) {
+            sleep(RAW_INPUT_BACK_MS);   // 等目标窗口处理完「抬起」再移走光标，避免归位移动被它当成拖拽
+            back = rawInputMove(origin.x, origin.y)
+                    ? "，点击后鼠标已移回原位 (" + origin.x + ", " + origin.y + ")"
+                    : "（提示：点击已生效，但鼠标移回原位 (" + origin.x + ", " + origin.y + ") 失败）";
+        }
+        return new Result(true, MODE_RAW_INPUT,
+                "已用系统真实鼠标输入（SendInput）在屏幕坐标 (" + sx + ", " + sy + ") 注入一次左键点击"
+                        + (foreground ? "，点击时该窗口已在前台"
+                        : "，点击前该窗口不在前台（Windows 会按鼠标点击语义把它激活）") + landNote + back,
+                x, y, sx, sy);
+    }
+
+    /** 注入一次绝对移动：dx/dy 按整个虚拟桌面归一化（多显示器下也能落到正确屏幕）。 */
+    private boolean rawInputMove(int sx, int sy) {
+        User32Mouse u = User32Mouse.INSTANCE;
+        int vx = u.GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = u.GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = Math.max(1, u.GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1);
+        int vh = Math.max(1, u.GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1);
+        Input in = new Input();
+        in.type = INPUT_MOUSE;
+        in.mi.dx = clampAbsolute((int) Math.round((sx - vx) * (double) ABSOLUTE_RANGE / vw));
+        in.mi.dy = clampAbsolute((int) Math.round((sy - vy) * (double) ABSOLUTE_RANGE / vh));
+        in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+        return sendInput(in);
+    }
+
+    /** 注入一次鼠标按键（按下或抬起）：不带 MOVE 标志 = 在注入后的光标位置生效。 */
+    private boolean rawInputButton(int flag) {
+        Input in = new Input();
+        in.type = INPUT_MOUSE;
+        in.mi.dwFlags = flag;
+        return sendInput(in);
+    }
+
+    /** 注入一条鼠标 INPUT；系统拒绝时记日志（含 cbSize 与 GetLastError）并返回 false。 */
+    private boolean sendInput(Input in) {
+        int cbSize = in.size();
+        int sent = User32Mouse.INSTANCE.SendInput(1, new Input[]{in}, cbSize);
+        if (sent == 1) {
+            return true;
+        }
+        log.warn("SendInput 注入失败：被接受 {} 条（cbSize={}, GetLastError={}）",
+                sent, cbSize, Kernel32.INSTANCE.GetLastError());
+        return false;
+    }
+
+    private static int clampAbsolute(int value) {
+        return Math.max(0, Math.min(ABSOLUTE_RANGE, value));
+    }
+
+    /**
+     * 回读注入后的光标位置并与目标点核对：不一致时给一句提示（多因显示器缩放 / DPI 缩放让 Java 侧读到的
+     * 窗口坐标与实际像素对不上），一致则返回空串。
+     */
+    private String cursorLandNote(int sx, int sy) {
+        WinDef.POINT p = new WinDef.POINT();
+        if (!User32Mouse.INSTANCE.GetCursorPos(p) || (Math.abs(p.x - sx) <= 1 && Math.abs(p.y - sy) <= 1)) {
+            return "";
+        }
+        log.warn("SendInput 移动后光标落在 ({}, {})，与目标屏幕点 ({}, {}) 不一致", p.x, p.y, sx, sy);
+        return "（提示：注入后光标落在 (" + p.x + ", " + p.y + ")，与目标点相差 "
+                + Math.abs(p.x - sx) + "/" + Math.abs(p.y - sy) + " 像素，多为显示器缩放 / DPI 缩放所致）";
+    }
+
+    /** 窗口标题（只在错误提示里说明「点到谁身上了」）；读不到时给占位文本。 */
+    private static String windowTitle(WinDef.HWND hwnd) {
+        if (hwnd == null || hwnd.getPointer() == null) {
+            return "未知窗口";
+        }
+        char[] buffer = new char[TITLE_MAX_CHARS];
+        int length = User32Mouse.INSTANCE.GetWindowText(hwnd, buffer, buffer.length);
+        return length > 0 ? new String(buffer, 0, length) : "未命名窗口";
     }
 
     private final ExecuteProperties executeProperties;

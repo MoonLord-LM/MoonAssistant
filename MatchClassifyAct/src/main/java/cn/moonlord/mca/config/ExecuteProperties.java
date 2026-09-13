@@ -59,15 +59,46 @@ public class ExecuteProperties {
     /**
      * 鼠标点击的执行方式（控制台「执行模式」页可实时切换，本值为启动默认）：
      * <ul>
-     *   <li>{@code screen}（默认）—— 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
+     *   <li>{@code mumu}（默认）—— MuMu 模拟器：不碰鼠标、不动窗口焦点，把这次点击交给
+     *       {@code MuMuManager.exe adb -v <实例序号> -c "shell input tap x y"} 由模拟器自己的 adb 通道注入，
+     *       模拟器在后台 / 窗口被遮挡也能点。点击坐标要从「窗口截图坐标」分两步换算成「模拟器内坐标」——
+     *       先减掉模拟器边框占用 {@link #mumuClickOffsetX}/{@link #mumuClickOffsetY}，
+     *       再按「游戏画面 → 模拟器实际分辨率」等比放大（常量在 {@code WindowClicker}）；</li>
+     *   <li>{@code screen} —— 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
      *       用「外框左上角 + 图片像素」得到屏幕坐标，把窗口带到前台后用
-     *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。
-     *       模拟器 / 游戏必须用此项，否则点击无效。要求目标窗口可见且不被完全遮挡；</li>
+     *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。要求目标窗口可见且不被完全遮挡；</li>
+     *   <li>{@code rawinput} —— RawInput 输入：坐标换算同 {@code screen}，但不做前台切换，
+     *       直接注入系统级真实鼠标输入（{@code SendInput}：绝对移动 → 左键按下 → 抬起，点完把光标移回原位）。
+     *       注入事件会进系统输入链，认 RawInput / DirectInput（或轮询 {@code GetCursorPos}）的程序也能收到
+     *       （{@code screen} 用的 {@code mouse_event} 是遗留接口，这类程序常常收不到）。
+     *       不要求窗口前台、也不等待前台；但真实鼠标语义是「投给光标下的窗口」，所以仍要求目标点在屏幕上
+     *       可见 —— 注入前会核对目标点归属，被别的窗口遮挡就取消本次点击并说明命中的是谁。
+     *       需要窗口被遮挡也能点（完全后台）请用 {@code mumu} / {@code post}；</li>
      *   <li>{@code post} —— 后台消息：向目标窗口投递完整点击消息序列（3 次 {@code WM_MOUSEMOVE}
      *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}，
      *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台/可见、不抢占用户焦点。
      *       比只发按下/抬起更易被普通桌面程序接受；游戏 / 模拟器多数仍忽略合成消息。</li>
      * </ul>
      */
-    private String clickMode = "screen";
+    private String clickMode = "mumu";
+
+    /**
+     * MuMu 模拟器模式用来发送点击的 {@code MuMuManager.exe} 位置（MuMu 12 的默认安装路径）。
+     * 换机器 / 换安装位置时改这里（或外部化配置覆盖）。
+     */
+    private String mumuManagerPath = "C:\\Program Files\\Netease\\MuMuPlayer-12.0\\nx_main\\MuMuManager.exe";
+
+    /**
+     * MuMu 模拟器模式坐标换算的<b>第一步</b>：从窗口截图坐标里减掉的横向边框占用（像素）——
+     * 识别点 x − 本值 = 游戏画面内 x。模拟器把游戏画面居中嵌在自己的窗口里，左右两侧各让出这么多像素，
+     * 游戏画面只占中间那一段（游戏画面宽度 = 截图宽度 − 2 × 本值）；减成负数按 {@code 0} 处理。
+     * 本值以<b>窗口截图像素</b>计，「游戏画面 → 模拟器实际分辨率」的放大是第二步（见 {@code WindowClicker}）。
+     */
+    private int mumuClickOffsetX = 55;
+
+    /**
+     * 同上，纵向偏移（像素）：识别点 y − 本值 = 游戏画面内 y。模拟器上边缘占掉这么多像素、
+     * 下边缘为 0（即只有上方要减）；减成负数按 {@code 0} 处理。
+     */
+    private int mumuClickOffsetY = 60;
 }

@@ -86,7 +86,9 @@ public class ExecutionService {
     /** 最近一次识别快照（含画面缓存）。 */
     private volatile Snapshot latest = null;
 
-    /** 运行期点击方式（null = 使用 execute.click-mode 配置默认）；控制台页可实时切换，重启后恢复配置默认。 */
+    /** 运行期点击方式（null = 使用 execute.click-mode 配置默认）；控制台页可实时切换，重启后恢复配置默认。
+     *  取值见 {@link WindowClicker#MODE_MUMU}（MuMu 模拟器）/ {@link WindowClicker#MODE_SCREEN}（前台点击）
+     *  / {@link WindowClicker#MODE_RAW_INPUT}（RawInput 输入）/ {@link WindowClicker#MODE_POST}（后台消息）。 */
     private volatile String clickMode = null;
 
     private long nextFindFailLogTime = 0;
@@ -100,19 +102,19 @@ public class ExecutionService {
         return (m == null || m.isBlank()) ? executeProperties.getClickMode() : m;
     }
 
-    /** 运行期切换鼠标点击方式（post = 后台消息 / screen = 前台点击）。非法值被忽略并保留原值。 */
+    /** 运行期切换鼠标点击方式（mumu = MuMu 模拟器 / screen = 前台点击 / rawinput = RawInput 输入
+     *  / post = 后台消息）。非法值被忽略并保留原值。 */
     public void setClickMode(String mode) {
         if (mode == null || mode.isBlank()) {
             return;
         }
         String m = mode.trim().toLowerCase();
-        if (!WindowClicker.MODE_POST.equals(m) && !WindowClicker.MODE_SCREEN.equals(m)) {
+        if (!WindowClicker.isSupportedMode(m)) {
             log.warn("忽略非法的点击方式：{}", mode);
             return;
         }
         clickMode = m;
-        log.info("执行点击方式已切换为：{}（{}）", m,
-                WindowClicker.MODE_SCREEN.equals(m) ? "前台点击：真实鼠标输入，模拟器/游戏需用此项" : "后台消息：完整点击消息序列，不抢鼠标焦点");
+        log.info("执行点击方式已切换为：{}（{}）", m, WindowClicker.modeLabel(m));
     }
 
     /**

@@ -4895,7 +4895,7 @@ $("modeSel").addEventListener("change", ()=>{
 });
 
 /* ---------------- 执行模式：实时画面识别 + 动作执行（驱动 /api/execute/*；单次识别，无后台循环） ---------------- */
-let execClickMode = "screen";   // 后端配置的点击方式（/api/execute/status.clickMode：post=后台消息 / screen=前台点击，本值为后端默认的初值，进页面会按 /status 覆盖）
+let execClickMode = "mumu";     // 后端配置的点击方式（/api/execute/status.clickMode：mumu=MuMu 模拟器 / screen=前台点击 / rawinput=RawInput 输入 / post=后台消息，本值为后端默认的初值，进页面会按 /status 覆盖）
 let execLatest = null;          // 最近一次 /api/execute/latest 的返回
 let execShownAt = 0;            // 当前画面对应快照的 at（与 /api/execute/frame 配对）
 let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
@@ -4926,16 +4926,17 @@ async function execGet(url, opt){
 }
 
 /* ---- 参数同步（点击模式等） ---- */
+const EXEC_MODES = ["mumu", "screen", "rawinput", "post"];   // 受支持的点击方式（与后端 WindowClicker.MODE_* 一致）
 async function execSyncStatus(){
   const j = await execGet("/api/execute/status");
-  if(j && (j.clickMode === "screen" || j.clickMode === "post")) execApplyMode(j.clickMode);
+  if(j && EXEC_MODES.includes(j.clickMode)) execApplyMode(j.clickMode);
 }
 function syncExecModeUi(){
-  const v = (execClickMode === "post") ? "post" : "screen";
+  const v = EXEC_MODES.includes(execClickMode) ? execClickMode : "mumu";
   document.querySelectorAll('input[name="execModeOpt"]').forEach(r => { r.checked = (r.value === v); });
 }
 function execApplyMode(mode){
-  if(mode !== "screen" && mode !== "post") return;
+  if(!EXEC_MODES.includes(mode)) return;
   execClickMode = mode;
   syncExecModeUi();
   renderExecActBtn(execLatest || null, !!(execLatest && execLatest.recognized && execLatest.action === "click"
@@ -5105,9 +5106,14 @@ function renderExecActBtn(j, clickable){
   b.disabled = !clickable || execActBusy;
   b.textContent = "执行动作";
   b.title = clickable
-      ? (execClickMode === "screen"
-          ? "直接按右侧识别结果做一次真实鼠标点击，不再重新截图识别（画面已变化请先点「立即识别」；前台点击要求窗口可见、不被遮挡）"
-          : "直接按右侧识别结果向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起，不再重新截图识别（画面已变化请先点「立即识别」；后台消息模式不抢前台）")
+      ? ("直接按右侧识别结果发送一次点击，不再重新截图识别（画面已变化请先点「立即识别」）："
+          + (execClickMode === "mumu"
+              ? "走 MuMuManager.exe 的 adb 通道注入点击，不抢鼠标前台（坐标自动减去模拟器边框偏移）"
+              : (execClickMode === "screen"
+                  ? "做一次真实鼠标点击，要求窗口可见、不被遮挡"
+                  : (execClickMode === "rawinput"
+                      ? "注入系统级真实鼠标输入（SendInput），不抢前台、不做前台等待，要求目标点没被别的窗口挡住"
+                      : "向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起"))))
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
@@ -5385,9 +5391,10 @@ function execPollTick(){
 }
 
 /* ---- 自动识别（红色测试按钮）：连续循环 = 截图识别 → 显示结果并等 3 秒确认 →
-       按下方所选前台/后台方式动作 → 等 3 秒游戏响应 → 下一轮 ---- */
+       按下方所选点击方式（MuMu 模拟器 / 前台点击 / RawInput 输入 / 后台消息）动作 → 等 3 秒游戏响应 → 下一轮 ---- */
 const execSleep = ms => new Promise(r => setTimeout(r, ms));
-const execModeZh = m => (m === "screen" ? "前台点击" : "后台消息");
+const execModeZh = m => (m === "mumu" ? "MuMu 模拟器"
+    : (m === "screen" ? "前台点击" : (m === "rawinput" ? "RawInput 输入" : "后台消息")));
 
 /* 状态提示：粉色的 <b>…</b> 是「高亮的那半句」，一律独占一行 —— 由 CSS 的
    `.execAutoState b{display:block}` 负责（前后自动断行），各提示语里不用再写 <br>（用户指定）。
@@ -5479,7 +5486,7 @@ async function execAutoLoop(){
     const keep2 = await execAutoWait('第 ' + round + ' 轮：即将点击 (' + j.left + ',' + j.top + ')'
         + '<b>{s} 秒后按「' + execModeZh(execClickMode) + '」执行…</b>', 3, seq);
     if(!keep2) return;
-    // 3) 按所选前台 / 后台方式直接执行本轮已识别结果（后端不再重复截图识别）
+    // 3) 按所选点击方式直接执行本轮已识别结果（后端不再重复截图识别）
     execAutoStatus('第 ' + round + ' 轮：正在执行点击');
     const r = await execGet("/api/execute/act", { method:"POST" });
     await execLoadLatest();            // 同步展示最近结果（点击不产生新识别）
