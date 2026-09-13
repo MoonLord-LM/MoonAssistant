@@ -35,10 +35,10 @@ import java.util.concurrent.TimeUnit;
  *       （模拟器在后台 / 窗口被遮挡也能点）。坐标分两步从「窗口截图坐标」换算成「模拟器内坐标」：
  *       先减掉模拟器边框占用得到「游戏画面内坐标」（{@code execute.mumu-click-offset-x/-y}），
  *       再按「游戏画面 → 模拟器实际分辨率」等比放大（见 {@link #MUMU_DEVICE_WIDTH}），见 {@link #mumuClick}；</li>
- *   <li>{@code screen}：前台点击。截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
+ *   <li>{@code screen}：MouseEvent 前台点击。截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
  *       因此用「窗口外框左上角 + 图片像素」得到屏幕坐标，再把窗口带到前台并用
  *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击；</li>
- *   <li>{@code rawinput}：RawInput 输入。<b>必须前台可见</b> —— 真实鼠标输入只投给「光标下的窗口」，
+ *   <li>{@code rawinput}：RawInput 前台点击。<b>必须前台可见</b> —— 真实鼠标输入只投给「光标下的窗口」，
  *       目标点必须在屏幕上、且该点最上层就是目标窗口，否则输入会落到上层窗口上，所以它不能像
  *       {@code mumu} / {@code post} / {@code sendmessage} 那样完全后台运行。同样用「窗口外框左上角 + 图片像素」
  *       得到屏幕坐标，直接注入<b>系统级真实鼠标输入</b>（{@code SendInput}：绝对移动 → 左键按下 → 抬起）。
@@ -47,11 +47,11 @@ import java.util.concurrent.TimeUnit;
  *       不切换前台、也不等待前台；被别的窗口压住时按「抬窗 → 抢前台 → 临时置顶 → 临时挪到光标处」
  *       逐级化解遮挡（见 {@link #ensureVisible}，可用 {@code execute.rawinput-auto-expose} 关闭），
  *       点击完成即还原窗口状态；全部失败才取消本次点击；</li>
- *   <li>{@code post}：后台消息。异步投递一条与真实鼠标路径一致的消息序列：3 次 {@code WM_MOUSEMOVE}
+ *   <li>{@code post}：PostMessage 后台消息。异步投递一条与真实鼠标路径一致的消息序列：3 次 {@code WM_MOUSEMOVE}
  *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}
  *       （客户区坐标 = 图片像素 − 标题栏 / 边框偏移）。全程只发消息：不抢前台、不动光标、不注入真实输入。
  *       比只发「按下 / 抬起」更易被普通桌面程序接受，游戏 / 模拟器多会忽略；</li>
- *   <li>{@code sendmessage}：后台消息（挪窗）。{@code post} 的「同步 + 挪窗对齐」版（MaaFramework 的
+ *   <li>{@code sendmessage}：PostMessage 后台消息+移动窗口。{@code post} 的「同步 + 挪窗对齐」版（MaaFramework 的
  *       {@code SendMessageWithWindowPos}）：发之前把窗口临时挪到「目标点正好压在光标下」，再用
  *       {@code SendMessageTimeout} <b>同步</b>发同一套消息序列，发完还原窗口位置。同样只发消息。</li>
  * </ul>
@@ -97,21 +97,22 @@ public class WindowClicker {
                 || MODE_SEND_MESSAGE.equals(mode);
     }
 
-    /** 点击方式的中文名（日志口径：「MuMu 模拟器」/「前台点击」/「RawInput 输入」/「后台消息·挪窗」/「后台消息」）。 */
+    /** 点击方式的中文名（日志口径，与右栏「点击方式」五个选项的显示名逐字一致：「MuMu 模拟器」/
+     *  「MouseEvent 前台点击」/「RawInput 前台点击」/「PostMessage 后台消息」/「PostMessage 后台消息+移动窗口」）。 */
     public static String modeLabel(String mode) {
         if (MODE_MUMU.equals(mode)) {
             return "MuMu 模拟器：走 MuMuManager.exe 的 adb 通道注入点击，不抢鼠标前台";
         }
         if (MODE_RAW_INPUT.equals(mode)) {
-            return "RawInput 输入：必须前台可见（真实输入只投给光标下的窗口）；系统真实鼠标输入注入（SendInput），被遮挡时先自动抬窗 / 挪窗再点";
+            return "RawInput 前台点击：必须前台可见（真实输入只投给光标下的窗口）；系统真实鼠标输入注入（SendInput），被遮挡时先自动抬窗 / 挪窗再点";
         }
         if (MODE_SEND_MESSAGE.equals(mode)) {
-            return "后台消息·挪窗：先把窗口挪到光标处对齐，再同步发送完整点击消息序列";
+            return "PostMessage 后台消息+移动窗口：先把窗口挪到光标处对齐，再同步发送完整点击消息序列";
         }
         if (MODE_POST.equals(mode)) {
-            return "后台消息：完整点击消息序列，不抢鼠标焦点";
+            return "PostMessage 后台消息：完整点击消息序列，不抢鼠标焦点";
         }
-        return "前台点击：真实鼠标输入，需要窗口可见、不被遮挡";
+        return "MouseEvent 前台点击：真实鼠标输入，需要窗口可见、不被遮挡";
     }
 
     // Windows SDK 鼠标消息常量（JNA 平台库未映射这些数值，直接按 SDK 定义）
@@ -169,12 +170,12 @@ public class WindowClicker {
     private static final int WINDOW_MOVE_RETRY_MS = 50;
     private static final int WINDOW_MOVE_TOLERANCE = 2;
 
-    // RawInput 输入的节奏（毫秒）：注入移动后等目标窗口建立 hover 状态、按下与抬起之间、抬起后把光标移回原位前
+    // RawInput 前台点击的节奏（毫秒）：注入移动后等目标窗口建立 hover 状态、按下与抬起之间、抬起后把光标移回原位前
     private static final int RAW_INPUT_MOVE_SETTLE_MS = 50;
     private static final int RAW_INPUT_CLICK_GAP_MS = 60;
     private static final int RAW_INPUT_BACK_MS = 20;
 
-    // RawInput 输入化解遮挡用的 SetWindowPos 参数：z 序句柄用数值常量表示（同类窗口最前 / 置顶 / 取消置顶），
+    // RawInput 前台点击化解遮挡用的 SetWindowPos 参数：z 序句柄用数值常量表示（同类窗口最前 / 置顶 / 取消置顶），
     // 以及 SWP_NOSIZE / SWP_NOMOVE / SWP_NOZORDER / SWP_NOACTIVATE / SWP_NOOWNERZORDER 五个标志
     private static final int HWND_TOP_VALUE = 0;
     private static final int HWND_TOPMOST_VALUE = -1;
@@ -392,13 +393,13 @@ public class WindowClicker {
         return output.length() <= MUMU_OUTPUT_MAX ? output : "…" + output.substring(output.length() - MUMU_OUTPUT_MAX);
     }
 
-    /** {@code post}（后台消息）：异步投递完整点击消息序列，不等窗口处理（结果里的诊断见 {@link #messageSequence}）。 */
+    /** {@code post}（PostMessage 后台消息）：异步投递完整点击消息序列，不等窗口处理（结果里的诊断见 {@link #messageSequence}）。 */
     private Result postClick(WindowInfo window, int x, int y) {
         return messageSequence(window, x, y, false, MODE_POST, "");
     }
 
     /**
-     * {@code sendmessage}（后台消息 · 挪窗）：{@code post} 的「同步 + 挪窗对齐」版。
+     * {@code sendmessage}（PostMessage 后台消息+移动窗口）：{@code post} 的「同步 + 挪窗对齐」版。
      *
      * <p><b>对齐</b>（MaaFramework 的 {@code SendMessageWithWindowPos}）：把窗口临时挪到「目标点正好压在
      * 当前光标下」（只挪位置，{@code SWP_NOZORDER} 不动 z 序、也不激活窗口），这样程序无论从消息
@@ -544,7 +545,7 @@ public class WindowClicker {
     }
 
     /**
-     * RawInput 输入模式（<b>必须前台可见</b>：真实鼠标输入只投给「光标下的窗口」，因此不能后台运行）：
+     * RawInput 前台点击（<b>必须前台可见</b>：真实鼠标输入只投给「光标下的窗口」，因此不能后台运行）：
      * 注入<b>系统级真实鼠标输入</b>（{@code SendInput}：绝对移动 → 左键按下 → 抬起），
      * 点完把光标移回原位；目标点被别的窗口压住时先自动化解遮挡（见 {@link #ensureVisible}）。
      *
@@ -612,7 +613,7 @@ public class WindowClicker {
     }
 
     /**
-     * 让目标点重新可见（RawInput 输入的前提）：Windows 的鼠标输入按命中测试投递，目标点被别的窗口压住就点不到，
+     * 让目标点重新可见（RawInput 前台点击的前提）：Windows 的鼠标输入按命中测试投递，目标点被别的窗口压住就点不到，
      * 这里按「先温和、后强硬」逐级化解遮挡，每级之后都重新确认「该屏幕点是否已归到目标窗口名下」：
      * <ol>
      *   <li>把窗口抬到同类窗口之前（不抢焦点、不激活）—— 应付「只是被普通窗口压住」；</li>
@@ -753,7 +754,7 @@ public class WindowClicker {
     }
 
     /**
-     * RawInput 输入「化解遮挡」的结果：目标点是否已可见、用了什么手段、点击完成后要还原窗口的哪些状态。
+     * RawInput 前台点击「化解遮挡」的结果：目标点是否已可见、用了什么手段、点击完成后要还原窗口的哪些状态。
      */
     private static final class Exposure {
         /** 目标点是否已确认归到目标窗口名下 */

@@ -81,8 +81,8 @@ public class ExecuteController {
         return executionService.act();
     }
 
-    /** 实时切换鼠标点击方式（mumu=MuMu 模拟器 / screen=前台点击 / rawinput=RawInput 输入 / post=后台消息
-     *  / sendmessage=后台消息·挪窗）。 */
+    /** 实时切换鼠标点击方式（mumu=MuMu 模拟器 / screen=MouseEvent 前台点击 / rawinput=RawInput 前台点击
+     *  / post=PostMessage 后台消息 / sendmessage=PostMessage 后台消息+移动窗口）。 */
     @PostMapping("/click-mode")
     public Map<String, Object> clickMode(@RequestBody(required = false) Map<String, String> body) {
         executionService.setClickMode(body == null ? null : body.get("mode"));

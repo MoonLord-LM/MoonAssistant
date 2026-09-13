@@ -42,7 +42,7 @@ public class ExecuteProperties {
     private int rgbDistThreshold = 255 / 3;
 
     /**
-     * 前台点击（screen 模式）里「切换到前台 → 真正发送鼠标输入」的等待上限（毫秒）。
+     * {@code screen}（MouseEvent 前台点击）里「切换到前台 → 真正发送鼠标输入」的等待上限（毫秒）。
      * SetForegroundWindow 并非同步生效：窗口从前台切换到真正可接收输入的焦点之间常有可见延迟，
      * 且可能被系统前台锁定、被其他窗口抢占而失效。本工程采用「F22 解锁键 + SetForegroundWindow
      * 周期重试 + 轮询 GetForegroundWindow 确认前台焦点已归属目标窗口（顶层根句柄核对，比只查进程更严——
@@ -64,10 +64,10 @@ public class ExecuteProperties {
      *       模拟器在后台 / 窗口被遮挡也能点。点击坐标要从「窗口截图坐标」分两步换算成「模拟器内坐标」——
      *       先减掉模拟器边框占用 {@link #mumuClickOffsetX}/{@link #mumuClickOffsetY}，
      *       再按「游戏画面 → 模拟器实际分辨率」等比放大（常量在 {@code WindowClicker}）；</li>
-     *   <li>{@code screen} —— 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
+     *   <li>{@code screen} —— MouseEvent 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
      *       用「外框左上角 + 图片像素」得到屏幕坐标，把窗口带到前台后用
      *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。要求目标窗口可见且不被完全遮挡；</li>
-     *   <li>{@code rawinput} —— RawInput 输入：<b>必须前台可见</b> —— 真实鼠标输入只投给「光标下的窗口」，
+     *   <li>{@code rawinput} —— RawInput 前台点击：<b>必须前台可见</b> —— 真实鼠标输入只投给「光标下的窗口」，
      *       目标点必须在屏幕上、且该点最上层就是目标窗口，否则会点到上层窗口上，所以它不能后台运行
      *       （要后台用 {@code mumu} / {@code post} / {@code sendmessage}）。坐标换算同 {@code screen}，
      *       但直接注入系统级真实鼠标输入（{@code SendInput}：绝对移动 → 左键按下 → 抬起，点完把光标移回原位）。
@@ -76,12 +76,12 @@ public class ExecuteProperties {
      *       目标点本来就可见时不抢前台、不等前台；被别的窗口压住就点不到，此时按
      *       「抬窗 → 抢前台 → 临时置顶 → 临时挪到光标处」逐级化解遮挡
      *       （见 {@link #rawinputAutoExpose}），点击完成即还原窗口状态，全部失败才取消本次点击；</li>
-     *   <li>{@code post} —— 后台消息：向目标窗口投递点击消息序列（3 次 {@code WM_MOUSEMOVE}
+     *   <li>{@code post} —— PostMessage 后台消息：向目标窗口投递点击消息序列（3 次 {@code WM_MOUSEMOVE}
      *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}，
      *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台 / 可见、不抢焦点、不动光标。
      *       结果里附一句诊断：<b>按下有没有被宿主处理</b>（查目标线程的鼠标捕获窗口）—— 只到「处理」层，
      *       宿主收下了不等于会转发给引擎，点不动时据此判断该换哪种方式；</li>
-     *   <li>{@code sendmessage} —— 后台消息（挪窗）：{@code post} 的「同步 + 挪窗对齐」版。
+     *   <li>{@code sendmessage} —— PostMessage 后台消息+移动窗口：{@code post} 的「同步 + 挪窗对齐」版。
      *       发之前把窗口临时挪到「目标点正好压在光标下」（对应 MaaFramework 的
      *       {@code SendMessageWithWindowPos}：只挪位置、点完还原、不碰用户光标），这样程序无论从消息坐标、
      *       {@code GetCursorPos()} 还是对目标点的命中测试看，读到的都是同一个点；随后用
@@ -91,7 +91,7 @@ public class ExecuteProperties {
     private String clickMode = "mumu";
 
     /**
-     * {@code rawinput}（RawInput 输入，<b>必须前台可见</b>）在目标点被别的窗口挡住时，是否自动化解遮挡：
+     * {@code rawinput}（RawInput 前台点击，<b>必须前台可见</b>）在目标点被别的窗口挡住时，是否自动化解遮挡：
      * 依次尝试把窗口抬到其他窗口之前、抢一次前台、临时置顶、临时挪到光标处，一旦确认目标点归到目标窗口名下
      * 就完成点击，并把置顶 / 位置还原（{@code mumu} / {@code screen} / {@code post} / {@code sendmessage}
      * 不受本值影响）。

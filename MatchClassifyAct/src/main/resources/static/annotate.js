@@ -4629,6 +4629,26 @@ function openSugHelp(){
   const ok = $("sugHelpOk"); if(ok) ok.onclick = close;
 }
 
+/* 执行模式「点击方式」的「!」按钮（标题后）：右栏五个方式只留名字，怎么点 / 点击前要不要抢前台 /
+   点完会不会到前台 / 受不受遮挡影响全收进 #execHelpModal —— 与 #optHelpModal / #vfyHelpModal /
+   #sugHelpModal 同一套版式（静态 DOM，故用 onclick 赋值防重复绑定）：点遮罩 / 知道了 / Esc 关闭 */
+let execHelpKey = null;   // 当前挂在 document 上的 Esc 监听（连点两次时先摘掉旧的，避免叠加）
+function openExecHelp(){
+  const ov = $("execHelpModal");
+  if(!ov) return;
+  ov.style.display = "flex";
+  const close = ()=>{
+    ov.style.display = "none";
+    if(execHelpKey){ document.removeEventListener("keydown", execHelpKey); execHelpKey = null; }
+  };
+  if(execHelpKey) document.removeEventListener("keydown", execHelpKey);
+  execHelpKey = e => { if(e.key === "Escape") close(); };
+  document.addEventListener("keydown", execHelpKey);
+  ov.onclick = e => { if(e.target === ov) close(); };
+  const ok = $("execHelpOk"); if(ok) ok.onclick = close;
+}
+$("execModeHelpBtn").addEventListener("click", openExecHelp);
+
 /* ---------------- 自动刷新 ---------------- */
 const POLL_MS = 10000;   // 后台每 10 秒悄悄同步一次列表
 function listSig(arr){ return arr.map(i => [i.name,i.marked,i.state,i.action,i.left,i.top].join("|")).join("\n"); }
@@ -4895,7 +4915,7 @@ $("modeSel").addEventListener("change", ()=>{
 });
 
 /* ---------------- 执行模式：实时画面识别 + 动作执行（驱动 /api/execute/*；单次识别，无后台循环） ---------------- */
-let execClickMode = "mumu";     // 后端配置的点击方式（/api/execute/status.clickMode：mumu=MuMu 模拟器 / screen=前台点击 / rawinput=RawInput 输入 / post=后台消息 / sendmessage=后台消息·挪窗，本值为后端默认的初值，进页面会按 /status 覆盖）
+let execClickMode = "mumu";     // 后端配置的点击方式（/api/execute/status.clickMode：mumu=MuMu 模拟器 / screen=MouseEvent 前台点击 / rawinput=RawInput 前台点击 / post=PostMessage 后台消息 / sendmessage=PostMessage 后台消息+移动窗口，本值为后端默认的初值，进页面会按 /status 覆盖）
 let execLatest = null;          // 最近一次 /api/execute/latest 的返回
 let execShownAt = 0;            // 当前画面对应快照的 at（与 /api/execute/frame 配对）
 let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
@@ -5417,10 +5437,12 @@ function execPollTick(){
 }
 
 /* ---- 自动识别（红色测试按钮）：连续循环 = 截图识别 → 显示结果并等 3 秒确认 →
-       按下方所选点击方式（MuMu 模拟器 / 前台点击 / RawInput 输入 / 后台消息 / 后台消息·挪窗）动作 → 等 3 秒游戏响应 → 下一轮 ---- */
+       按下方所选点击方式（MuMu 模拟器 / MouseEvent 前台点击 / RawInput 前台点击 / PostMessage 后台消息 /
+       PostMessage 后台消息+移动窗口）动作 → 等 3 秒游戏响应 → 下一轮 ---- */
 const execSleep = ms => new Promise(r => setTimeout(r, ms));
-const execModeZh = m => ({ mumu: "MuMu 模拟器", screen: "前台点击", rawinput: "RawInput 输入",
-    post: "后台消息", sendmessage: "后台消息·挪窗" }[m] || "后台消息");
+/* 状态行（自动循环 / 手动执行后接下一轮）里用的方式中文名：与右栏「点击方式」五个选项的显示名逐字一致（用户指定） */
+const execModeZh = m => ({ mumu: "MuMu 模拟器", screen: "MouseEvent 前台点击", rawinput: "RawInput 前台点击",
+    post: "PostMessage 后台消息", sendmessage: "PostMessage 后台消息+移动窗口" }[m] || "PostMessage 后台消息");
 
 /* 状态提示：粉色的 <b>…</b> 是「高亮的那半句」，一律独占一行 —— 由 CSS 的
    `.execAutoState b{display:block}` 负责（前后自动断行），各提示语里不用再写 <br>（用户指定）。

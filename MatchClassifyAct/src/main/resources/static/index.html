@@ -371,22 +371,41 @@
     </div>
 
     <div class="edsec">
-      <div class="edhead">点击方式</div>
-      <label class="mopt"><input type="radio" name="execModeOpt" value="mumu" checked>
-        <span><b>MuMu 模拟器</b> —— 交给 MuMuManager.exe 的 adb 通道注入点击（shell input tap x y）。<br><i>默认方式：不抢鼠标、不用把窗口切到前台，模拟器在后台 / 被遮挡也能点；点击坐标会自动减去模拟器边框占用的偏移，按模拟器内坐标发送。</i></span></label>
-      <label class="mopt"><input type="radio" name="execModeOpt" value="screen">
-        <span><b>前台点击</b> —— <b>先把窗口抢到前台</b>（并确认前台焦点已归它），再模拟一次真实鼠标左键点击。<br><i>与下面「RawInput 输入」的区别就在这一步：点击前强制抢前台，抢不到就取消本次点击（不冒险乱点），点完也不把前台还回去。真实鼠标输入，要求窗口可见、不被遮挡；非 MuMu 的模拟器 / 游戏可用此项。</i></span></label>
-      <label class="mopt"><input type="radio" name="execModeOpt" value="rawinput">
-        <span><b>RawInput 输入</b> —— 直接注入系统级真实鼠标输入（SendInput：移动 → 按下 → 抬起）。<br><i><b>必须前台可见</b>：真实鼠标输入只投给「光标下的窗口」，目标点得在屏幕上、且该点最上层就是目标窗口 —— 被别的窗口压住时会先自动化解遮挡（抬窗 → 抢前台 → 临时置顶 / 挪到光标处，点完还原），化解不了就取消本次点击。注入的事件会进系统输入链，认 RawInput / DirectInput 的程序也能收到（比「前台点击」的 mouse_event 更接近真实硬件）；<b>点击前不抢前台</b>：目标点可见就直接注入，不等待、也不会因为前台切不过来而失败 —— 但注入的是真实鼠标输入，Windows 会按鼠标点击的真实语义把该窗口激活，所以<b>点完它照样会到前台</b>（这点躲不掉，区别只在点击前不主动切、也不确认前台）。</i></span></label>
-      <label class="mopt"><input type="radio" name="execModeOpt" value="post">
-        <span><b>后台消息</b> —— 不抢鼠标焦点、不动光标，向目标窗口投递完整点击消息序列：先模拟滑入移动、再按下/抬起。<br><i>比单纯投递按下/抬起更接近真实输入；游戏 / 模拟器多忽略合成消息。结果里附一句诊断：<b>按下有没有被宿主处理</b>（查目标线程的鼠标捕获窗口）—— 处理了却点不动 = 宿主收下了没转发给引擎，该换真实输入或模拟器的 adb 通道。</i></span></label>
-      <label class="mopt"><input type="radio" name="execModeOpt" value="sendmessage">
-        <span><b>后台消息 · 挪窗</b> —— 先把窗口「对齐」（挪到鼠标处、让目标点与光标重合），再用同步消息发完整点击序列，发完还原窗口位置。<br><i>与「后台消息」同一条通道、同一套消息，只多了「挪窗对齐」这一步：有些程序不看消息里带的坐标，只认自己查到的真实鼠标位置 —— 对齐后两种坐标来源重合，才点得准。全程只发消息：不碰用户光标（也不移光标）、不抢前台、不注入真实输入、不受遮挡影响；代价是窗口会短暂闪一下（约两百毫秒）。结果里同样附那句诊断（见上）。</i></span></label>
-      <div class="hint" style="font-size:11.5px;line-height:1.6;margin-top:8px">
-        切换立即生效、无需重启；点「执行动作」按已识别结果的坐标点击，点完自动等 3 秒游戏响应再截图识别下一轮（不用再手动点「立即识别」）。
+      <div class="edhead edheadRow">点击方式
+        <button type="button" class="hbtn" id="execModeHelpBtn"
+          title="点击方式 · 详细说明（五种方式分别怎么点 · 点击前要不要抢前台 / 点完会不会到前台 · 受不受遮挡影响 · 合成消息与真实输入的区别）">!</button>
       </div>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="mumu" checked>
+        <span><b>MuMu 模拟器</b></span></label>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="screen">
+        <span><b>MouseEvent 前台点击</b></span></label>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="rawinput">
+        <span><b>RawInput 前台点击</b></span></label>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="post">
+        <span><b>PostMessage 后台消息</b></span></label>
+      <label class="mopt"><input type="radio" name="execModeOpt" value="sendmessage">
+        <span><b>PostMessage 后台消息+移动窗口</b></span></label>
     </div>
   </aside>
+  </div>
+
+  <!-- 执行模式 · 点击方式「详细说明」弹窗：右栏那五个方式只留名字（一列长说明会把选项挤得看不清），
+       怎么点 / 点击前要不要抢前台 / 点完会不会到前台 / 受不受遮挡影响全收在这里，由「点击方式」标题后的
+       「!」按钮点开。与 #optHelpModal / #vfyHelpModal / #sugHelpModal 同一套版式
+       （.modal-ov + .xcard + 标题 + 说明段 + 知道了）：点遮罩 / 知道了 / Esc 关闭 -->
+  <div class="modal-ov" id="execHelpModal" style="display:none">
+    <div class="xcard">
+      <div class="xt2">点击方式 · 详细说明</div>
+      <div class="sub">五种方式按选项顺序逐条说明：走哪条通道、点击前要不要抢前台（点完会不会到前台）、受不受窗口遮挡影响。切换立即生效、无需重启；点「执行动作」按已识别结果的坐标点击，点完自动等 3 秒游戏响应再截图识别下一轮（不用再手动点「立即识别」）。</div>
+      <div class="hlist">
+        <div><b style="color:var(--text)">MuMu 模拟器</b>（默认）—— 交给 MuMuManager.exe 的 adb 通道注入点击（shell input tap x y）。不抢鼠标、不用把窗口切到前台，模拟器在后台 / 被遮挡也能点；点击坐标会自动减去模拟器边框占用的偏移，按模拟器内坐标发送。</div>
+        <div style="margin-top:6px"><b style="color:var(--text)">MouseEvent 前台点击</b> —— 先把窗口抢到前台（并确认前台焦点已归它），再用 mouse_event 模拟一次真实鼠标左键点击。与「RawInput 前台点击」的区别就在这一步：点击前强制抢前台，抢不到就取消本次点击（不冒险乱点），点完也不把前台还回去。真实鼠标输入，要求窗口可见、不被遮挡；非 MuMu 的模拟器 / 游戏可用此项。</div>
+        <div style="margin-top:6px"><b style="color:var(--text)">RawInput 前台点击</b> —— 直接注入系统级真实鼠标输入（SendInput：移动 → 按下 → 抬起）。必须前台可见：真实鼠标输入只投给「光标下的窗口」，目标点得在屏幕上、且该点最上层就是目标窗口 —— 被别的窗口压住时会先自动化解遮挡（抬窗 → 抢前台 → 临时置顶 / 挪到光标处，点完还原），化解不了就取消本次点击。注入的事件会进系统输入链，认 RawInput / DirectInput 的程序也能收到（比 MouseEvent 的 mouse_event 更接近真实硬件）；点击前不抢前台：目标点可见就直接注入，不等待、也不会因为前台切不过来而失败 —— 但注入的是真实鼠标输入，Windows 会按鼠标点击的真实语义把该窗口激活，所以点完它照样会到前台（这点躲不掉，区别只在点击前不主动切、也不确认前台）。</div>
+        <div style="margin-top:6px"><b style="color:var(--text)">PostMessage 后台消息</b> —— 不抢鼠标焦点、不动光标，向目标窗口投递完整点击消息序列：先模拟滑入移动、再按下/抬起。比单纯投递按下/抬起更接近真实输入；游戏 / 模拟器多忽略合成消息。结果里附一句诊断：按下有没有被宿主处理（查目标线程的鼠标捕获窗口）—— 处理了却点不动 = 宿主收下了没转发给引擎，该换真实输入或模拟器的 adb 通道。</div>
+        <div style="margin-top:6px"><b style="color:var(--text)">PostMessage 后台消息+移动窗口</b> —— 先把窗口「对齐」（挪到鼠标处、让目标点与光标重合），再用同步消息发完整点击序列，发完还原窗口位置。与「PostMessage 后台消息」同一条通道、同一套消息，只多了「移动窗口对齐」这一步：有些程序不看消息里带的坐标，只认自己查到的真实鼠标位置 —— 对齐后两种坐标来源重合，才点得准。全程只发消息：不碰用户光标（也不移光标）、不抢前台、不注入真实输入、不受遮挡影响；代价是窗口会短暂闪一下（约两百毫秒）。结果里同样附那句诊断（见上）。</div>
+      </div>
+      <div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="execHelpOk">知道了</button></div>
+    </div>
   </div>
 </section>
 
