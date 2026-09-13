@@ -4254,11 +4254,13 @@ function optRender(){
           + (r.miss == null ? (r.samples - r.hit - (r.tie || 0)) : r.miss)
           + " · 无法区分 " + (r.tie || 0) + "）";
         // 算法名可能带 & < > 等字符：这里改用 innerHTML（综合最佳那行要加粗 / 绿字），名字一律 escHtml
+        // 两行「最好」都只写算法名 + 命中 / 判错 / 无法区分，**不带前面的百分比数值**（用户 2026-09-13 指定：
+        // 匹配正确率 / 综合分在下面的结果卡与左栏都看得到，统计行不再重复）
         // 本次刷新 → 两个「最好」→ 上一次自动调整参数 → 需重算（用户 2026-09-13 定的顺序与条目，别再加回缓存 / 快照那几行）
         stat.innerHTML = "上次刷新完成" + fmtCostSuffix(Number(res.costMs)) + "：样本 " + res.samples + " 张 · 分类 " + res.groups + " 个" +
-          (best ? "\n最高匹配正确率：" + escHtml(best.name) + " " + fmtV(best.accuracy) + countsOf(best) + optWaitTxt(best.id) : "") +
+          (best ? "\n最高匹配正确率：" + escHtml(best.name) + countsOf(best) + optWaitTxt(best.id) : "") +
           // 综合最佳算法是主要结果（执行模式与「未标注」的智能推荐都只认它）：整段加粗 + 绿字突出（.optBest，见 annotate.css）
-          (bestAll ? '\n<span class="optBest">综合最佳算法：' + escHtml(bestAll.name) + " " + fmtV(scoreOf(bestAll)) + "</span>"
+          (bestAll ? '\n<span class="optBest">综合最佳算法：' + escHtml(bestAll.name) + "</span>"
             + countsOf(bestAll) + optWaitTxt(bestAll.id) : "") +
           // 这次调参的耗时与上面那次刷新是同一轮，只在首行报一次；权重文件路径收进「!」里的详细说明
           (j.tune && j.tune.finished ? "\n自动调整参数上一次完成：采纳 "
