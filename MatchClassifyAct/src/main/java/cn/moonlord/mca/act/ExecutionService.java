@@ -88,7 +88,8 @@ public class ExecutionService {
 
     /** 运行期点击方式（null = 使用 execute.click-mode 配置默认）；控制台页可实时切换，重启后恢复配置默认。
      *  取值见 {@link WindowClicker#MODE_MUMU}（MuMu 模拟器）/ {@link WindowClicker#MODE_SCREEN}（前台点击）
-     *  / {@link WindowClicker#MODE_RAW_INPUT}（RawInput 输入）/ {@link WindowClicker#MODE_POST}（后台消息）。 */
+     *  / {@link WindowClicker#MODE_RAW_INPUT}（RawInput 输入）/ {@link WindowClicker#MODE_POST}（后台消息）
+     *  / {@link WindowClicker#MODE_SEND_MESSAGE}（后台消息·挪窗）。 */
     private volatile String clickMode = null;
 
     private long nextFindFailLogTime = 0;
@@ -103,7 +104,7 @@ public class ExecutionService {
     }
 
     /** 运行期切换鼠标点击方式（mumu = MuMu 模拟器 / screen = 前台点击 / rawinput = RawInput 输入
-     *  / post = 后台消息）。非法值被忽略并保留原值。 */
+     *  / post = 后台消息 / sendmessage = 后台消息·挪窗）。非法值被忽略并保留原值。 */
     public void setClickMode(String mode) {
         if (mode == null || mode.isBlank()) {
             return;

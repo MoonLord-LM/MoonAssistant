@@ -178,8 +178,9 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 - **执行动作**：识别出「鼠标点击」动作后点「执行动作」，直接按右侧识别结果的坐标发送点击，**不再重新截图识别**（画面已变化请先点「立即识别」刷新结果）：
   - `mumu`（默认，MuMu 模拟器）：不碰鼠标、不动窗口焦点，把点击交给 `MuMuManager.exe adb -v 0 -c "shell input tap x y"`（`MuMuManager.exe` 位置见 `execute.mumu-manager-path`）由模拟器自己的 adb 通道注入，模拟器在后台 / 窗口被遮挡也能点；**坐标要分两步换算**成模拟器内坐标（`shell input tap` 用的是模拟器实际分辨率坐标，不是窗口截图像素）：① 识别点取自窗口截图，而游戏画面四周那一圈是模拟器自己的边框，先减掉 `execute.mumu-click-offset-x/-y`（默认 55 / 60 —— 游戏画面 1170×660 嵌在 1280×720 的模拟器窗口里，左右各让出 (1280−1170)/2、上方让出 60、下方 0），减成负数按 0 处理；② 再按「游戏画面 1170×660 → 模拟器实际分辨率 2560×1440」等比放大（窗口是被强制缩小到截图尺寸的，模拟器里的画面仍是原始分辨率；尺寸在 `WindowClicker` 里是常量，换分辨率改那里）；
   - `screen`（前台点击）：`SetForegroundWindow + SetCursorPos + mouse_event` 真实输入（要求窗口可见不被遮挡）；
-  - `rawinput`（RawInput 输入）：坐标换算同 `screen`，但**不做前台切换**（不调 `SetForegroundWindow`、不轮询前台），直接注入**系统级真实鼠标输入** `SendInput`（绝对移动 → 左键按下 → 抬起，点完把光标移回原位）；注入的事件会进系统输入链，认 RawInput / DirectInput（或轮询 `GetCursorPos`）的程序也能收到（`screen` 用的 `mouse_event` 是遗留接口，这类程序常常收不到）。真实鼠标语义是「投给光标下的窗口」，所以**要求目标点在屏幕上没被别的窗口挡住**（注入前核对归属，被挡住就取消本次点击并说明命中的是谁），需要完全后台用 `mumu` / `post`；
+  - `rawinput`（RawInput 输入）：**必须前台可见** —— 真实鼠标输入只投给「光标下的窗口」，目标点必须在屏幕上、且该点最上层就是目标窗口，否则输入会落到上层窗口上，所以它不能像 `mumu` / `post` / `sendmessage` 那样后台运行；坐标换算同 `screen`，直接注入**系统级真实鼠标输入** `SendInput`（绝对移动 → 左键按下 → 抬起，点完把光标移回原位）；注入的事件会进系统输入链，认 RawInput / DirectInput（或轮询 `GetCursorPos`）的程序也能收到（`screen` 用的 `mouse_event` 是遗留接口，这类程序常常收不到）。真实鼠标语义是「投给光标下的窗口」，目标点被别的窗口压住就点不到 —— 此时按「把窗口抬到其他窗口之前 → 抢一次前台 → 临时置顶 → 临时挪到光标处」逐级化解遮挡（开关见 `execute.rawinput-auto-expose`），确认目标点已归到该窗口名下才点、点完把置顶 / 位置还原；全部失败才取消本次点击并说明是谁挡着（绝不把真实输入点到上层窗口上）。目标点本来就可见时不抢前台、不动窗口任何状态；需要完全后台（被遮挡也完全不打扰窗口）用 `mumu` / `post`；
   - `post`（后台消息）：向目标窗口投递完整点击消息序列，不要求窗口前台/可见、不抢占鼠标（游戏 / 模拟器多忽略合成消息）。
+  - `sendmessage`（后台消息 · 挪窗）：`post` 的「同步 + 挪窗对齐」版，对应 MaaFramework 的 `SendMessageWithWindowPos` —— 发送前先 `SetWindowPos` 把窗口临时挪到「目标点正好压在当前光标下」（只挪位置：`SWP_NOZORDER` 不动 z 序、也不激活窗口），再用 `SendMessageTimeout`（限时 1 秒，避免目标线程忙时把调用方一起挂住）同步发送同一套点击消息序列，最后把窗口位置还原。专治「不认消息里带的坐标、自己去问 `GetCursorPos()` 或对目标点做命中测试」的程序；同样不碰用户光标、不需要前台、不受遮挡影响，代价是窗口会短暂闪一下（约两百毫秒，点击期间鼠标停在目标点上）；未能确认窗口挪到位（如窗口已最大化）时仍照发，消息坐标不受影响、只在结果里附一句提示。与 `rawinput` 里的「临时挪到光标处」是同一手法，区别只在注入的是合成消息而不是真实输入。
 - 画面区实时帧上用**红白准星**叠加标出识别命中点（点击坐标），右栏展示识别结果与**候选分类（展示最优的前 7 个）**，按差异度由小到大取前 7，`FrameClassifier` 里限流）。
 
 ---
@@ -202,7 +203,8 @@ java -Dfile.encoding=UTF-8 -jar target/MatchClassifyAct-0.0.1-SNAPSHOT.jar
 | `ui.window-size` `ui.center` | `1760x990` `true` | 控制台窗口尺寸 / 是否居中 |
 | `execute.match-threshold-percent` | `25` | 差异度参考阈值：识别不设判定门槛，仅随识别结果返回供界面参考 |
 | `execute.rgb-dist-threshold` | `85`（255/3） | **均值型对照图**（avg/dedup-avg/avg8/dedup-avg8/avg32/dedup-avg32 及各自 -unique）判不匹配的逐通道色差上限：R/G/B 任一通道差 > 它判「不匹配」，三通道都 ≤ 它才匹配；交集/多数/方框交集型（交集六档 same100/90/80/70/60/50、major/major8/major32 及各自 -unique、注意区交集图 attn8/32-same100/90/80/70/60/50、点击区交集图 click8/32-same100/90/80/70/60/50）固定「逐像素完全一致」，不受它影响 |
-| `execute.click-mode` | `mumu` | `mumu`=MuMu 模拟器（默认）：走 `MuMuManager.exe` 的 adb 通道注入点击，不抢鼠标前台、模拟器在后台也能点；`screen`=真实前台点击；`rawinput`=RawInput 输入：`SendInput` 注入系统级真实鼠标输入，不抢前台、不做前台等待，要求目标点未被别的窗口遮挡；`post`=后台消息点击。控制台「执行模式」页可实时切换、重启后回到本配置 |
+| `execute.click-mode` | `mumu` | `mumu`=MuMu 模拟器（默认）：走 `MuMuManager.exe` 的 adb 通道注入点击，不抢鼠标前台、模拟器在后台也能点；`screen`=真实前台点击；`rawinput`=RawInput 输入：`SendInput` 注入系统级真实鼠标输入，**必须前台可见**（真实输入只投给光标下的窗口、目标点不能被别的窗口压住），目标点可见时不需要抢前台、被遮挡时先自动化解遮挡再点；`post`=后台消息点击；`sendmessage`=后台消息·挪窗：先把窗口挪到光标处对齐（点完还原），再同步发送完整点击消息序列（Maa 的 `SendMessageWithWindowPos`）。控制台「执行模式」页可实时切换、重启后回到本配置 |
+| `execute.rawinput-auto-expose` | `true` | `rawinput`（必须前台可见的真实输入）被遮挡时是否自动化解遮挡：抬到其他窗口之前 → 抢一次前台 → 临时置顶 → 临时挪到光标处，确认目标点可见才点、点完还原；`false` = 保持不打扰，被遮挡直接取消本次点击。只在目标点确实被挡住时才动窗口，其中临时置顶 / 挪窗会让目标窗口短暂闪一下 |
 | `execute.mumu-manager-path` | `C:\Program Files\Netease\MuMuPlayer-12.0\nx_main\MuMuManager.exe` | MuMu 模拟器模式用来发点击的 `MuMuManager.exe` 位置（换机器 / 换安装位置时改这里） |
 | `execute.mumu-click-offset-x` `execute.mumu-click-offset-y` | `55` `60` | MuMu 模拟器模式坐标换算第一步：从识别点（窗口截图坐标）里减掉的横向 / 纵向边框占用（像素）：左右各让出这么多、上方让出这么多、下方 0；减成负数按 0 处理。第二步「游戏画面 → 模拟器实际分辨率」的等比放大不在此处，尺寸是 `WindowClicker` 里的常量 |
 

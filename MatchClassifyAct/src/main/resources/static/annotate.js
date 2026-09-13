@@ -4895,7 +4895,7 @@ $("modeSel").addEventListener("change", ()=>{
 });
 
 /* ---------------- 执行模式：实时画面识别 + 动作执行（驱动 /api/execute/*；单次识别，无后台循环） ---------------- */
-let execClickMode = "mumu";     // 后端配置的点击方式（/api/execute/status.clickMode：mumu=MuMu 模拟器 / screen=前台点击 / rawinput=RawInput 输入 / post=后台消息，本值为后端默认的初值，进页面会按 /status 覆盖）
+let execClickMode = "mumu";     // 后端配置的点击方式（/api/execute/status.clickMode：mumu=MuMu 模拟器 / screen=前台点击 / rawinput=RawInput 输入 / post=后台消息 / sendmessage=后台消息·挪窗，本值为后端默认的初值，进页面会按 /status 覆盖）
 let execLatest = null;          // 最近一次 /api/execute/latest 的返回
 let execShownAt = 0;            // 当前画面对应快照的 at（与 /api/execute/frame 配对）
 let execShownW = 0, execShownH = 0;   // 已展示画面的自然尺寸
@@ -4926,7 +4926,16 @@ async function execGet(url, opt){
 }
 
 /* ---- 参数同步（点击模式等） ---- */
-const EXEC_MODES = ["mumu", "screen", "rawinput", "post"];   // 受支持的点击方式（与后端 WindowClicker.MODE_* 一致）
+const EXEC_MODES = ["mumu", "screen", "rawinput", "post", "sendmessage"];   // 受支持的点击方式（与后端 WindowClicker.MODE_* 一致）
+/* 「执行动作」按钮的悬停说明：按当前点击方式说明实际会怎么点（与「点击方式」单选的文案同口径） */
+const EXEC_MODE_TIP = {
+  mumu: "走 MuMuManager.exe 的 adb 通道注入点击，不抢鼠标前台（坐标自动减去模拟器边框偏移）",
+  screen: "做一次真实鼠标点击，要求窗口可见、不被遮挡",
+  rawinput: "注入系统级真实鼠标输入（SendInput）—— 必须前台可见：真实输入只投给光标下的窗口，目标点不能被别的窗口压住（被压住时先自动抬窗 / 挪窗化解，化解不了就取消）",
+  post: "向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起",
+  sendmessage: "先把窗口挪到鼠标所在处、让目标点与光标重合，再同步发送点击消息序列（发完把窗口挪回原位）"
+};
+function execModeTip(m){ return EXEC_MODE_TIP[m] || ""; }
 async function execSyncStatus(){
   const j = await execGet("/api/execute/status");
   if(j && EXEC_MODES.includes(j.clickMode)) execApplyMode(j.clickMode);
@@ -5107,13 +5116,7 @@ function renderExecActBtn(j, clickable){
   b.textContent = "执行动作";
   b.title = clickable
       ? ("直接按右侧识别结果发送一次点击，不再重新截图识别（画面已变化请先点「立即识别」）："
-          + (execClickMode === "mumu"
-              ? "走 MuMuManager.exe 的 adb 通道注入点击，不抢鼠标前台（坐标自动减去模拟器边框偏移）"
-              : (execClickMode === "screen"
-                  ? "做一次真实鼠标点击，要求窗口可见、不被遮挡"
-                  : (execClickMode === "rawinput"
-                      ? "注入系统级真实鼠标输入（SendInput），不抢前台、不做前台等待，要求目标点没被别的窗口挡住"
-                      : "向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起"))))
+          + execModeTip(execClickMode))
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
 
@@ -5391,10 +5394,10 @@ function execPollTick(){
 }
 
 /* ---- 自动识别（红色测试按钮）：连续循环 = 截图识别 → 显示结果并等 3 秒确认 →
-       按下方所选点击方式（MuMu 模拟器 / 前台点击 / RawInput 输入 / 后台消息）动作 → 等 3 秒游戏响应 → 下一轮 ---- */
+       按下方所选点击方式（MuMu 模拟器 / 前台点击 / RawInput 输入 / 后台消息 / 后台消息·挪窗）动作 → 等 3 秒游戏响应 → 下一轮 ---- */
 const execSleep = ms => new Promise(r => setTimeout(r, ms));
-const execModeZh = m => (m === "mumu" ? "MuMu 模拟器"
-    : (m === "screen" ? "前台点击" : (m === "rawinput" ? "RawInput 输入" : "后台消息")));
+const execModeZh = m => ({ mumu: "MuMu 模拟器", screen: "前台点击", rawinput: "RawInput 输入",
+    post: "后台消息", sendmessage: "后台消息·挪窗" }[m] || "后台消息");
 
 /* 状态提示：粉色的 <b>…</b> 是「高亮的那半句」，一律独占一行 —— 由 CSS 的
    `.execAutoState b{display:block}` 负责（前后自动断行），各提示语里不用再写 <br>（用户指定）。

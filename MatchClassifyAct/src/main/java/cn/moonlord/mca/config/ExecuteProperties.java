@@ -67,20 +67,39 @@ public class ExecuteProperties {
      *   <li>{@code screen} —— 前台点击：截图画面 = 窗口整窗外框（采集器按 GetWindowRect 裁取），
      *       用「外框左上角 + 图片像素」得到屏幕坐标，把窗口带到前台后用
      *       {@code SetCursorPos + mouse_event} 模拟一次真实左键点击。要求目标窗口可见且不被完全遮挡；</li>
-     *   <li>{@code rawinput} —— RawInput 输入：坐标换算同 {@code screen}，但不做前台切换，
-     *       直接注入系统级真实鼠标输入（{@code SendInput}：绝对移动 → 左键按下 → 抬起，点完把光标移回原位）。
+     *   <li>{@code rawinput} —— RawInput 输入：<b>必须前台可见</b> —— 真实鼠标输入只投给「光标下的窗口」，
+     *       目标点必须在屏幕上、且该点最上层就是目标窗口，否则会点到上层窗口上，所以它不能后台运行
+     *       （要后台用 {@code mumu} / {@code post} / {@code sendmessage}）。坐标换算同 {@code screen}，
+     *       但直接注入系统级真实鼠标输入（{@code SendInput}：绝对移动 → 左键按下 → 抬起，点完把光标移回原位）。
      *       注入事件会进系统输入链，认 RawInput / DirectInput（或轮询 {@code GetCursorPos}）的程序也能收到
      *       （{@code screen} 用的 {@code mouse_event} 是遗留接口，这类程序常常收不到）。
-     *       不要求窗口前台、也不等待前台；但真实鼠标语义是「投给光标下的窗口」，所以仍要求目标点在屏幕上
-     *       可见 —— 注入前会核对目标点归属，被别的窗口遮挡就取消本次点击并说明命中的是谁。
-     *       需要窗口被遮挡也能点（完全后台）请用 {@code mumu} / {@code post}；</li>
+     *       目标点本来就可见时不抢前台、不等前台；被别的窗口压住就点不到，此时按
+     *       「抬窗 → 抢前台 → 临时置顶 → 临时挪到光标处」逐级化解遮挡
+     *       （见 {@link #rawinputAutoExpose}），点击完成即还原窗口状态，全部失败才取消本次点击；</li>
      *   <li>{@code post} —— 后台消息：向目标窗口投递完整点击消息序列（3 次 {@code WM_MOUSEMOVE}
      *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}，
      *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台/可见、不抢占用户焦点。
-     *       比只发按下/抬起更易被普通桌面程序接受；游戏 / 模拟器多数仍忽略合成消息。</li>
+     *       比只发按下/抬起更易被普通桌面程序接受；游戏 / 模拟器多数仍忽略合成消息；</li>
+     *   <li>{@code sendmessage} —— 后台消息（挪窗）：{@code post} 的「同步 + 挪窗对齐」版，对应 MaaFramework 的
+     *       {@code SendMessageWithWindowPos} —— 发送前把窗口临时挪一下，让目标点正好落在当前光标位置
+     *       （发完立即还原位置），再用 {@code SendMessageTimeout} 同步发送同一套消息序列。
+     *       专治「不认消息坐标、自己去问 {@code GetCursorPos()} 或对目标点做命中测试」的程序；
+     *       同样不碰用户光标、不需要前台、不受遮挡影响，代价是窗口短暂闪一下。</li>
      * </ul>
      */
     private String clickMode = "mumu";
+
+    /**
+     * {@code rawinput}（RawInput 输入，<b>必须前台可见</b>）在目标点被别的窗口挡住时，是否自动化解遮挡：
+     * 依次尝试把窗口抬到其他窗口之前、抢一次前台、临时置顶、临时挪到光标处，一旦确认目标点归到目标窗口名下
+     * 就完成点击，并把置顶 / 位置还原（{@code mumu} / {@code screen} / {@code post} / {@code sendmessage}
+     * 不受本值影响）。
+     * <p>
+     * 关闭 = 保持「不打扰」：被遮挡直接取消本次点击（真实鼠标输入按「光标下的窗口」投递，乱点会点到
+     * 上层窗口）。目标点本来就可见时无论开关都不动窗口任何状态；只有确实被挡住才会动，其中「临时置顶」
+     * 与「临时挪窗」会让目标窗口短暂闪一下，介意就把本值关掉。
+     */
+    private boolean rawinputAutoExpose = true;
 
     /**
      * MuMu 模拟器模式用来发送点击的 {@code MuMuManager.exe} 位置（MuMu 12 的默认安装路径）。
