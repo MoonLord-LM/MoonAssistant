@@ -1,6 +1,7 @@
 package cn.moonlord.mca.act;
 
 import cn.moonlord.mca.capture.ScreenCaptureService;
+import cn.moonlord.mca.capture.ThumbnailCache;
 import cn.moonlord.mca.capture.WindowFinder;
 import cn.moonlord.mca.capture.WindowInfo;
 import cn.moonlord.mca.capture.WindowResizer;
@@ -67,6 +68,8 @@ public class ExecutionService {
 
     private final WindowFinder windowFinder;
     private final ScreenCaptureService screenCaptureService;
+    /** 缩略图缓存：存入画面后顺手把它的缩略图写好，下次按钮去重不必为它再解一次全尺寸原图（见 ThumbnailCache）。 */
+    private final ThumbnailCache thumbnails;
     private final WindowResizer windowResizer;
     private final RuntimeService runtimeService;
     private final WindowClicker windowClicker;
@@ -425,7 +428,7 @@ public class ExecutionService {
      * 快速标记（识别纠错）：把最近一次识别画面另存为所选分类的新样本，减少「同一画面反复认错」。
      *
      * <p>写入前去重，口径与「存到待标注」完全一致（{@link ScreenCaptureService#duplicateReference} +
-     * 手动保存阈值），避免分类样本重复堆叠；被拦截时返回 kind=dup（含 dupOf / diffPercent / threshold），
+     * 手动保存阈值，先比缩略图预筛），避免分类样本重复堆叠；被拦截时返回 kind=dup（含 dupOf / diffPercent / threshold），
      * 便于页面提示用户改标既有样本。</p>
      *
      * @return ok=true + 新样本文件名；失败时 ok=false + message（HTTP 200，便于前端直接提示）
@@ -449,7 +452,7 @@ public class ExecutionService {
             res.put("message", s.error() != null ? s.error() : "当前没有可保存的画面，请先点「立即识别」。");
             return res;
         }
-        // 与「存到待标注」同一套去重；阈值 ≤ 0（去重关闭）时不检查
+        // 与「存到待标注」同一套去重（先比缩略图预筛，见 ScreenCaptureService#scanReference）；阈值 ≤ 0（去重关闭）时不检查
         double threshold = Math.round(captureProperties.getDiffThresholdManualPercent() * 100.0) / 100.0;
         if (threshold > 0) {
             ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(s.frame(), threshold);
@@ -497,6 +500,7 @@ public class ExecutionService {
                 Files.move(tmp, png, StandardCopyOption.REPLACE_EXISTING);
             }
             classifyStore.saveSample(name, st);
+            thumbnails.write(png, s.frame());   // 顺手写缩略图：下次按钮去重不必为这张样本再解一次全尺寸原图
             thinkService.requestRecompute();   // 样本集合已变化：自动补齐/刷新该分类对照图，无需手动去汇总分析
             log.info("执行模式快速标记：画面 {}x{} 另存为分类「{}」的样本 {}（已请求后台重算）",
                     s.imageWidth(), s.imageHeight(), st, name);
@@ -520,9 +524,10 @@ public class ExecutionService {
      * 把当前识别画面另存为 resource/capture/ 下的原始截图（未标注，不写标注数据）：执行画面本身不落盘，
      * 这里以「另存」方式与截图循环产物同目录、同命名，需要人工精确标注 / 修正坐标时再走「标注模式」。
      *
-     * <p>保存前执行与自动截图循环同一套去重判定（{@link ScreenCaptureService#duplicateReference}），
-     * 但套「手动保存」阈值 {@code capture.diff-threshold-manual-percent}：与任一张历史画面几乎相同即
-     * 拒绝另存，避免堆积重复的待标注图；差异与阈值都先四舍五入到两位小数，拦截效果与提示文字一致。
+     * <p>保存前执行与自动截图循环同一套去重判定（{@link ScreenCaptureService#scanReference}：先比
+     * resource/cache/ 里的缩略图、达不到阈值一半即判重复，只有预筛不掉的图才全尺寸逐像素比对），
+     * 但套「手动保存」阈值 {@code capture.diff-threshold-manual-percent}：
+     * 与任一张历史画面几乎相同即拒绝另存，避免堆积重复的待标注图；差异与阈值都先四舍五入到两位小数。
      * 阈值 ≤ 0（关闭去重）时直接保存。</p>
      *
      * @return ok=true + 新文件名；ok=false + kind=dup（被去重拦截）/ message（HTTP 200，便于前端直接提示）
@@ -574,6 +579,7 @@ public class ExecutionService {
                 Files.move(tmp, png, StandardCopyOption.REPLACE_EXISTING);
             }
             log.info("执行模式把画面 {}x{} 另存为 resource/capture/ 待标注截图：{}", s.imageWidth(), s.imageHeight(), name);
+            thumbnails.write(png, s.frame());   // 顺手写缩略图：下次按钮去重不必为这张截图再解一次全尺寸原图
             res.put("ok", true);
             res.put("name", name);
             res.put("imageWidth", s.imageWidth());

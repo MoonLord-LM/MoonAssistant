@@ -69,6 +69,14 @@ public class CaptureProperties {
     private String runtimeDir = "runtime";
 
     /**
+     * 截图缩略图缓存目录（相对运行目录下的 {@code resource/} 目录）：每张截图按固定步长抽样成的
+     * 小图存在这里（与原图同名），供运行期去重（自动截图循环、手动采集 / 存入分类 / 存到待标注）
+     * 先做一次廉价预筛（抽样步长见 {@code ThumbnailCache}）。
+     * 纯粹是加速用的缓存，可随时整目录删除 —— 删了只是下一次判定多解几张原图，判定结果不变。
+     */
+    private String cacheDir = "cache";
+
+    /**
      * 传给 WindowsCapture 采集器内部的抓帧超时（毫秒）。
      */
     private long captureTimeoutMs = 5000;
@@ -100,20 +108,28 @@ public class CaptureProperties {
      * 只要与任意一张占比 ≤ 本值（画面几乎没变 / 与某张已标注样本几乎相同 / 只有指针抖动之类的
      * 小扰动），该帧即视为重复丢弃，避免一边标注一边 resource/capture/ 又落盘几乎一模一样的截图。
      *
-     * <p>判定直接读取全尺寸原图逐像素比对，不做任何缩略 / 预筛。</p>
+     * <p>判定分两步（{@code ScreenCaptureService#scanReference}）：先比 {@code resource/cache/} 里的缩略图，
+     * 缩略图不一致像素点占比 &lt; 本值的一半即直接判重复、不再解码全尺寸原图；缩略图差异达不到这一档
+     * （或拿不到缩略图）才读全尺寸原图逐像素精确比对。于是「判重复」允许被缩略图抽样漏掉一点点差异，
+     * 「判为新画面」仍是逐张全尺寸确认（只有启动历史重复清理不走缩略图、一律全尺寸逐像素，
+     * 见 {@link #diffThresholdManualPercent}）。</p>
      *
      * <p>0 或负数 = 关闭自动截图去重，每次都按原逻辑保存。</p>
      */
     private double diffThresholdPercent = 5;
 
     /**
-     * 手动「存入分类 / 存到待标注」保存前的去重阈值（像素点差异百分比，0~100）。
+     * 手动「手动采集 / 存入分类 / 存到待标注」保存前的去重阈值（像素点差异百分比，0~100）。
      * 执行模式把当前画面存入 resource/classify/ 样本或另存为 resource/capture/ 截图前，与「去重基准」（resource/capture/ +
-     * resource/classify/ 全部同尺寸 PNG）做<b>全尺寸逐像素比对</b>：逐点比较 RGB（忽略 alpha），统计不一致
+     * resource/classify/ 全部同尺寸 PNG）比对：逐点比较 RGB（忽略 alpha），统计不一致
      * 像素点占比；仅当与其中每一张的占比都 &gt; 本值才允许保存；与任意一张占比 ≤ 本值（同一画面 /
      * 差异微小的近似画面）即拒绝并提示「和哪张重复」。手动存入由人眼确认过才触发，
-     * 阈值远比自动截图那档严苛，只拦几乎一样的画面。判定方法同自动截图
-     * {@link #diffThresholdPercent}（直接读取全尺寸原图逐像素计数，无缩略预筛）。
+     * 阈值远比自动截图那档严苛，只拦几乎一样的画面。
+     *
+     * <p>这条路径是「点一下就要等结果」的按钮，快慢比绝对精确更重要，所以判定口径与自动截图那档
+     * {@link #diffThresholdPercent} 一样（{@code ScreenCaptureService#scanReference}）：先比
+     * {@code resource/cache/} 里的缩略图，缩略图不一致像素点占比 &lt; 本值的一半即直接判重复、
+     * 不再解码全尺寸原图；缩略图差异达不到这一档（或拿不到缩略图）才读全尺寸原图逐像素精确比对。</p>
      *
      * <p>0 或负数 = 关闭手动保存的去重检查，每次都按原逻辑保存。</p>
      *

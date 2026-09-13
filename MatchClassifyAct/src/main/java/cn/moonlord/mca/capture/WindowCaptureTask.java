@@ -225,6 +225,7 @@ public class WindowCaptureTask implements ApplicationRunner {
                 if (paused.get()) {
                     return;   // 截图期间被暂停，放弃这帧
                 }
+                // 与按钮路径同一套判定：先比缩略图预筛（静止画面通常只读一张小图即判重复，不必解全尺寸原图）
                 ScreenCaptureService.DuplicateMatch dup = screenCaptureService.duplicateReference(image);
                 if (dup != null) {
                     logSkippedSimilar();
@@ -268,8 +269,8 @@ public class WindowCaptureTask implements ApplicationRunner {
 
     /**
      * 手动采集一次（「手动采集」按钮 → {@code /api/capture/manual}）：与自动轮同一套截图 / 调窗逻辑，
-     * 差别只在去重套「手动保存」阈值（{@code capture.diff-threshold-manual-percent}，
-     * 见 {@link ScreenCaptureService#duplicateReference}），且不触发自动暂停、不写截图事件流；
+     * 差别只在去重套「手动保存」阈值（{@code capture.diff-threshold-manual-percent}）与去重的调用口径
+     * （{@link ScreenCaptureService#scanReference}），且不触发自动暂停、不写截图事件流；
      * 不受截图开关约束，与定时轮经 {@link #busy} 互斥（撞车时先等其收尾）。
      *
      * @return 本次结果（{@link ManualShotResult}）
@@ -321,6 +322,7 @@ public class WindowCaptureTask implements ApplicationRunner {
             int imageH = image.getHeight();
             if (!enforce || (imageW == targetW && imageH == targetH)) {
                 // 去重判定与「提示用差异」共用一次扫描；minDiffPercent 落盘前算，故不含本张
+                // 走运行期统一的缩略图预筛：缩略图差异不到阈值一半即判重复，不必解全尺寸原图（见 scanReference）
                 ScreenCaptureService.DedupScan scan = screenCaptureService.scanReference(image, threshold);
                 ScreenCaptureService.DuplicateMatch dup = scan.dup();
                 if (dup != null) {

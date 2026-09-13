@@ -76,6 +76,7 @@ public class ScreenCaptureService {
     private final CaptureProperties properties;
     private final StoragePaths storage;
     private final DedupCache dedupCache;
+    private final ThumbnailCache thumbnails;
 
     private volatile Path helperExe;
 
@@ -87,7 +88,9 @@ public class ScreenCaptureService {
     }
 
     /** 一次去重判定命中：{@code name} = 与之重复的那张已保存截图 / 标注样本的文件名（可直接向用户指出「和哪一张重复」）；
-     *  {@code diffPercent} = 两者不一致像素点占比（%，两位舍入，必然 ≤ {@code threshold}）；
+     *  {@code diffPercent} = 两者不一致像素点占比（%，两位舍入，必然 ≤ {@code threshold}）—— 被缩略图预筛拦下的命中
+     *  给的是<b>缩略图</b>口径的值（见 {@link ThumbnailCache}，比全尺寸口径粗糙一点、只会更小），
+     *  预筛没拦下、由全尺寸逐像素比对命中的给的是精确值；
      *  {@code refState} = 参考图为 resource/classify/ 已标注样本时的分类标注，resource/capture/ 未标注参考图为 null。 */
     public record DuplicateMatch(String name, double diffPercent, double threshold, String refState) {
     }
@@ -102,7 +105,7 @@ public class ScreenCaptureService {
 
     /**
      * 画面去重基准 = resource/capture/（原始截图）与 resource/classify/（已标注样本）两目录下的<b>全部</b> PNG，
-     * key = 绝对路径，value 只含路径与尺寸（判定口径见 {@link #duplicateReference(BufferedImage, double)}）。
+     * key = 绝对路径，value 只含路径与尺寸（判定口径见 {@link #scanReference(BufferedImage, double)}）。
      *
      * <p>以磁盘全集为准而非「内存只保留最近 N 帧」：截图被标注移入 resource/classify/、程序重启后仍能与历史任意一张对上。</p>
      */
@@ -410,24 +413,37 @@ public class ScreenCaptureService {
         }
 
         rememberReference(file, image.getWidth(), image.getHeight());   // 立即登记进去重基准，后续帧须与它也有足够差异
+        thumbnails.write(file, image);   // 顺手把缩略图写进缓存：后续判定不必为它再解一次全尺寸原图
         return file;
     }
 
     /** 画面去重判定（自动截图循环在保存前调用）：阈值取 {@code capture.diff-threshold-percent}，
-     *  判定口径同 {@link #duplicateReference(BufferedImage, double)}。 */
+     *  判定口径见 {@link #scanReference(BufferedImage, double)}。 */
     public DuplicateMatch duplicateReference(BufferedImage image) {
         return duplicateReference(image, properties.getDiffThresholdPercent());
     }
 
-    /** 带阈值的画面去重判定（手动采集、「存入分类 / 存到待标注」传 {@code capture.diff-threshold-manual-percent}）：
-     *  与去重基准里每一张同尺寸 PNG 逐像素比对，不一致像素点占比 ≤ threshold 即判重复、须与每一张都
-     *  &gt; threshold 才算新画面；阈值 ≤ 0 视为关闭、直接放行。返回 {@link #scanReference} 的 dup。 */
+    /** 带阈值的画面去重判定（运行期各入口共用；手动采集、「存入分类 / 存到待标注」传 {@code capture.diff-threshold-manual-percent}）：
+     *  先比缩略图预筛，不一致像素点占比 ≤ threshold 即判重复、须与每一张都 &gt; threshold 才算新画面；
+     *  阈值 ≤ 0 视为关闭、直接放行。返回 {@link #scanReference(BufferedImage, double)} 的 dup。 */
     public DuplicateMatch duplicateReference(BufferedImage image, double threshold) {
         return scanReference(image, threshold).dup();
     }
 
-    /** 同上判定的一次扫描，额外带出「与任一参考图的最小不一致像素点占比」（{@code minDiffPercent}，-1 = 无可比参考）：
-     *  供手动采集「保存成功」提示用（省掉保存后再全量扫一遍找最接近的图）；命中重复时提前返回，该值无意义。 */
+    /**
+     * 去重判定的一次扫描：与去重基准里每一张同尺寸 PNG 比对，命中即提前返回。
+     *
+     * <p>运行期（自动截图循环、手动采集、存入分类 / 存到待标注）都先比
+     * {@code resource/cache/} 里的缩略图做预筛 —— 与某张参考图的<b>缩略图</b>不一致像素点占比 &lt; 阈值的一半，
+     * 即判为重复、不再解码全尺寸原图（缩略图只在每个固定方块里取一个点，见 {@link ThumbnailCache}，
+     * 这一侧允许比全尺寸口径粗糙）；只有预筛没拦下的参考图才读全尺寸原图逐像素精确比对。
+     * 于是「判为新画面」这一侧仍是全尺寸口径、不会被缩略图放过一张真正重复的画面，
+     * 而静止画面通常在第一张参考图就被预筛拦下（每帧只读一张小图，不再解全尺寸原图）。</p>
+     *
+     * <p>额外带出「与任一参考图的最小不一致像素点占比」（{@code minDiffPercent}，-1 = 无可比参考）：
+     * 供手动采集「保存成功」提示用（省掉保存后再全量扫一遍找最接近的图）；判为新画面时它是精确值
+     * （此时每张同尺寸参考都做了全尺寸比对），命中重复时提前返回、该值无意义。</p>
+     */
     public DedupScan scanReference(BufferedImage image, double threshold) {
         if (image == null || threshold <= 0) {
             return new DedupScan(null, -1);   // 去重关闭：每次都保存
@@ -441,6 +457,9 @@ public class ScreenCaptureService {
         }
         int w = image.getWidth();
         int h = image.getHeight();
+        // 缩略图预筛：本帧的缩略图只抽一次；门槛 = 差异阈值的一半（缩略图差异达不到门槛即可判重复）
+        int[] thumb = ThumbnailCache.sample(image);
+        double thumbLimit = pct2(threshold / 2);
         synchronized (referenceLock) {
             scanAndLoadMissingLocked();   // 同步磁盘全集：新保存 / 移入 / 删除的参考即时生效
             if (referenceCache.isEmpty()) {
@@ -455,7 +474,15 @@ public class ScreenCaptureService {
                 if (ref.srcW != w || ref.srcH != h) {
                     continue;   // 历史窗口尺寸不同：无法逐像素对比，视为不重复
                 }
-                BufferedImage full = readFull(ref.path);
+                double thumbDiff = ThumbnailCache.mismatchPercent(thumb, thumbnails.of(ref.path()));
+                if (thumbDiff < thumbLimit) {
+                    // 缩略图差异都不到阈值的一半：全尺寸差异不会超过阈值，直接判重复（省掉一次原图解码）
+                    log.debug("画面与已保存参考 {} 的缩略图不一致像素点占比 {}% < 阈值一半 {}%，判为重复不保存",
+                            ref.path.getFileName(), String.format("%.2f", thumbDiff), thumbLimit);
+                    return new DedupScan(new DuplicateMatch(ref.path.getFileName().toString(), thumbDiff, threshold,
+                            refStateOf(ref.path)), thumbDiff);
+                }
+                BufferedImage full = readFull(ref.path);   // 预筛没拦下：读全尺寸原图做精确判定
                 if (full == null) {
                     continue;   // 解码失败：无法比对，视为不重复放行
                 }
@@ -526,7 +553,7 @@ public class ScreenCaptureService {
 
     /**
      * 在 {@link #referenceLock} 内执行：重新枚举 resource/capture/ + resource/classify/ 顶层 PNG 作为基准集，
-     * 清理目录中已删除文件的缓存项，并补齐缺失的参考（只读 PNG 头部拿尺寸、不解码像素）。
+     * 清理目录中已删除文件的缓存项与缩略图，并补齐缺失的参考（只读 PNG 头部拿尺寸、不解码像素）。
      */
     private void scanAndLoadMissingLocked() {
         // 基准目录文件集合（增/删/移入）未变时跳过全量枚举，静止画面每帧只做 2 次目录 stat；
@@ -548,6 +575,14 @@ public class ScreenCaptureService {
             onDisk.add(p.toString());
         }
         referenceCache.keySet().removeIf(k -> !onDisk.contains(k));   // 已被删除/移出基准目录的不再参与
+        Set<String> names = new HashSet<>(disk.size() * 2);
+        for (Path p : disk) {
+            names.add(p.getFileName().toString());
+        }
+        int droppedThumbs = thumbnails.prune(names);   // 缩略图缓存同步裁剪（只是加速用，删了下次按需重建）
+        if (droppedThumbs > 0) {
+            log.info("缩略图缓存裁掉 {} 张已删除原图的缩略图", droppedThumbs);
+        }
         for (Path p : disk) {
             String key = p.toString();
             if (referenceCache.containsKey(key)) {
@@ -621,8 +656,8 @@ public class ScreenCaptureService {
      *
      * <ul>
      *   <li>保留优先级：resource/classify/ 已标注样本在前（有标注价值），resource/capture/ 次之；同目录内较早的优先；</li>
-     *   <li>判定口径与运行期完全一致（见 {@link #duplicateReference(BufferedImage, double)}），
-     *       目的是清掉早期未开去重时堆积的重复；</li>
+     *   <li>判定一律读全尺寸原图<b>逐像素</b>比对（比运行期更严：运行期先比缩略图预筛、只对预筛没拦下的
+     *       才全尺寸比对，见 {@link #scanReference(BufferedImage, double)}），目的是清掉早期未开去重时堆积的重复；</li>
      *   <li>比对结果按「两张图的文件名 + 最后修改时间」记进 {@link DedupCache}：四元组没变过的组合下次
      *       启动直接复用（一个像素都不用读），因此全量重扫过一遍后重启几乎瞬时完成；缓存的是<b>差异值</b>
      *       而非「是否重复」，判定仍拿本次阈值去比，改阈值也不会用错结果；</li>

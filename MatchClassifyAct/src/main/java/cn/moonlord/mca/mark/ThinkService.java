@@ -889,28 +889,30 @@ public class ThinkService {
         // 相同比例 = 交集图 100% 档覆盖率（sameCov.same100，全部样本在该像素完全一致的占比，即列表首卡
         // 「交集图 100% 覆盖率（完全一致）」角标数值）。相同比例越高说明该组截图彼此差异越小——多为同一画面反复
         // 截取（采样不足，可信度反而低）；相同比例越低说明采到了该状态不同时刻的真实差异（采样更充分）。
-        // 故已分析（产物齐全且样本未变）组合：相同比例低的靠前、高的靠后；同值按「分类标注 → 动作」文字升序。
-        // 其余（未分析 / 样本有变待重算）排后：段内先按样本数从多到少，再按「分类标注 → 动作」文字升序。
+        // 故「有产物可比」的组合（含样本有变、待重算的 —— 用 info.json 里**上一次**的相同比例，**位置不跳**，
+        // 只把它那行的 chip 显示成「需重算」，等后台重算完再按新值重排）：相同比例低的靠前、高的靠后；
+        // 同值按「分类标注 → 动作」文字升序。
+        // 其余（从未分析过、没有上一次的相同比例可比）排后：段内先按样本数从多到少，再按「分类标注 → 动作」文字升序。
         out.sort((a, b) -> {
-            boolean ad = Boolean.TRUE.equals(a.get("analyzed")) && !Boolean.TRUE.equals(a.get("stale"));
-            boolean bd = Boolean.TRUE.equals(b.get("analyzed")) && !Boolean.TRUE.equals(b.get("stale"));
+            Object ca = pixelSameRatio(a), cb = pixelSameRatio(b);
+            boolean ad = ca instanceof Number;      // 有产物且能取到相同比例（含 stale = 需重算的旧产物）
+            boolean bd = cb instanceof Number;
             if (ad != bd) {
                 return ad ? -1 : 1;
             }
             if (ad) {
-                Object ca = pixelSameRatio(a), cb = pixelSameRatio(b);
-                double x = ca instanceof Number na ? na.doubleValue() : -1d;
-                double y = cb instanceof Number nb ? nb.doubleValue() : -1d;
+                double x = ((Number) ca).doubleValue();
+                double y = ((Number) cb).doubleValue();
                 int c = Double.compare(x, y);   // 相同比例（截图差异小 = 采样不足）降序 → 升序：低者靠前
                 if (c != 0) {
                     return c;
                 }
             } else {
-                // ≥1 张样本即可后台自动分析，未分析 / 待重算的组通常是产物刷新前的瞬时状态：样本多的排前
-                int ca = ((Number) a.get("sampleCount")).intValue();
-                int cb = ((Number) b.get("sampleCount")).intValue();
-                if (ca != cb) {
-                    return Integer.compare(cb, ca);
+                // ≥1 张样本即可后台自动分析，未分析的组通常是产物刷新前的瞬时状态：样本多的排前
+                int sa = ((Number) a.get("sampleCount")).intValue();
+                int sb = ((Number) b.get("sampleCount")).intValue();
+                if (sa != sb) {
+                    return Integer.compare(sb, sa);
                 }
             }
             int c = String.valueOf(a.get("state")).compareTo(String.valueOf(b.get("state")));

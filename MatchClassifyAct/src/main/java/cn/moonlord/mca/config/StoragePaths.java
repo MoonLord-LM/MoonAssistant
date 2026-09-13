@@ -7,13 +7,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * 图片 / 数据四分区目录的统一取法（所有模块共用，避免各自拼接路径不一致）。
+ * 图片 / 数据各分区目录的统一取法（所有模块共用，避免各自拼接路径不一致）。
  *
- * <p>四个分区统一收纳在运行目录下的 {@value #ROOT_DIR}/ 里（便于整体备份 / 搬迁 / 清理），
+ * <p>各分区统一收纳在运行目录下的 {@value #ROOT_DIR}/ 里（便于整体备份 / 搬迁 / 清理），
  * 各分区目录名由 {@code capture.*-dir} 配置项给出、相对 {@value #ROOT_DIR}/ 解析，
  * 也可以直接配成绝对路径（配了绝对路径就按绝对路径用、不再拼 {@value #ROOT_DIR}/）。</p>
  *
  * <pre>
+ *   resource/cache/     截图缩略图缓存（原图同名、可随时整目录删除，见 ThumbnailCache）
  *   resource/capture/   捕获的原始截图（未标注）
  *   resource/classify/  标注后的截图 + 同名 .json 标注数据
  *   resource/summary/   汇总分析产物：&lt;分类标注&gt;/ 下对照图（15 张基础合成图 = 交集六档 same100/90/80/70/60/50
@@ -61,6 +62,10 @@ public class StoragePaths {
         return resolve(properties.getRuntimeDir());
     }
 
+    /** 截图缩略图缓存目录（原图同名的抽样小图，供按钮路径的去重预筛；见 ThumbnailCache） */
+    public Path cache() {
+        return resolve(properties.getCacheDir());
+    }
     /** 相对目录名统一挂到 {@value #ROOT_DIR}/ 下；配了绝对路径的则原样使用（Path#resolve 对绝对路径直接返回它自身） */
     private Path resolve(String name) {
         return declared(name).toAbsolutePath().normalize();

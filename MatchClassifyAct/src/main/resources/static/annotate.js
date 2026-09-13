@@ -536,7 +536,13 @@ async function commitRename(from, inp){
     for(const i of ALL){ if(i.marked && i.state === from){ i.state = to; } }
     if(DEF[from]){ DEF[to] = DEF[from]; delete DEF[from]; }   // 定义表的 key 也随改名迁移
     if(stateFilter === from){ stateFilter = to; }   // 「全部」视图正在按旧名过滤时，改完后继续按新名过滤
-    if($("stateInput").value.trim() === from){ $("stateInput").value = to; setDirty(); }
+    // 改名已在后端按新名写盘（该分类全部样本、含当前这张图），编辑面板跟着换名后面板与磁盘仍然一致，
+    // 所以绝不能置 dirty —— 否则切视图 / 换图会误弹「当前标注尚未保存」，而其实一个字都没改；
+    // 「取消修改」的还原基准一并改过来，不然改完名点它会还原成已不存在的旧分类名（再保存又建出旧分类）
+    if($("stateInput").value.trim() === from){
+      $("stateInput").value = to;
+      if(baseMark && baseMark.state === from){ baseMark.state = to; }
+    }
     rebuildStates();
     renderList();
     updateTagActive();
@@ -1544,8 +1550,9 @@ async function toggleCap(){
   capBusy = false; renderCapBtn();
 }
 
-/* 手动采集（「未标注」空列表中间按钮）：请求后端立即截一帧并做与执行模式同一套全尺寸逐像素去重
-   （与 resource/capture/、resource/classify/ 全部同尺寸图比对，差异须 > 手动保存阈值），通过即插入待标注列表并打开标注 */
+/* 手动采集（「未标注」空列表中间按钮）：请求后端立即截一帧并做与执行模式同一套去重
+   （与 resource/capture/、resource/classify/ 全部同尺寸图比对，差异须 > 手动保存阈值；
+   后端先比 resource/cache/ 的缩略图预筛、预筛不掉才全尺寸逐像素比，按钮要的是快），通过即插入待标注列表并打开标注 */
 async function capManualShot(){
   const b = $("capManualBtn");
   if(!b || b.disabled) return;
@@ -2275,9 +2282,14 @@ function renderThinkList(){
 function thinkChipFor(g){
   if(!g.canAnalyze) return { txt:"无样本", cls:"vn" };
   if(thinkRun){
+    // stage 2 = 正在刷新各 -unique 独有区图（跨分类产物：要等全部分类的基础图都生成完才开始，且任一分类的基础图
+    // 变了都会影响其它分类的独有区，故整轮要按最新基础图重算一遍）：此刻所有分类都还不能算「已计算」——
+    // 一律显示「需重算」，等这一轮跑完（thinkTaskDone → refreshThink 拿到最新产物）再按结果行显示「已计算」。
+    // 固定第一条「全部」组除外：它只有 12 张专用产物、没有独有区图（hasUnique 恒 false），不受这一轮影响。
+    if(thinkRun.stage >= 2 && !g.all) return { txt:"需重算", cls:"vs" };
     const i = thinkRun.keys.indexOf(gkey(g));
     if(i >= 0){
-      if(thinkRun.stage >= 2 || i < thinkRun.processed) return { txt:"已计算", cls:"vd" };
+      if(i < thinkRun.processed) return { txt:"已计算", cls:"vd" };
       if(i === thinkRun.processed) return { txt:"计算中…", cls:"vr" };
     }
   }
@@ -4236,21 +4248,18 @@ function optRender(){
         const scoreOf = r => r.accuracy * (100 - (Number(r.tieRate) || 0)) / 100;
         const bestAll = rated.slice().sort((a, b) => scoreOf(b) - scoreOf(a))[0];
         // 「（命中 x/能给出结果 · 判错 x · 无法区分 x）」：两个「最好」共用一套写法 —— 判错优先用后端给的 miss，
-        // 老结果没有该字段时按「可匹配样本 − 命中 − 无法区分」补算；无法区分为 0 时省掉这一项（后面的百分比也不再重复）
+        // 老结果没有该字段时按「可匹配样本 − 命中 − 无法区分」补算；无法区分**恒显示**（为 0 也写「无法区分 0」，
+        // 用户 2026-09-13 指定：两行都要能看到这一项，别因为 0 就省掉）
         const countsOf = r => "（命中 " + r.hit + "/" + optDecided(r) + " · 判错 "
           + (r.miss == null ? (r.samples - r.hit - (r.tie || 0)) : r.miss)
-          + (r.tie ? " · 无法区分 " + r.tie : "") + "）";
+          + " · 无法区分 " + (r.tie || 0) + "）";
         // 算法名可能带 & < > 等字符：这里改用 innerHTML（综合最佳那行要加粗 / 绿字），名字一律 escHtml
+        // 本次刷新 → 两个「最好」→ 上一次自动调整参数 → 需重算（用户 2026-09-13 定的顺序与条目，别再加回缓存 / 快照那几行）
         stat.innerHTML = "上次刷新完成" + fmtCostSuffix(Number(res.costMs)) + "：样本 " + res.samples + " 张 · 分类 " + res.groups + " 个" +
           (best ? "\n最高匹配正确率：" + escHtml(best.name) + " " + fmtV(best.accuracy) + countsOf(best) + optWaitTxt(best.id) : "") +
           // 综合最佳算法是主要结果（执行模式与「未标注」的智能推荐都只认它）：整段加粗 + 绿字突出（.optBest，见 annotate.css）
           (bestAll ? '\n<span class="optBest">综合最佳算法：' + escHtml(bestAll.name) + " " + fmtV(scoreOf(bestAll)) + "</span>"
             + countsOf(bestAll) + optWaitTxt(bestAll.id) : "") +
-          // 结果接的是完整缓存：三处数据都没变就直接用上次的，不必重算（缓存文件都收进「!」里的详细说明）
-          (j.cached ? "\n已恢复上次结果（数据没变即可直接用）。" : "") +
-          // 过期（三处数据有变动）：上面是变动前的结果，照样展示，同时把「需重算」说清楚（与状态条同一口径）
-          (!j.ready ? "\n需重算：已标注 / 汇总分析 / 特征验证的数据有变动，算法与特征要先按最新数据重新组合——先到「特征验证」视图跑一次，再回来点「刷新算法特征」；上面的数值与下面的结果卡都是上次的，仅供参考。"
-            : (staleRes ? "\n需重算：已标注 / 汇总分析 / 特征验证的数据有变动，上面的数值与下面的结果卡都是变动前的，仅供参考，请重新计算。" : "")) +
           // 这次调参的耗时与上面那次刷新是同一轮，只在首行报一次；权重文件路径收进「!」里的详细说明
           (j.tune && j.tune.finished ? "\n自动调整参数上一次完成：采纳 "
             + (j.tune.improved || 0) + " 处权重调整（共试探 " + (j.tune.weights || 0) + " 个权重"
@@ -4258,13 +4267,9 @@ function optRender(){
             + (j.tune.repeats ? "，另有 " + j.tune.repeats + " 遍是找到更好值后只跑随机的重试" : "")
             + (j.tune.simplified ? "，第 4 轮四舍五入微调把 " + j.tune.simplified + " 个权重换成更直白的值" : "") + "）"
             + (j.tune.stale ? "（需重算）" : "") + "。" : "") +
-          // 特征选择 + 权重数值始终另存一份最新的（后续功能 / 开发验证直接读，不必解析界面状态；文件名见「!」里的详细说明）
-          "\n特征选择与权重数值快照：每次跑完覆写最新的。" +
-          // 逐图比对结果与特征验证共用同一份：特征验证刚跑过就在内存里命中，一张都不用重比
-          (j.matrixRows || j.matrixBytes
-            ? "\n逐图比对结果缓存：与特征验证共用，没变过的图不必重比"
-              + (j.matrixRows ? "，已载入 " + j.matrixRows + " 条样本行" : "") + "。"
-            : "");
+          // 过期（三处数据有变动）：上面是变动前的结果，照样展示，同时把「需重算」说清楚（与状态条同一口径）
+          (!j.ready ? "\n需重算：已标注 / 汇总分析 / 特征验证的数据有变动，算法与特征要先按最新数据重新组合。"
+            : (staleRes ? "\n需重算：已标注 / 汇总分析 / 特征验证的数据有变动，上面的数值与下面的结果卡都是变动前的，仅供参考，请重新计算。" : ""));
       }else if(!j.ready) stat.textContent = (j.verify && j.verify.running)
         ? "特征验证正在运行，请等它结束后再回到本视图。"
         : "算法由特征验证结果组合而来：请先到「特征验证」视图完成一次验证。\n（当前已验证 " + ((j.verify && j.verify.fresh) || 0) + " / " + ((j.verify && j.verify.total) || 0) + " 个特征）";
