@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
  * <p>对比旧的“模拟拖动右缘”方案：拖动会让 MuMu 这类模拟器自行按内容比例适配
  * 高度，宽度达标但高度可能不受控（易出现黑边 / 尺寸不合规），且窗口较小时
  * 拖动可能被系统最小尺寸挡住而失效。改为 SetWindowPos 直接强制整窗外框尺寸后，
- * 无论窗口当前是大是小都能被一次设置到位，最大化窗口会自动先还原再设置。</p>
+ * 无论窗口当前是大是小都能被一次设置到位。</p>
  *
  * <p>坐标说明：JVM 启动时（{@code MatchClassifyActApplication}）已调用
  * {@link #ensureProcessDpiAware()} 把本进程设为 Per-Monitor DPI 感知，
@@ -33,9 +33,6 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 public class WindowResizer {
-
-    /** 最大化窗口还原后等待其完成重新布局再操作的时长（毫秒） */
-    private static final int RESTORE_SETTLE_MS = 400;
 
     /** SetWindowPos 后等待窗口完成重排/尺寸生效的时长（毫秒） */
     private static final int RESIZE_SETTLE_MS = 350;
@@ -55,8 +52,6 @@ public class WindowResizer {
 
     // ShowWindow 命令（jna WinUser 未完整映射 SW_* 常量，直接使用数字并注释）
     private static final int SW_SHOWMINIMIZED = 2;
-    private static final int SW_SHOWMAXIMIZED = 3;
-    private static final int SW_RESTORE = 9;
 
     /** DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2（伪句柄 -4，Win10 1607+） */
     private static final long DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4L;
@@ -93,13 +88,6 @@ public class WindowResizer {
             log.debug("窗口 [{}] 已最小化，暂不强制调整尺寸", title);
             return false;
         }
-        if (placementShowCmd(hwnd) == SW_SHOWMAXIMIZED) {
-            // 最大化窗口无法被设置成任意尺寸：先还原，待重新布局后再设置
-            log.info("窗口 [{}] 处于最大化，先还原为普通窗口再强制缩放到目标尺寸", title);
-            user32.ShowWindow(hwnd, SW_RESTORE);
-            sleep(RESTORE_SETTLE_MS);
-        }
-
         WinDef.RECT outer = new WinDef.RECT();
         if (!user32.GetWindowRect(hwnd, outer)) {
             log.warn("窗口 [{}] 读取外框尺寸失败，跳过强制缩放", title);
@@ -195,11 +183,6 @@ public class WindowResizer {
         if (show == SW_SHOWMINIMIZED) {
             log.debug("控制台窗口 [{}] 已最小化，跳过强制调整尺寸与位置", title);
             return false;
-        }
-        if (show == SW_SHOWMAXIMIZED) {
-            log.info("控制台窗口 [{}] 处于最大化，先还原为普通窗口再调整尺寸与位置", title);
-            user32.ShowWindow(hwnd, SW_RESTORE);
-            sleep(RESTORE_SETTLE_MS);
         }
         WinDef.RECT rect = new WinDef.RECT();
         if (!user32.GetWindowRect(hwnd, rect)) {

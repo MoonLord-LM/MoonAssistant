@@ -139,8 +139,6 @@ public class WindowClicker {
     private static final int SM_CYVIRTUALSCREEN = 79;
     /** 读窗口标题的缓冲长度（只在「点到谁身上了」这类错误提示里用） */
     private static final int TITLE_MAX_CHARS = 256;
-    /** 读窗口类名的缓冲长度（诊断用） */
-    private static final int CLASS_MAX_CHARS = 256;
 
     // GetAncestor 的检索标志：GA_ROOT = 返回指定窗口所属的顶层根窗口（自身已是顶层则返回自身）
     private static final int GA_ROOT = 2;
@@ -240,15 +238,10 @@ public class WindowClicker {
 
         int GetWindowText(WinDef.HWND hwnd, char[] text, int maxCount);
 
-        /** 读窗口类名（诊断用；与 {@code GetWindowText} 同理，{@code char[]} 会走 Unicode 分支）。 */
-        int GetClassNameW(WinDef.HWND hwnd, char[] text, int maxCount);
-
         // 诊断 / 对齐判断用的窗口状态查询（BOOL → boolean）
         boolean IsWindowVisible(WinDef.HWND hwnd);
 
         boolean IsIconic(WinDef.HWND hwnd);
-
-        boolean IsZoomed(WinDef.HWND hwnd);
 
         /**
          * 取<b>任意线程</b>的 GUI 状态（活动 / 焦点 / 鼠标捕获窗口）—— 诊断「窗口过程有没有把这条
@@ -410,8 +403,7 @@ public class WindowClicker {
      * <p><b>对齐</b>（MaaFramework 的 {@code SendMessageWithWindowPos}）：把窗口临时挪到「目标点正好压在
      * 当前光标下」（只挪位置，{@code SWP_NOZORDER} 不动 z 序、也不激活窗口），这样程序无论从消息
      * {@code lParam} 取坐标、还是自己去问 {@code GetCursorPos()}、还是对目标点做命中测试，读到的都是同一个点；
-     * 点完把窗口位置还原。窗口已最大化时跳过对齐 —— 挪动最大化窗口会让它复原成普通窗口（事后也还原不回
-     * 最大化状态），而「移光标」算不上不打扰用户，所以这时直接按消息坐标发送。</p>
+     * 点完把窗口位置还原。</p>
      *
      * <p>全程只发消息：不碰用户光标、不抢前台、不注入真实输入、不受遮挡影响。</p>
      */
@@ -420,13 +412,9 @@ public class WindowClicker {
         User32Mouse u = User32Mouse.INSTANCE;
         WinDef.POINT cursor = new WinDef.POINT();
         WinDef.RECT origin = new WinDef.RECT();
-        boolean zoomed = u.IsZoomed(hwnd);
-        boolean canAlign = !zoomed && u.GetCursorPos(cursor) && u.GetWindowRect(hwnd, origin);
-        String alignNote = zoomed
-                ? "，窗口已最大化，跳过对齐（直接按消息坐标发送）"
-                : "，读不到光标或窗口位置，未做对齐";
+        String alignNote = "，读不到光标或窗口位置，未做对齐";
         boolean moved = false;
-        if (canAlign) {
+        if (u.GetCursorPos(cursor) && u.GetWindowRect(hwnd, origin)) {
             // 挪窗算式：截图像素原点 = 窗口外框原点，所以把外框挪到「光标 − 目标点」= 目标点正好压在光标上
             int targetLeft = cursor.x - x, targetTop = cursor.y - y;
             moved = u.SetWindowPos(hwnd, null, targetLeft, targetTop, 0, 0, moveFlags());
@@ -451,11 +439,10 @@ public class WindowClicker {
     }
 
     /**
-     * 发完整点击消息序列（滑入移动 → 点击意图 → 左键按下 / 抬起），{@code post} 与 {@code sendmessage} 共用。
+     * 发点击消息序列（滑入移动 → 点击意图 → 左键按下 / 抬起），{@code post} 与 {@code sendmessage} 共用。
      * 只发消息：不抢前台、不动光标、不注入真实输入。
      *
-     * <p>结果里带诊断：窗口现场（类名 / 可见性 / 是否前台）＋按下时目标线程的鼠标捕获
-     * （{@link #guiStateNote}）—— 后者是「窗口过程究竟有没有把这条合成按下当输入处理」最硬的证据。</p>
+     * <p>结果里附一句诊断：<b>按下有没有被宿主处理</b>（{@link #handleNote}，查目标线程的鼠标捕获窗口）。</p>
      *
      * @param sync  true = {@code SendMessageTimeout} 同步发送（能知道目标线程有没有处理，超时即停）；
      *              false = {@code PostMessage} 异步投递（只保证消息进了队列）
@@ -494,17 +481,16 @@ public class WindowClicker {
             return messageFail(sync, mode, x, y, "WM_LBUTTONDOWN");
         }
         sleep(POST_CLICK_GAP_MS);
-        // 4) 处理判定：Qt / QWidget 系程序在「按下」时会 SetCapture，趁「抬起」还没发出查目标线程的捕获窗口
-        //    （采样点选在「抬起」之前：同步发送时按键确实还按着，异步投递也留出了处理「按下」的时间）。
-        String handlerNote = guiStateNote(hwnd) + (sync ? "" : "（异步投递，采样可能偏早）");
+        // 4) 处理判定：趁「抬起」还没发出查目标线程的捕获窗口（采样点放在抬起之前：同步发送时按键确实还按着；
+        //    异步投递只是留出了一段处理时间，采样仍可能偏早，所以文案里会带上这句说明）。
+        String note = windowTroubleNote(hwnd) + handleNote(hwnd);
         if (!sendMessage(hwnd, WM_LBUTTONUP, new WinDef.WPARAM(0), new WinDef.LPARAM(mouseLParam(cx, cy)), sync)) {
             return messageFail(sync, mode, x, y, "WM_LBUTTONUP");
         }
-        String what = sync ? "同步发送完整点击消息序列（移动→按下→抬起）"
-                : "后台投递完整点击消息序列（移动→按下→抬起）";
         return new Result(true, mode,
-                "已向窗口「" + window.getTitle() + "」" + what + "(" + x + ", " + y + ")" + extra
-                        + "（诊断：" + windowStateNote(hwnd) + "；" + handlerNote + "）",
+                "已向窗口「" + window.getTitle() + "」" + (sync ? "同步发送" : "后台投递") + "点击消息("
+                        + x + ", " + y + ")" + extra
+                        + "（" + note + (sync ? "" : "；异步投递，采样可能偏早") + "）",
                 x, y, -1, -1);
     }
 
@@ -732,54 +718,38 @@ public class WindowClicker {
         return new WinDef.HWND(Pointer.createConstant(value));
     }
 
-    /** 目标窗口的现场状态（诊断用）：类名、是否可见 / 最小化、当前是否已是前台窗口。 */
-    private String windowStateNote(WinDef.HWND hwnd) {
+    /** 窗口现场的异常项（诊断用）：只在「不可见 / 已最小化」时说一句，正常返回空串（正常状态不必占字数）。 */
+    private String windowTroubleNote(WinDef.HWND hwnd) {
         User32Mouse u = User32Mouse.INSTANCE;
-        char[] buffer = new char[CLASS_MAX_CHARS];
-        int length = u.GetClassNameW(hwnd, buffer, buffer.length);
-        String className = length > 0 ? new String(buffer, 0, length) : "读不到类名";
-        return "类名 " + className + "、窗口" + (u.IsWindowVisible(hwnd) ? "可见" : "不可见")
-                + (u.IsIconic(hwnd) ? "（已最小化）" : "") + "、"
-                + (sameWindow(topRoot(u.GetForegroundWindow()), topRoot(hwnd)) ? "已是前台窗口" : "当前非前台");
+        if (!u.IsWindowVisible(hwnd)) {
+            return "窗口不可见；";
+        }
+        return u.IsIconic(hwnd) ? "窗口已最小化；" : "";
     }
 
     /**
-     * 目标窗口所在<b>线程</b>的 GUI 状态（活动 / 焦点 / 鼠标捕获）—— 诊断「窗口过程有没有真的把这条合成消息
-     * 当成鼠标输入处理」：消息发得出去只说明「送达」，捕获窗口是不是目标窗口才是「处理」层的硬证据
-     * （Qt / QWidget 系程序在「按下」时会 {@code SetCapture}）。
+     * 这次按下有没有被窗口过程处理（诊断一句话）：消息发得出去只说明「送达」，<b>鼠标捕获</b>才是「处理」层的
+     * 证据 —— Qt / QWidget 系程序在「按下」时会 {@code SetCapture}，而捕获只可能由窗口自己的代码设置，
+     * 所以「捕获=本窗口」就说明它确实把这条合成按下当鼠标输入处理了（但这只到「处理」层，不代表会转发给引擎）。
      *
      * <p>必须走 {@code GetGUIThreadInfo} 查目标线程：{@code GetCapture()} 只返回<b>调用线程</b>的捕获窗口，
-     * 跨进程查永远是空，用它会把「目标在捕获」误报成「没人捕获」。</p>
+     * 跨进程查永远是空，用它会把「目标在捕获」误报成「没人处理」。</p>
      */
-    private String guiStateNote(WinDef.HWND hwnd) {
+    private String handleNote(WinDef.HWND hwnd) {
         WinUser.GUITHREADINFO info = new WinUser.GUITHREADINFO();
         info.cbSize = info.size();
         IntByReference pid = new IntByReference();
         int threadId = User32Mouse.INSTANCE.GetWindowThreadProcessId(hwnd, pid);
         if (threadId == 0 || !User32Mouse.INSTANCE.GetGUIThreadInfo(threadId, info)) {
-            return "目标线程 GUI 状态读不到（GetGUIThreadInfo 失败）";
+            return "读不到目标线程状态";
         }
-        String verdict;
         if (info.hwndCapture == null) {
-            verdict = "没人捕获 = 窗口过程没把这次按下当鼠标输入处理";
-        } else if (sameWindow(topRoot(info.hwndCapture), topRoot(hwnd))) {
-            // 只到「处理」层为止：宿主（Qt 系）确实把这条合成按下当鼠标输入收下了，但它未必把输入转发给引擎
-            // —— 业务还是没动就属于这种「收下了不转发」，只能换真实输入（前台可见）或模拟器自己的 adb 通道。
-            verdict = "捕获就在本窗口 = 宿主窗口确实把这次按下当输入处理了（业务仍无反应 = 宿主没把它转发给引擎）";
-        } else {
-            verdict = "捕获被别的窗口抢走 = 本窗口没在处理";
+            return "按下没人处理";
         }
-        return "目标线程 活动窗口=" + relatedTo(info.hwndActive, hwnd)
-                + "、键盘焦点=" + relatedTo(info.hwndFocus, hwnd)
-                + "、鼠标捕获=" + relatedTo(info.hwndCapture, hwnd) + "（" + verdict + "）";
-    }
-
-    /** 某个句柄与目标窗口的关系（诊断简写）：本窗口 / 无 / 别的窗口句柄。 */
-    private String relatedTo(WinDef.HWND who, WinDef.HWND target) {
-        if (who == null) {
-            return "无";
+        if (sameWindow(topRoot(info.hwndCapture), topRoot(hwnd))) {
+            return "宿主已处理按下，业务没动 = 它没转发给引擎";
         }
-        return sameWindow(topRoot(who), topRoot(target)) ? "本窗口" : "0x" + Long.toHexString(nativeValue(who));
+        return "按下被别的窗口抢走";
     }
 
     /**

@@ -4930,10 +4930,10 @@ const EXEC_MODES = ["mumu", "screen", "rawinput", "post", "sendmessage"];   // �
 /* 「执行动作」按钮的悬停说明：按当前点击方式说明实际会怎么点（与「点击方式」单选的文案同口径） */
 const EXEC_MODE_TIP = {
   mumu: "走 MuMuManager.exe 的 adb 通道注入点击，不抢鼠标前台（坐标自动减去模拟器边框偏移）",
-  screen: "做一次真实鼠标点击，要求窗口可见、不被遮挡",
-  rawinput: "注入系统级真实鼠标输入（SendInput）—— 必须前台可见：真实输入只投给光标下的窗口，目标点不能被别的窗口压住（被压住时先自动抬窗 / 挪窗化解，化解不了就取消）",
-  post: "向目标窗口后台投递完整点击消息序列：滑入移动→按下→抬起，全程不抢前台、不动光标（结果里附带诊断：窗口类名 / 可见性 / 按下时的鼠标捕获）",
-  sendmessage: "先把窗口挪到鼠标处对齐（最大化时跳过），再用同步消息发完整点击序列，发完还原窗口位置 —— 同样只发消息、不抢前台、不动光标"
+  screen: "做一次真实鼠标点击：点击前先把窗口抢到前台并确认前台焦点已归它，抢不到就取消本次点击；要求窗口可见、不被遮挡",
+  rawinput: "注入系统级真实鼠标输入（SendInput）—— 必须前台可见：真实输入只投给光标下的窗口，目标点不能被别的窗口压住（被压住时先自动抬窗 / 挪窗化解，化解不了就取消）；点击前不抢前台，但真实点击会让 Windows 把该窗口激活，点完它照样会到前台",
+  post: "向目标窗口后台投递点击消息序列：滑入移动→按下→抬起，全程不抢前台、不动光标（结果里附一句诊断：按下有没有被宿主处理）",
+  sendmessage: "先把窗口挪到鼠标处对齐，再用同步消息发完整点击序列，发完还原窗口位置 —— 同样只发消息、不抢前台、不动光标"
 };
 function execModeTip(m){ return EXEC_MODE_TIP[m] || ""; }
 async function execSyncStatus(){
@@ -4954,6 +4954,7 @@ function execApplyMode(mode){
 async function execRefreshOnce(){
   const b = $("execRefresh");
   if(!b || b.disabled) return;
+  execActNextCancel();                                // 已经在手动识别：作废「执行动作」之后那轮待办，避免同一帧识别两次
   execPending = true;                                 // 本轮识别在途：期间中央保持「正在截图识别…」
   b.disabled = true;
   if($("execAct")) $("execAct").disabled = true;      // 识别进行中暂时不可执行，避免对旧画面误点
@@ -5115,7 +5116,7 @@ function renderExecActBtn(j, clickable){
   b.disabled = !clickable || execActBusy;
   b.textContent = "执行动作";
   b.title = clickable
-      ? ("直接按右侧识别结果发送一次点击，不再重新截图识别（画面已变化请先点「立即识别」）："
+      ? ("按右侧识别结果发送一次点击，点完自动等 3 秒游戏响应再识别下一轮（不用再点「立即识别」；期间本按钮不可点）："
           + execModeTip(execClickMode))
       : "识别到「鼠标点击」动作后按钮可用，点击坐标会标在画面上";
 }
@@ -5359,10 +5360,31 @@ function renderExecMarkers(){
   }
 }
 
+/* ---- 手动「执行动作」之后的自动下一轮 ----
+   点一次「执行动作」不必再手动点「立即识别」：动作发出后先留 3 秒游戏响应时间（与自动循环同口径），
+   再自动跑一轮截图识别，把点击后的新画面 / 新结果带回页面。
+   倒计时期间任何新的手动识别、开启自动识别、离开执行模式都会作废这次待办（execActNextSeq 代序号）。 */
+let execActNextSeq = 0;
+function execActNextCancel(){ execActNextSeq++; }
+async function execActNextRound(){
+  const seq = ++execActNextSeq;
+  const head = "已点击（" + execModeZh(execClickMode) + "）";
+  for(let i = 3; i >= 1; i--){
+    if(seq !== execActNextSeq || appMode !== "exec") return;
+    execAutoStatus(head + "<b>" + i + " 秒后开始下一轮…</b>");
+    await execSleep(1000);
+  }
+  if(seq !== execActNextSeq || appMode !== "exec") return;
+  execAutoStatus(head + "<b>正在截图识别下一轮…</b>");
+  await execRefreshOnce();                       // 复用「立即识别」同一套流程（画面 / 右栏 / toast 一起刷新）
+  if(!execAutoOn) execAutoStatus("");            // 识别完成：清掉这句过程提示（期间开了自动循环就让它的提示留着）
+}
+
 /* ---- 触发执行（发送鼠标点击） ---- */
 async function execActNow(){
   const b = $("execAct");
   if(!b || b.disabled || execActBusy) return;
+  execActNextCancel();          // 连点：作废上一次「执行动作」留下的下一轮倒计时，只按最后一次算
   execActBusy = true;
   b.disabled = true;
   b.textContent = "正在发送点击…";
@@ -5373,7 +5395,8 @@ async function execActNow(){
   else if(j.ok){ toast("已执行：" + j.message, "ok"); }
   else { toast("无法执行：" + (j.message || "未知原因"), "err"); }
   renderExecActBtn(execLatest || { recognized:false }, false);
-  await execLoadLatest();       // 同步展示当前结果（点击不触发新识别，画面保持原样供核对）
+  await execLoadLatest();       // 同步展示当前结果（点击本身不产生新识别，先把点击后的状态对上）
+  if(j && j.ok) await execActNextRound();   // 点击已发出：接下轮识别，把游戏响应后的新画面带回来
 }
 
 /* ---- 模式切换 / 轮询入口（单次识别，无后台循环） ---- */
@@ -5426,6 +5449,7 @@ function execAutoSetManual(locked){
 }
 function execAutoStop(){
   if(!execAutoOn) return;
+  execActNextCancel();                 // 停自动识别：手动的「下一轮」倒计时一并作废，避免两套流程抢状态行
   execAutoOn = false;
   execAutoSeq++;                       // 让仍在途的旧轮 await 返回后自弃退出
   execAutoSetManual(false);
@@ -5438,6 +5462,7 @@ function execAutoToggle(){
   if(execAutoOn){ execAutoStop(); return; }
   execAutoOn = true;
   execAutoRound = 0;
+  execActNextCancel();                 // 开自动识别：手动的「下一轮」倒计时作废（循环自己会接下一轮）
   execAutoSeq++;
   execAutoBtnUi();
   execAutoSetManual(true);             // 循环期间禁用手动操作，避免与自动点击抢跑

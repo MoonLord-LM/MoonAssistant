@@ -405,7 +405,7 @@ public class WindowCaptureTask implements ApplicationRunner {
                 "截图任务已自动暂停：窗口 [%s] 连续 %d 次被强制调整尺寸后，截图仍为 %dx%d，\n"
                         + "窗口大小没有任何变化，已判定该窗口无法被程序调整尺寸。\n"
                         + "\n请检查：\n"
-                        + "1) 窗口是否被系统/目标程序锁定了大小（固定尺寸、最大化或最小化中，或未完整显示在屏幕内）；\n"
+                        + "1) 窗口是否被系统/目标程序锁定了大小（固定尺寸或最小化中，或未完整显示在屏幕内）；\n"
                         + "2) 目标程序是否支持被缩放——部分模拟器需在设置里把分辨率和方向设为 %dx%d 横屏。\n"
                         + "\n处理完成后，点击右上角「自动采集」即可重新开始。",
                 window.getTitle(), SIZE_NO_CHANGE_AUTO_STOP_TIMES, imageW, imageH,
