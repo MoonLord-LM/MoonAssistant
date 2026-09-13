@@ -78,13 +78,16 @@ public class ExecuteProperties {
      *       （见 {@link #rawinputAutoExpose}），点击完成即还原窗口状态，全部失败才取消本次点击；</li>
      *   <li>{@code post} —— 后台消息：向目标窗口投递完整点击消息序列（3 次 {@code WM_MOUSEMOVE}
      *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}，
-     *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台/可见、不抢占用户焦点。
-     *       比只发按下/抬起更易被普通桌面程序接受；游戏 / 模拟器多数仍忽略合成消息；</li>
-     *   <li>{@code sendmessage} —— 后台消息（挪窗）：{@code post} 的「同步 + 挪窗对齐」版，对应 MaaFramework 的
-     *       {@code SendMessageWithWindowPos} —— 发送前把窗口临时挪一下，让目标点正好落在当前光标位置
-     *       （发完立即还原位置），再用 {@code SendMessageTimeout} 同步发送同一套消息序列。
-     *       专治「不认消息坐标、自己去问 {@code GetCursorPos()} 或对目标点做命中测试」的程序；
-     *       同样不碰用户光标、不需要前台、不受遮挡影响，代价是窗口短暂闪一下。</li>
+     *       客户区坐标 = 图片像素 − 标题栏/边框偏移），不要求窗口在前台 / 可见、不抢焦点、不动光标。
+     *       结果与日志里带<b>诊断信息</b>：窗口类名、是否可见 / 最小化 / 已在前台，以及<b>按下时目标线程的
+     *       鼠标捕获</b> —— 最后这条能判定窗口过程究竟有没有真的把这次合成按下当输入处理，而不只是
+     *       「收下了消息」（收下了也不代表会转发给引擎），点不动时据此判断该换哪种方式；</li>
+     *   <li>{@code sendmessage} —— 后台消息（挪窗）：{@code post} 的「同步 + 挪窗对齐」版。
+     *       发之前把窗口临时挪到「目标点正好压在光标下」（对应 MaaFramework 的
+     *       {@code SendMessageWithWindowPos}：只挪位置、点完还原、不碰用户光标），这样程序无论从消息坐标、
+     *       {@code GetCursorPos()} 还是对目标点的命中测试看，读到的都是同一个点；随后用
+     *       {@code SendMessageTimeout} <b>同步</b>发同一套消息序列（超时即停，能知道目标线程有没有处理）。
+     *       窗口已最大化时跳过对齐（挪动它会让最大化状态复原）。</li>
      * </ul>
      */
     private String clickMode = "mumu";

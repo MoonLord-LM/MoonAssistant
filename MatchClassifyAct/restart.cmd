@@ -1,4 +1,5 @@
 @echo off
+chcp 65001
 rem ============================================================
 rem  MCA control service : START / RESTART helper
 rem
@@ -13,6 +14,14 @@ rem
 rem  Runtime logs: log\std.log / log\error.log  (under log\ folder)
 rem ============================================================
 setlocal EnableExtensions
+
+whoami /groups 2>nul | findstr /c:"S-1-16-12288" >nul 2>&1
+if errorlevel 1 (
+    echo [restart] 需要管理员权限
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs"
+    exit /b 0
+)
+
 cd /d "%~dp0"
 
 set "JDK17=C:\Program Files\Eclipse Adoptium\jdk-17.0.11.9-hotspot"
@@ -41,7 +50,6 @@ if "%JAVA_BIN%"=="java" (
     java -version >nul 2>nul || ( echo [restart] no usable java found, set JDK17 path in this script. & exit /b 1 )
 )
 
-rem  Xmx24g：给软引用像素缓存（产物 + resource/classify 原图，约 5.5GB+ 规模）充足堆空间、平时全部驻留免重解码；内存吃紧时由 JVM 的 GC 自动回收缓存条目，不提供任何手动缓存清理。
 echo [restart] starting service (hidden console, logs in log\std.log and log\error.log) ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$base='%~dp0'; New-Item -ItemType Directory -Force -Path ($base+'log') | Out-Null; Start-Process -FilePath '%JAVA_BIN%' -ArgumentList '-Xmx24g','-Dfile.encoding=UTF-8','-jar','target\MatchClassifyAct-0.0.1-SNAPSHOT.jar' -WorkingDirectory $base -WindowStyle Hidden -RedirectStandardOutput ($base+'log\std.log') -RedirectStandardError ($base+'log\error.log')"
 

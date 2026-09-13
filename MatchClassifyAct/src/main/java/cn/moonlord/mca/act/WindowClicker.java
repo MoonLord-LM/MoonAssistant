@@ -8,6 +8,7 @@ import com.sun.jna.Structure;
 import com.sun.jna.platform.win32.BaseTSD;
 import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.WinDef;
+import com.sun.jna.platform.win32.WinUser;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 import com.sun.jna.win32.StdCallLibrary;
@@ -46,15 +47,13 @@ import java.util.concurrent.TimeUnit;
  *       不切换前台、也不等待前台；被别的窗口压住时按「抬窗 → 抢前台 → 临时置顶 → 临时挪到光标处」
  *       逐级化解遮挡（见 {@link #ensureVisible}，可用 {@code execute.rawinput-auto-expose} 关闭），
  *       点击完成即还原窗口状态；全部失败才取消本次点击；</li>
- *   <li>{@code post}：后台消息。向目标窗口投递一条与真实鼠标路径一致的消息序列：先 3 次
- *       {@code WM_MOUSEMOVE} 模拟滑入轨迹、再 {@code WM_MOUSEACTIVATE} 声明点击意图（是否激活由窗口决定）、
- *       最后 {@code WM_LBUTTONDOWN}/{@code WM_LBUTTONUP}（客户区坐标 = 图片像素 − 标题栏 / 边框偏移）。
- *       不需要窗口在前台、不抢占用户鼠标，比只发「按下/抬起」更易被普通桌面程序接受；
- *       游戏 / 模拟器仍多数会忽略合成消息；</li>
- *   <li>{@code sendmessage}：后台消息（挪窗）。是 {@code post} 的「同步 + 挪窗对齐」版，对应 MaaFramework 的
- *       {@code SendMessageWithWindowPos}：发送前先把窗口临时挪一下、让目标点正好落在当前光标位置，再用
- *       {@code SendMessageTimeout} <b>同步</b>发送同一套点击消息序列，发完把窗口位置还原。
- *       不碰用户光标、不需要前台、不受遮挡影响；代价是窗口会短暂闪一下。</li>
+ *   <li>{@code post}：后台消息。异步投递一条与真实鼠标路径一致的消息序列：3 次 {@code WM_MOUSEMOVE}
+ *       滑入轨迹 → {@code WM_MOUSEACTIVATE} 点击意图 → {@code WM_LBUTTONDOWN / WM_LBUTTONUP}
+ *       （客户区坐标 = 图片像素 − 标题栏 / 边框偏移）。全程只发消息：不抢前台、不动光标、不注入真实输入。
+ *       比只发「按下 / 抬起」更易被普通桌面程序接受，游戏 / 模拟器多会忽略；</li>
+ *   <li>{@code sendmessage}：后台消息（挪窗）。{@code post} 的「同步 + 挪窗对齐」版（MaaFramework 的
+ *       {@code SendMessageWithWindowPos}）：发之前把窗口临时挪到「目标点正好压在光标下」，再用
+ *       {@code SendMessageTimeout} <b>同步</b>发同一套消息序列，发完还原窗口位置。同样只发消息。</li>
  * </ul>
  */
 @Slf4j
@@ -115,13 +114,14 @@ public class WindowClicker {
         return "前台点击：真实鼠标输入，需要窗口可见、不被遮挡";
     }
 
-    // Windows SDK 鼠标消息 / 事件常量（JNA 平台库未映射这些数值，直接按 SDK 定义）
+    // Windows SDK 鼠标消息常量（JNA 平台库未映射这些数值，直接按 SDK 定义）
     private static final int WM_MOUSEMOVE = 0x0200;
     private static final int WM_LBUTTONDOWN = 0x0201;
     private static final int WM_LBUTTONUP = 0x0202;
     private static final int WM_MOUSEACTIVATE = 0x0021;
+    /** 命中测试码「客户区」（只用于 {@link #activateLParam()} 里 WM_MOUSEACTIVATE 的 lParam 低位）。 */
+    private static final int HTCLIENT = 0x0001;
     private static final int MK_LBUTTON = 0x0001;
-    private static final int HTCLIENT = 0x0001;   // 命中测试码：客户区（WM_MOUSEACTIVATE 的 LOWORD）
     private static final int MOUSEEVENTF_LEFTDOWN = 0x0002;
     private static final int MOUSEEVENTF_LEFTUP = 0x0004;
 
@@ -139,9 +139,12 @@ public class WindowClicker {
     private static final int SM_CYVIRTUALSCREEN = 79;
     /** 读窗口标题的缓冲长度（只在「点到谁身上了」这类错误提示里用） */
     private static final int TITLE_MAX_CHARS = 256;
+    /** 读窗口类名的缓冲长度（诊断用） */
+    private static final int CLASS_MAX_CHARS = 256;
 
     // GetAncestor 的检索标志：GA_ROOT = 返回指定窗口所属的顶层根窗口（自身已是顶层则返回自身）
     private static final int GA_ROOT = 2;
+
     // 前台切换轮询 GetForegroundWindow 的间隔（毫秒）
     private static final int FOREGROUND_POLL_MS = 40;
     // 前台抬窗失败后的重试节奏：每 300ms 再 SetForegroundWindow 一次（首次失效时偶有二次成功的窗口）
@@ -236,6 +239,23 @@ public class WindowClicker {
         int GetSystemMetrics(int nIndex);
 
         int GetWindowText(WinDef.HWND hwnd, char[] text, int maxCount);
+
+        /** 读窗口类名（诊断用；与 {@code GetWindowText} 同理，{@code char[]} 会走 Unicode 分支）。 */
+        int GetClassNameW(WinDef.HWND hwnd, char[] text, int maxCount);
+
+        // 诊断 / 对齐判断用的窗口状态查询（BOOL → boolean）
+        boolean IsWindowVisible(WinDef.HWND hwnd);
+
+        boolean IsIconic(WinDef.HWND hwnd);
+
+        boolean IsZoomed(WinDef.HWND hwnd);
+
+        /**
+         * 取<b>任意线程</b>的 GUI 状态（活动 / 焦点 / 鼠标捕获窗口）—— 诊断「窗口过程有没有把这条
+         * 合成按下真的当输入处理」。注意不能用 {@code GetCapture()}：它只返回<b>调用线程</b>的捕获窗口，
+         * 问别的进程永远是空。
+         */
+        boolean GetGUIThreadInfo(int idThread, WinUser.GUITHREADINFO gui);
     }
 
     /**
@@ -300,7 +320,7 @@ public class WindowClicker {
             return mumuClick(x, y);
         }
         if (MODE_RAW_INPUT.equalsIgnoreCase(mode)) {
-            return rawInputClick(window, x, y);
+            return injectRealClick(window, x, y);
         }
         if (MODE_SEND_MESSAGE.equalsIgnoreCase(mode)) {
             return sendMessageClick(window, x, y);
@@ -379,60 +399,67 @@ public class WindowClicker {
         return output.length() <= MUMU_OUTPUT_MAX ? output : "…" + output.substring(output.length() - MUMU_OUTPUT_MAX);
     }
 
-    /** {@code post}（后台消息）：异步投递完整点击消息序列，不等窗口处理。 */
+    /** {@code post}（后台消息）：异步投递完整点击消息序列，不等窗口处理（结果里的诊断见 {@link #messageSequence}）。 */
     private Result postClick(WindowInfo window, int x, int y) {
         return messageSequence(window, x, y, false, MODE_POST, "");
     }
 
     /**
-     * {@code sendmessage}（后台消息 · 挪窗）：MaaFramework 的 {@code SendMessageWithWindowPos} 同款做法 ——
-     * 发送前把<b>窗口</b>临时挪一下，让目标点正好落在<b>当前光标</b>位置上（发完立即把位置还原），
-     * 再用 {@code SendMessageTimeout} <b>同步</b>发送与 {@code post} 同一套点击消息序列。
+     * {@code sendmessage}（后台消息 · 挪窗）：{@code post} 的「同步 + 挪窗对齐」版。
      *
-     * <p>为什么除了发消息还要挪窗：有一类程序不认消息里带的坐标，而是自己去问 {@code GetCursorPos()}、
-     * 或者对目标点做命中测试来判断「这次点击是不是真的落在我身上」，光发消息它就不理。把窗口挪到光标处之后，
-     * 光标真的压在目标点上（消息里的客户区坐标照样一致），这类检查就都通过了。</p>
+     * <p><b>对齐</b>（MaaFramework 的 {@code SendMessageWithWindowPos}）：把窗口临时挪到「目标点正好压在
+     * 当前光标下」（只挪位置，{@code SWP_NOZORDER} 不动 z 序、也不激活窗口），这样程序无论从消息
+     * {@code lParam} 取坐标、还是自己去问 {@code GetCursorPos()}、还是对目标点做命中测试，读到的都是同一个点；
+     * 点完把窗口位置还原。窗口已最大化时跳过对齐 —— 挪动最大化窗口会让它复原成普通窗口（事后也还原不回
+     * 最大化状态），而「移光标」算不上不打扰用户，所以这时直接按消息坐标发送。</p>
      *
-     * <p>与 {@code rawinput} 的「临时挪到光标处」是同一手法，区别在注入的东西：那边注入的是真实输入
-     * （{@code SendInput}），所以要事先算好遮挡；这边注入的是合成消息（{@code SendMessage}），
-     * 因此不碰用户光标、不需要前台、也不受遮挡影响。代价是窗口会短暂闪一下（挪 + 还原），
-     * 点击期间（约两百毫秒）鼠标停在目标点上。</p>
+     * <p>全程只发消息：不碰用户光标、不抢前台、不注入真实输入、不受遮挡影响。</p>
      */
     private Result sendMessageClick(WindowInfo window, int x, int y) {
         WinDef.HWND hwnd = window.getHwnd();
         User32Mouse u = User32Mouse.INSTANCE;
         WinDef.POINT cursor = new WinDef.POINT();
         WinDef.RECT origin = new WinDef.RECT();
-        if (!u.GetCursorPos(cursor)) {
-            return new Result(false, MODE_SEND_MESSAGE,
-                    "读不到当前光标位置（挪窗对齐要用它），本次点击已取消", x, y, -1, -1);
-        }
-        if (!u.GetWindowRect(hwnd, origin)) {
-            return new Result(false, MODE_SEND_MESSAGE, "无法读取窗口屏幕位置（窗口可能已销毁）", x, y, -1, -1);
-        }
-        // 挪窗算式：截图像素原点 = 窗口外框原点，所以把外框挪到「光标 − 目标点」= 目标点正好压在光标上
-        int targetLeft = cursor.x - x, targetTop = cursor.y - y;
-        // 只挪位置：不动 z 序 / 大小，也不激活窗口（点击完成后同样只把位置还原）
-        int moveFlags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
-        if (!u.SetWindowPos(hwnd, null, targetLeft, targetTop, 0, 0, moveFlags)) {
-            return new Result(false, MODE_SEND_MESSAGE,
-                    "SetWindowPos 失败（无法把窗口挪到光标处），本次点击已取消", x, y, -1, -1);
+        boolean zoomed = u.IsZoomed(hwnd);
+        boolean canAlign = !zoomed && u.GetCursorPos(cursor) && u.GetWindowRect(hwnd, origin);
+        String alignNote = zoomed
+                ? "，窗口已最大化，跳过对齐（直接按消息坐标发送）"
+                : "，读不到光标或窗口位置，未做对齐";
+        boolean moved = false;
+        if (canAlign) {
+            // 挪窗算式：截图像素原点 = 窗口外框原点，所以把外框挪到「光标 − 目标点」= 目标点正好压在光标上
+            int targetLeft = cursor.x - x, targetTop = cursor.y - y;
+            moved = u.SetWindowPos(hwnd, null, targetLeft, targetTop, 0, 0, moveFlags());
+            alignNote = moved
+                    ? "，已把窗口挪到光标处对齐（点完还原位置）"
+                    + (awaitWindowAt(hwnd, targetLeft, targetTop) ? ""
+                    : "（提示：未能确认窗口挪到位 —— 可能被系统限制移动，消息坐标不受影响）")
+                    : "，挪窗对齐失败（可能被系统限制移动），按窗口原位置发送消息";
         }
         try {
-            boolean at = awaitWindowAt(hwnd, targetLeft, targetTop);
-            return messageSequence(window, x, y, true, MODE_SEND_MESSAGE,
-                    at ? "" : "（提示：未能确认窗口挪到位 —— 可能已最大化或被系统限制移动，消息坐标不受影响）");
+            return messageSequence(window, x, y, true, MODE_SEND_MESSAGE, alignNote);
         } finally {
-            u.SetWindowPos(hwnd, null, origin.left, origin.top, 0, 0, moveFlags);
+            if (moved) {
+                u.SetWindowPos(hwnd, null, origin.left, origin.top, 0, 0, moveFlags());
+            }
         }
     }
 
+    /** 挪窗对齐 / 还原共用的 {@code SetWindowPos} 标志：只挪位置，不动 z 序 / 大小、不激活窗口、不改 owner 的 z 序。 */
+    private static int moveFlags() {
+        return SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    }
+
     /**
-     * 发完整点击消息序列（滑入移动 → 激活意图 → 左键按下 / 抬起），{@code post} 与 {@code sendmessage} 共用。
+     * 发完整点击消息序列（滑入移动 → 点击意图 → 左键按下 / 抬起），{@code post} 与 {@code sendmessage} 共用。
+     * 只发消息：不抢前台、不动光标、不注入真实输入。
+     *
+     * <p>结果里带诊断：窗口现场（类名 / 可见性 / 是否前台）＋按下时目标线程的鼠标捕获
+     * （{@link #guiStateNote}）—— 后者是「窗口过程究竟有没有把这条合成按下当输入处理」最硬的证据。</p>
      *
      * @param sync  true = {@code SendMessageTimeout} 同步发送（能知道目标线程有没有处理，超时即停）；
      *              false = {@code PostMessage} 异步投递（只保证消息进了队列）
-     * @param extra 追加到成功文案末尾的补充说明（不需要时传空串）
+     * @param extra 追加到成功文案里的模式特有说明（不需要时传空串）
      */
     private Result messageSequence(WindowInfo window, int x, int y, boolean sync, String mode, String extra) {
         WinDef.HWND hwnd = window.getHwnd();
@@ -452,29 +479,32 @@ public class WindowClicker {
             int mx = (int) Math.round(cx * (double) i / POST_MOVE_STEPS);
             int my = (int) Math.round(cy * (double) i / POST_MOVE_STEPS);
             if (!sendMessage(hwnd, WM_MOUSEMOVE, new WinDef.WPARAM(0), new WinDef.LPARAM(mouseLParam(mx, my)), sync)) {
-                return messageFail(sync, mode, x, y);
+                return messageFail(sync, mode, x, y, "第 " + i + "/" + POST_MOVE_STEPS + " 条 WM_MOUSEMOVE");
             }
             sleep(POST_MOVE_STEP_MS);
         }
-        // 2) 激活意图探测：声明「本次按下本应激活该窗口」，窗口内部决定是否激活
-        //    （自绘控件若返回 MA_NOACTIVATE 即保持后台、不抢前台；无法强制其返回值）。
+        // 2) 点击意图：声明「本次按下本应激活该窗口」，窗口内部决定是否激活（合成消息不会真的激活窗口）
         long top = Pointer.nativeValue(hwnd.getPointer());   // wParam = 顶层窗口句柄值
         if (!sendMessage(hwnd, WM_MOUSEACTIVATE, new WinDef.WPARAM(top), new WinDef.LPARAM(activateLParam()), sync)) {
-            return messageFail(sync, mode, x, y);
+            return messageFail(sync, mode, x, y, "WM_MOUSEACTIVATE");
         }
         sleep(POST_MOVE_STEP_MS);
         // 3) 左键按下 / 抬起（客户区坐标）
         if (!sendMessage(hwnd, WM_LBUTTONDOWN, new WinDef.WPARAM(MK_LBUTTON), new WinDef.LPARAM(mouseLParam(cx, cy)), sync)) {
-            return messageFail(sync, mode, x, y);
+            return messageFail(sync, mode, x, y, "WM_LBUTTONDOWN");
         }
         sleep(POST_CLICK_GAP_MS);
+        // 4) 处理判定：Qt / QWidget 系程序在「按下」时会 SetCapture，趁「抬起」还没发出查目标线程的捕获窗口
+        //    （采样点选在「抬起」之前：同步发送时按键确实还按着，异步投递也留出了处理「按下」的时间）。
+        String handlerNote = guiStateNote(hwnd) + (sync ? "" : "（异步投递，采样可能偏早）");
         if (!sendMessage(hwnd, WM_LBUTTONUP, new WinDef.WPARAM(0), new WinDef.LPARAM(mouseLParam(cx, cy)), sync)) {
-            return messageFail(sync, mode, x, y);
+            return messageFail(sync, mode, x, y, "WM_LBUTTONUP");
         }
-        String what = sync ? "挪窗对齐后同步发送完整点击消息序列（移动→按下→抬起）"
+        String what = sync ? "同步发送完整点击消息序列（移动→按下→抬起）"
                 : "后台投递完整点击消息序列（移动→按下→抬起）";
         return new Result(true, mode,
-                "已向窗口「" + window.getTitle() + "」" + what + "(" + x + ", " + y + ")" + extra,
+                "已向窗口「" + window.getTitle() + "」" + what + "(" + x + ", " + y + ")" + extra
+                        + "（诊断：" + windowStateNote(hwnd) + "；" + handlerNote + "）",
                 x, y, -1, -1);
     }
 
@@ -493,12 +523,12 @@ public class WindowClicker {
         return ok != 0;
     }
 
-    /** 消息序列里某一条发不出去时的失败结果（同步 / 异步的原因分别说明）。 */
-    private Result messageFail(boolean sync, String mode, int x, int y) {
+    /** 消息序列里某一条发不出去时的失败结果（同步 / 异步的原因分别说明，并带上走到哪一条）。 */
+    private Result messageFail(boolean sync, String mode, int x, int y, String step) {
         return new Result(false, mode, sync
-                ? "同步消息未送达：目标窗口未在 " + SEND_MESSAGE_TIMEOUT_MS
+                ? "同步消息未送达（" + step + "）：目标窗口未在 " + SEND_MESSAGE_TIMEOUT_MS
                         + "ms 内处理该消息（线程忙或无响应），本次点击已取消"
-                : "后台消息序列发送失败（PostMessage 返回 false）",
+                : "后台消息序列发送失败（" + step + " 的 PostMessage 返回 false），本次点击已取消",
                 x, y, -1, -1);
     }
 
@@ -540,14 +570,15 @@ public class WindowClicker {
      * 被遮挡就先化解（抬窗 → 抢前台 → 临时置顶 → 临时挪到光标处），点击完成即还原窗口状态；全部失败才取消
      * 本次点击并说明挡着的是谁（不把真实鼠标输入发到别的窗口上）。</p>
      */
-    private Result rawInputClick(WindowInfo window, int x, int y) {
+    private Result injectRealClick(WindowInfo window, int x, int y) {
+        String mode = MODE_RAW_INPUT;
         WinDef.HWND hwnd = window.getHwnd();
         WinDef.HWND targetRoot = topRoot(hwnd);
         Exposure exposure = ensureVisible(hwnd, x, y, targetRoot);
         if (!exposure.visible) {
-            return new Result(false, MODE_RAW_INPUT,
+            return new Result(false, mode,
                     "本次点击已取消：" + exposure.reason
-                            + "。RawInput 输入是系统真实鼠标输入，Windows 只按「光标下的窗口」投递，看不见目标就只会"
+                            + "。真实鼠标输入只按「光标下的窗口」投递，看不见目标就只会"
                             + "点到上层窗口，所以这里不做乱点；可把目标窗口移到可见处，或改用「MuMu 模拟器」。",
                     x, y, -1, -1);
         }
@@ -555,7 +586,7 @@ public class WindowClicker {
         WinDef.POINT outer = windowOuterOrigin(hwnd);
         if (outer == null) {
             restoreAfterExpose(hwnd, targetRoot, exposure);
-            return new Result(false, MODE_RAW_INPUT, "无法读取窗口屏幕位置（窗口可能已销毁）", x, y, -1, -1);
+            return new Result(false, mode, "无法读取窗口屏幕位置（窗口可能已销毁）", x, y, -1, -1);
         }
         int sx = outer.x + x, sy = outer.y + y;
         User32Mouse u = User32Mouse.INSTANCE;
@@ -564,17 +595,17 @@ public class WindowClicker {
         boolean originOk = u.GetCursorPos(origin);
         try {
             if (!rawInputMove(sx, sy)) {
-                return new Result(false, MODE_RAW_INPUT, "SendInput 注入鼠标移动失败（无法把光标移到目标屏幕点）",
+                return new Result(false, mode, "SendInput 注入鼠标移动失败（无法把光标移到目标屏幕点）",
                         x, y, sx, sy);
             }
             String landNote = cursorLandNote(sx, sy);
             sleep(RAW_INPUT_MOVE_SETTLE_MS);
             if (!rawInputButton(MOUSEEVENTF_LEFTDOWN)) {
-                return new Result(false, MODE_RAW_INPUT, "SendInput 注入左键按下失败（系统未接受该事件）", x, y, sx, sy);
+                return new Result(false, mode, "SendInput 注入左键按下失败（系统未接受该事件）", x, y, sx, sy);
             }
             sleep(RAW_INPUT_CLICK_GAP_MS);
             if (!rawInputButton(MOUSEEVENTF_LEFTUP)) {
-                return new Result(false, MODE_RAW_INPUT, "SendInput 注入左键抬起失败（系统未接受该事件）", x, y, sx, sy);
+                return new Result(false, mode, "SendInput 注入左键抬起失败（系统未接受该事件）", x, y, sx, sy);
             }
             String back = "";
             if (originOk) {
@@ -583,7 +614,7 @@ public class WindowClicker {
                         ? "，点击后鼠标已移回原位 (" + origin.x + ", " + origin.y + ")"
                         : "（提示：点击已生效，但鼠标移回原位 (" + origin.x + ", " + origin.y + ") 失败）";
             }
-            return new Result(true, MODE_RAW_INPUT,
+            return new Result(true, mode,
                     "已用系统真实鼠标输入（SendInput）在屏幕坐标 (" + sx + ", " + sy + ") 注入一次左键点击"
                             + (foreground ? "，点击时该窗口已在前台"
                             : "，点击前该窗口不在前台（Windows 会按鼠标点击语义把它激活）")
@@ -699,6 +730,56 @@ public class WindowClicker {
     /** {@code SetWindowPos} 的 z 序句柄（{@code HWND_TOP} / {@code HWND_TOPMOST} / {@code HWND_NOTOPMOST} 用数值常量表示）。 */
     private static WinDef.HWND zOrder(int value) {
         return new WinDef.HWND(Pointer.createConstant(value));
+    }
+
+    /** 目标窗口的现场状态（诊断用）：类名、是否可见 / 最小化、当前是否已是前台窗口。 */
+    private String windowStateNote(WinDef.HWND hwnd) {
+        User32Mouse u = User32Mouse.INSTANCE;
+        char[] buffer = new char[CLASS_MAX_CHARS];
+        int length = u.GetClassNameW(hwnd, buffer, buffer.length);
+        String className = length > 0 ? new String(buffer, 0, length) : "读不到类名";
+        return "类名 " + className + "、窗口" + (u.IsWindowVisible(hwnd) ? "可见" : "不可见")
+                + (u.IsIconic(hwnd) ? "（已最小化）" : "") + "、"
+                + (sameWindow(topRoot(u.GetForegroundWindow()), topRoot(hwnd)) ? "已是前台窗口" : "当前非前台");
+    }
+
+    /**
+     * 目标窗口所在<b>线程</b>的 GUI 状态（活动 / 焦点 / 鼠标捕获）—— 诊断「窗口过程有没有真的把这条合成消息
+     * 当成鼠标输入处理」：消息发得出去只说明「送达」，捕获窗口是不是目标窗口才是「处理」层的硬证据
+     * （Qt / QWidget 系程序在「按下」时会 {@code SetCapture}）。
+     *
+     * <p>必须走 {@code GetGUIThreadInfo} 查目标线程：{@code GetCapture()} 只返回<b>调用线程</b>的捕获窗口，
+     * 跨进程查永远是空，用它会把「目标在捕获」误报成「没人捕获」。</p>
+     */
+    private String guiStateNote(WinDef.HWND hwnd) {
+        WinUser.GUITHREADINFO info = new WinUser.GUITHREADINFO();
+        info.cbSize = info.size();
+        IntByReference pid = new IntByReference();
+        int threadId = User32Mouse.INSTANCE.GetWindowThreadProcessId(hwnd, pid);
+        if (threadId == 0 || !User32Mouse.INSTANCE.GetGUIThreadInfo(threadId, info)) {
+            return "目标线程 GUI 状态读不到（GetGUIThreadInfo 失败）";
+        }
+        String verdict;
+        if (info.hwndCapture == null) {
+            verdict = "没人捕获 = 窗口过程没把这次按下当鼠标输入处理";
+        } else if (sameWindow(topRoot(info.hwndCapture), topRoot(hwnd))) {
+            // 只到「处理」层为止：宿主（Qt 系）确实把这条合成按下当鼠标输入收下了，但它未必把输入转发给引擎
+            // —— 业务还是没动就属于这种「收下了不转发」，只能换真实输入（前台可见）或模拟器自己的 adb 通道。
+            verdict = "捕获就在本窗口 = 宿主窗口确实把这次按下当输入处理了（业务仍无反应 = 宿主没把它转发给引擎）";
+        } else {
+            verdict = "捕获被别的窗口抢走 = 本窗口没在处理";
+        }
+        return "目标线程 活动窗口=" + relatedTo(info.hwndActive, hwnd)
+                + "、键盘焦点=" + relatedTo(info.hwndFocus, hwnd)
+                + "、鼠标捕获=" + relatedTo(info.hwndCapture, hwnd) + "（" + verdict + "）";
+    }
+
+    /** 某个句柄与目标窗口的关系（诊断简写）：本窗口 / 无 / 别的窗口句柄。 */
+    private String relatedTo(WinDef.HWND who, WinDef.HWND target) {
+        if (who == null) {
+            return "无";
+        }
+        return sameWindow(topRoot(who), topRoot(target)) ? "本窗口" : "0x" + Long.toHexString(nativeValue(who));
     }
 
     /**
