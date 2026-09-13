@@ -366,7 +366,7 @@
           title="识别到「鼠标点击」动作后可用，点击坐标会标在画面上">执行动作</button>
       </div>
       <button type="button" class="btn auto" id="execAutoBtn"
-        title="自动循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选方式动作 → 再等 3 秒游戏响应 → 下一轮。运行中再次点击即停止">开启自动识别</button>
+        title="自动识别循环：截图识别 → 显示结果并等 3 秒确认 → 按下方「点击方式」所选方式动作 → 再等 3 秒游戏响应 → 下一轮。循环跑在后端、不受本页面影响：窗口最小化或切走也继续执行（本页面只按半秒轮询显示最新状态与画面）；运行中再次点击即停止">开启自动识别</button>
       <div class="execAutoState" id="execAutoState" aria-live="polite"></div>
     </div>
 

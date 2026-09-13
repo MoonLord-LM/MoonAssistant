@@ -4927,10 +4927,9 @@ let execShownStoreBusy = false; // 当前画面上有一笔「存入」在途：
 let execPending = false;        // 是否有「立即识别 / 进入即识别」一轮在途：在途时中央保持转圈，不让占位文案覆盖
 let execScanningOn = false;     // 中央是否正处于「正在截图识别…」转圈态（轮询期间避免反复重建动画）
 let execFrameRetries = 0;       // 画面帧瞬时加载失败的重试计数（快照刚被替换时短暂出现，最多重试 3 次）
-const execPollMs = 1500;
-let execAutoOn = false;     // 自动识别循环运行中？（红色按钮开关：运行时会自动 截图→确认→动作→响应等待 循环）
-let execAutoSeq = 0;        // 自动识别「代」序号：开/关时自增，用于让停止前仍在途的旧轮自动退出
-let execAutoRound = 0;      // 自动识别已进入的轮次（让「已停止」提示也能以「第 N 轮：」开头）
+const execPollMs = 500;     // 只做展示轮询：真正的循环跑在后端线程（页面最小化 / 切走都不影响执行）
+let execAutoOn = false;     // 后端自动识别循环是否在跑（由轮询状态驱动；页面不再自己起循环）
+let execAutoStopSig = 0;    // 已展示过的停止时刻：同一份停止状态只提示一次，之后状态行让给手动的「下一轮」倒计时
 
 const execEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -5419,26 +5418,28 @@ async function execActNow(){
   if(j && j.ok) await execActNextRound();   // 点击已发出：接下轮识别，把游戏响应后的新画面带回来
 }
 
-/* ---- 模式切换 / 轮询入口（单次识别，无后台循环） ---- */
+/* ---- 模式切换 / 轮询入口（循环在后端跑，页面只轮询展示） ---- */
 function execOnModeChange(){
   if(appMode !== "exec") return;
   execPending = true;   // 进入即自动识别一轮：在途期间画面区保持转圈，避免先带回的占位快照把转圈换成误导文案
   execSyncStatus().then(async () => {
-    const shown = await execLoadLatest();      // 先展示最近一帧画面（若有），避免空窗
-    if(!shown) execShowScanning();             // 无历史画面：显示「正在截图识别…」，等待下方首次自动识别返回
-    await execRefreshOnce();                   // 进入执行模式即自动截图识别一次（已有实现）
+    const j = await execGet("/api/execute/poll");   // 先对一次后端状态：循环可能正跑着（页面曾最小化 / 刷新过）
+    const shown = execApplyPoll(j);                 // 顺带带回最近一帧画面，避免空窗
+    if(!shown) execShowScanning();             // 无历史画面：显示「正在截图识别…」，等待识别返回
+    if(!execAutoOn) await execRefreshOnce();   // 后端循环没在跑才由页面补一轮识别（在跑就交给它，不抢识别锁）
     setTimeout(execFitImage, 80);
   });
 }
 
+/* 页面展示轮询：页面不可见时不必刷新（后端照跑，恢复可见后立刻同步最新状态） */
 function execPollTick(){
   if(appMode !== "exec" || document.hidden) return;
-  execLoadLatest();               // 同步最新快照（本次页面 / 其它窗口操作产生的结果）
+  execGet("/api/execute/poll").then(execApplyPoll);
 }
 
-/* ---- 自动识别（红色测试按钮）：连续循环 = 截图识别 → 显示结果并等 3 秒确认 →
+/* ---- 自动识别（红色测试按钮）：开关跑在后端的整轮循环（截图识别 → 留确认时间 →
        按下方所选点击方式（MuMu 模拟器 / MouseEvent 前台点击 / RawInput 前台点击 / PostMessage 后台消息 /
-       PostMessage 后台消息+移动窗口）动作 → 等 3 秒游戏响应 → 下一轮 ---- */
+       PostMessage 后台消息+移动窗口）动作 → 留游戏响应时间 → 下一轮），页面只轮询展示 ---- */
 const execSleep = ms => new Promise(r => setTimeout(r, ms));
 /* 状态行（自动循环 / 手动执行后接下一轮）里用的方式中文名：与右栏「点击方式」五个选项的显示名逐字一致（用户指定） */
 const execModeZh = m => ({ mumu: "MuMu 模拟器", screen: "MouseEvent 前台点击", rawinput: "RawInput 前台点击",
@@ -5469,94 +5470,84 @@ function execAutoSetManual(locked){
   renderExecActBtn(execLatest || { recognized:false }, !locked && execIsClickable());
   renderExecSaveCap(execLatest);
 }
+/* ---- 自动识别开关：只开关后端循环，页面不再自己跑循环 ----
+   整轮「截图识别 → 确认 → 点击 → 游戏响应等待」在后端线程里（AutoExecService），
+   页面降级为观测窗口：最小化 / 切走 / 关掉都不中断执行，恢复可见后下一轮轮询即同步最新状态 */
+function execAutoRequest(on){
+  execActNextCancel();                 // 开关都作废手动的「下一轮」倒计时，避免两套流程抢状态行
+  execAutoStopSig = 0;                 // 新的开关动作：允许下一次停止提示照常展示
+  const b = $("execAutoBtn");
+  if(b) b.disabled = true;             // 防连点：等后端返回后由状态刷新按钮
+  execGet("/api/execute/auto", { method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ on: !!on }) }).then(j => {
+    if(b) b.disabled = false;
+    if(!j){ toast("自动识别开关失败：后端接口不可用", "err"); return; }
+    execApplyPoll(j);                  // 返回体与轮询同形：状态行 / 按钮 / 手动操作锁定一起刷成后端状态
+  });
+}
+/* 离开执行模式：停掉后端循环（无条件请求，幂等）——页面可能还没轮询到「正在跑」，
+   漏停会让循环在标注模式下继续截图点击 */
 function execAutoStop(){
-  if(!execAutoOn) return;
-  execActNextCancel();                 // 停自动识别：手动的「下一轮」倒计时一并作废，避免两套流程抢状态行
-  execAutoOn = false;
-  execAutoSeq++;                       // 让仍在途的旧轮 await 返回后自弃退出
-  execAutoSetManual(false);
-  execAutoBtnUi();
-  // 统一版式：灰字第一行带轮次「第 N 轮：」+ 粉字第二行（用户指定）
-  execAutoStatus("第 " + (execAutoRound || 1) + " 轮：画面与右侧结果保留"
-      + "<b>已停止自动识别。</b>");
+  execActNextCancel();
+  execAutoRequest(false);
 }
-function execAutoToggle(){
-  if(execAutoOn){ execAutoStop(); return; }
-  execAutoOn = true;
-  execAutoRound = 0;
-  execActNextCancel();                 // 开自动识别：手动的「下一轮」倒计时作废（循环自己会接下一轮）
-  execAutoSeq++;
-  execAutoBtnUi();
-  execAutoSetManual(true);             // 循环期间禁用手动操作，避免与自动点击抢跑
-  execAutoLoop();                      // 首句即「第 1 轮：正在截图识别…」，不必再写开启提示
-}
-/* 倒计时等待：把模板里的 {s} 每秒替换成剩余秒数；等待期间被停止则返回 false
-   （模板里粉色 <b> 的单独一行由 CSS `.execAutoState b{display:block}` 负责，不用写 <br>） */
-async function execAutoWait(tpl, secs, seq){
-  for(let i = secs; i >= 1; i--){
-    if(!(execAutoOn && seq === execAutoSeq)) return false;
-    execAutoStatus(tpl.split("{s}").join(String(i)));
-    await execSleep(1000);
-  }
-  return execAutoOn && seq === execAutoSeq;
-}
-async function execAutoLoop(){
-  const seq = execAutoSeq;
-  let round = 0;
-  while(execAutoOn && seq === execAutoSeq){
-    round++;
-    execAutoRound = round;             // 记住当前轮次，供「已停止」提示交代停在第几轮
-    // 1) 截图并识别：/refresh 为同步一轮，返回即「识别完成」，随后渲染画面与右侧结果
-    execAutoStatus("第 " + round + " 轮：正在截图识别");
-    const j = await execGet("/api/execute/refresh", { method:"POST" });
-    if(!(execAutoOn && seq === execAutoSeq)) return;
-    if(!j){
-      const k1 = await execAutoWait('第 ' + round + ' 轮：识别接口不可用<b>{s} 秒后重试…</b>', 3, seq);
-      if(!k1) return;
-      continue;
-    }
-    execLatest = j;
-    renderExecAll();
-    if(!execIsClickable()){
-      // 未识别 / 该分类未定义点击动作：确认时间后直接下一轮（没有动作就没有“游戏响应”等待）
-      //    简化文案：不再重复分类名与「跳过动作」—— 右栏「识别结果」已写明识别成哪个分类（用户指定）
-      const why = (j.imageWidth <= 0 && j.error)
-          ? execEsc(j.error)
-          : (j.state
-              ? (j.action === "click"
-                  ? "该分类尚无点击坐标"
-                  : "无需动作")
-              : "未识别出已标注分类（可能尚无同尺寸样本），不动作");
-      const k1 = await execAutoWait('第 ' + round + ' 轮：' + why + '<b>{s} 秒后开始下一轮…</b>', 3, seq);
-      if(!k1) return;
-      continue;
-    }
-    // 2) 识别出可点击动作：留 3 秒确认时间（可查看画面/右侧结果，随时可点按钮停止）
-    //    分类名不在状态行里重复 —— 画面准星 + 右栏「识别结果」已经写明识别成哪个分类（用户指定）
-    const keep2 = await execAutoWait('第 ' + round + ' 轮：即将点击 (' + j.left + ',' + j.top + ')'
-        + '<b>{s} 秒后按「' + execModeZh(execClickMode) + '」执行…</b>', 3, seq);
-    if(!keep2) return;
-    // 3) 按所选点击方式直接执行本轮已识别结果（后端不再重复截图识别）
-    execAutoStatus('第 ' + round + ' 轮：正在执行点击');
-    const r = await execGet("/api/execute/act", { method:"POST" });
-    await execLoadLatest();            // 同步展示最近结果（点击不产生新识别）
-    if(!(execAutoOn && seq === execAutoSeq)) return;
-    if(!r){
-      const k3 = await execAutoWait('第 ' + round + ' 轮：执行请求失败（后端不可用）<b>{s} 秒后开始下一轮…</b>', 3, seq);
-      if(!k3) return;
-    } else if(r.ok){
-      // 4) 动作完成：留 3 秒游戏响应等待时间再拍下一张（分两行：上一行交代这次点击怎么发的，下一行交代何时进下一轮）
-      //    同样不报分类名（右栏结果区已展示）
-      const k3 = await execAutoWait('第 ' + round + ' 轮：已点击（' + execModeZh(execClickMode)
-          + '）<b>{s} 秒后开始下一轮…</b>', 3, seq);
-      if(!k3) return;
-    } else {
-      const k3 = await execAutoWait('第 ' + round + ' 轮：本轮未能执行点击'
-          + (r.message ? "（" + execEsc(r.message) + "）" : "") + '<b>{s} 秒后开始下一轮…</b>', 3, seq);
-      if(!k3) return;
-    }
+function execAutoToggle(){ execAutoRequest(!execAutoOn); }
+
+/* ---- 后端循环状态的展示（由 execPollMs 轮询 /api/execute/poll 驱动） ----
+   状态行版式不变：灰字第一行「第 N 轮：」、粉字第二行（换行由 CSS `.execAutoState b{display:block}` 负责，
+   提示语里不写 <br>；灰字末尾不写「。」/「…」）。倒计时秒数同样由后端逐秒下发，页面不做本地倒计时 ——
+   页面被节流也不影响展示口径。 */
+function execAutoStateHtml(a){
+  const zh = execModeZh(a.mode || execClickMode);
+  switch(a.phase){
+    case "scan":
+      return "第 " + a.round + " 轮：正在截图识别";
+    case "waitNext":
+      return "第 " + a.round + " 轮：" + execEsc(a.why || "") + "<b>" + a.secs + " 秒后开始下一轮…</b>";
+    case "waitClick":
+      return "第 " + a.round + " 轮：即将点击 (" + a.left + "," + a.top + ")"
+          + "<b>" + a.secs + " 秒后按「" + zh + "」执行…</b>";
+    case "clicking":
+      return "第 " + a.round + " 轮：正在执行点击";
+    case "clicked":
+      return "第 " + a.round + " 轮："
+          + (a.clickOk ? ("已点击（" + zh + "）")
+                       : ("本轮未能执行点击" + (a.message ? "（" + execEsc(a.message) + "）" : "")))
+          + "<b>" + a.secs + " 秒后开始下一轮…</b>";
+    case "stopped":
+      // 同一份停止状态只提示一次：之后状态行让给手动的「下一轮」倒计时，不被每轮轮询刷回去
+      if(a.stopAt && a.stopAt !== execAutoStopSig){
+        execAutoStopSig = a.stopAt;
+        return "第 " + (a.round || 1) + " 轮：画面与右侧结果保留<b>已停止自动识别。</b>";
+      }
+      return null;
+    default:
+      return null;                     // idle：本进程还没启动过循环，不动状态行
   }
 }
+/* 把后端循环状态刷进页面：按钮文案与手动操作锁定只在「运行状态变化」时改一次，状态行按阶段持续刷新 */
+function renderExecAuto(a){
+  if(!a) return;
+  const wasOn = execAutoOn;
+  execAutoOn = !!a.on;
+  if(execAutoOn !== wasOn){
+    execAutoBtnUi();
+    execAutoSetManual(execAutoOn);     // 循环期间禁用手动识别 / 执行动作，避免与后端循环抢跑
+    if(!execAutoOn) execActNextCancel();
+  }
+  if(execAutoOn) execActNextCancel();  // 后端在跑：状态行归它，手动的「下一轮」不再接管
+  const html = execAutoStateHtml(a);
+  if(html !== null) execAutoStatus(html);
+}
+/* 一体化轮询 / 开关响应（两者返回体同形）：最新快照 + 循环状态；返回「画面区是否已展示出图片」 */
+function execApplyPoll(j){
+  if(!j) return false;
+  if(j.snapshot){ execLatest = j.snapshot; renderExecAll(); }
+  renderExecAuto(j.auto);
+  return execFrameShown();
+}
+/* 整轮循环（截图识别 → 确认 → 点击 → 游戏响应等待）现在跑在后端 AutoExecService 里：
+   页面不再有本地循环与倒计时，只按 execPollMs 轮询 /api/execute/poll 把状态渲染成上面那几句文案 */
 
 /* ---- 右侧信息栏宽度：拖拽分隔条调节（双击复位），宽度持久化到 localStorage ---- */
 (function execSideResize(){

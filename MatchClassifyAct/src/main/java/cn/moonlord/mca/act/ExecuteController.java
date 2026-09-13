@@ -21,7 +21,10 @@ import java.util.Map;
  *
  * <ul>
  *   <li>{@code GET  /api/execute/status} —— 执行参数（当前鼠标点击方式）；</li>
- *   <li>{@code POST /api/execute/refresh} —— 立即截图并识别一次（页面「立即识别」按钮与「开启自动识别」循环都调它）；</li>
+ *   <li>{@code GET  /api/execute/poll} —— 页面展示用的一体化轮询：最新快照 + 自动识别循环状态
+ *       （循环跑在后端线程，见 {@link AutoExecService}，故页面最小化 / 切走都只影响展示、不影响执行）；</li>
+ *   <li>{@code POST /api/execute/auto} —— 开关后端自动识别循环（body {@code {"on":true|false}}，返回体与 /poll 同形）；</li>
+ *   <li>{@code POST /api/execute/refresh} —— 立即截图并识别一次（页面「立即识别」按钮，以及后端循环的每轮）；</li>
  *   <li>{@code GET  /api/execute/latest} —— 最近一次识别结果快照；</li>
  *   <li>{@code GET  /api/execute/frame} —— 最近快照对应的画面 PNG（供 <img> 展示）；</li>
  *   <li>{@code POST /api/execute/act} —— 触发执行：直接按最近一次识别结果的动作/坐标发送鼠标点击（不重新截图识别；
@@ -40,6 +43,7 @@ import java.util.Map;
 public class ExecuteController {
 
     private final ExecutionService executionService;
+    private final AutoExecService autoExecService;
 
     /** 执行参数（当前鼠标点击方式）。 */
     @GetMapping("/status")
@@ -49,10 +53,35 @@ public class ExecuteController {
         return m;
     }
 
-    /** 立即截图并识别一次（后台循环未开启时也能用）。 */
+    /** 页面展示用的一体化轮询：最新快照 + 自动识别循环状态（页面只按固定间隔取它展示）。 */
+    @GetMapping("/poll")
+    public Map<String, Object> poll() {
+        return pollPayload();
+    }
+
+    /** 开关后端自动识别循环（body：{"on":true|false}，缺省 = 开启）。返回体与 /poll 同形，页面可立即按它刷新。 */
+    @PostMapping("/auto")
+    public Map<String, Object> auto(@RequestBody(required = false) Map<String, Object> body) {
+        Object on = body == null ? null : body.get("on");
+        if (on instanceof Boolean want && !want) {
+            autoExecService.stop();
+        } else {
+            autoExecService.start();
+        }
+        return pollPayload();
+    }
+
+    /** 立即截图并识别一次（页面「立即识别」按钮用；后端循环的每轮也走同一个服务方法）。 */
     @PostMapping("/refresh")
     public ExecutionService.Snapshot refresh() {
         return executionService.refreshNow();
+    }
+
+    private Map<String, Object> pollPayload() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("auto", autoExecService.status());
+        m.put("snapshot", executionService.latestSnapshot());
+        return m;
     }
 
     /** 最近一次识别结果快照。 */
