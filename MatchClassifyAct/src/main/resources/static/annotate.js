@@ -4760,8 +4760,7 @@ async function checkAppVersion(){
         if(dpAt !== lastDedupProgAt){                 // 首次见到本次启动的清理：先提示一条「开始检查」
           lastDedupProgAt = dpAt;
           showShotTip("启动重复清理：开始检查 resource/capture/ 与 resource/classify/ 的历史截图是否重复，"
-            + "逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除，"
-            + "文件名与修改时间都没变过的组合直接复用上次的比对结果、不再重复比对，请稍候…", "");
+            + "逐张全尺寸逐像素比对，与保留图不一致像素点占比 ≤ 阈值即视为重复删除", "");
         }
         dedupProg = { at:dpAt, done:Number(dp.done)||0, total:Number(dp.total)||0,
                       current:dp.current || "", compared:Number(dp.compared)||0, reused:Number(dp.reused)||0 };

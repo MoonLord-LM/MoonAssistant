@@ -34,7 +34,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -111,10 +110,9 @@ public class ScreenCaptureService {
      */
     private final Map<String, Reference> referenceCache = new LinkedHashMap<>(256, 0.75f, true);
 
-    /** 「启动历史重复清理 + 基准预热」完成的并发门闩：完成前截图去重判定等待，保证开启截图首轮即与清理后的全量参考比较 */
-    private final CountDownLatch referenceSeeded = new CountDownLatch(1);
-
-    /** 保护 {@link #referenceCache}：预热写入 / 判定读写 / 保存后注册共用 */
+    /** 保护 {@link #referenceCache}：判定读写 / 保存后注册 / 启动清理收尾安装保留集共用。
+     *  刻意只做「短临界区」：启动历史重复清理不再整段持锁（见 {@link #startupDedupAndSeed()}），
+     *  所以任何入口都不会被它挡住。 */
     private final Object referenceLock = new Object();
 
     /** 上次全量枚举时 resource/capture/ 与 resource/classify/ 两个基准目录的修改时间：目录文件集合（增/删/移入）未变则跳过磁盘全量枚举 */
@@ -254,14 +252,17 @@ public class ScreenCaptureService {
     }
 
     /**
-     * 在独立后台线程执行「历史重复清理 → 去重基准预热」，由 {@link StartupDedupCleaner}
+     * 在独立后台线程执行「历史重复清理 → 去重基准安装」，由 {@link StartupDedupCleaner}
      * 在应用就绪（ApplicationReadyEvent，晚于全部 ApplicationRunner）后调用。
-     * 任务不阻塞启动；截图去重判定会在开启截图前
-     * 经 {@link #referenceSeeded} 等待本次任务完成，因此不会与清理阶段的文件删除并发。
+     *
+     * <p>任务自成一体：不阻塞启动，也<b>不让任何其它功能等它</b> —— 线程取最低优先级；清理全程不持
+     * {@link #referenceLock}（只在收尾把保留集换成基准时短暂持锁），因此运行期判定 / 页面按钮 /
+     * 标注 / 汇总分析 / 截图循环随时可用。</p>
      */
     void runStartupDedupAndSeedInBackground() {
         Thread t = new Thread(this::startupDedupAndSeed, "mca-startup-dedup");
         t.setDaemon(true);
+        t.setPriority(Thread.MIN_PRIORITY);   // 后台杂活：与前台功能抢 CPU 时让路（只影响快慢，不影响判定）
         t.start();
     }
 
@@ -275,45 +276,50 @@ public class ScreenCaptureService {
                     ? Math.min(autoThreshold, manualThreshold)
                     : Math.max(autoThreshold, manualThreshold);
             if (threshold <= 0) {
-                log.info("自动截图去重阈值 {}% 与手动保存去重阈值 {}% 均 ≤ 0：去重关闭，跳过启动历史重复清理与基准预热",
+                log.info("自动截图去重阈值 {}% 与手动保存去重阈值 {}% 均 ≤ 0：去重关闭，跳过启动历史重复清理与基准安装",
                         autoThreshold, manualThreshold);
                 return;
             }
+            long started = System.nanoTime();
+            long startedAt = System.currentTimeMillis();
+            // 先置进行态快照：页面据此在扫描期间显示一直刷新的进度（含已耗时）
+            startupDedupProgress = new StartupDedupProgress(startedAt, 0, 0, "", 0, 0, 0, 0L, true);
+            log.info("启动历史重复清理：开始检查 resource/capture/ + resource/classify/ 的全部历史截图重复"
+                    + "（不一致像素点占比 ≤ 阈值 {}% 即视为重复删除，逐像素全尺寸比对；"
+                    + "文件名 + 修改时间都没变过的组合直接复用上次的比对结果）", threshold);
+            // 整段清理不持 referenceLock：只做磁盘删除与 DedupCache 读写，运行期判定 / 页面按钮不必等它。
+            // 清理只动本次开始时快照到的文件（期间新保存的截图不受影响），删掉的重复图由下次枚举基准时剔除。
+            DedupResult result = dedupeHistory(threshold, startedAt);
+            long costMs = (System.nanoTime() - started) / 1_000_000;
+            int scanned = result.removed() + result.kept().size();
+            // 收尾：running=false 让页面撤掉进度提示，结果由下方 notice 给出
+            startupDedupProgress = new StartupDedupProgress(startedAt, scanned, scanned, "",
+                    result.compared(), result.reused(), result.removed(), costMs, false);
+            startupDedupNotice = new StartupDedupNotice(
+                    System.currentTimeMillis(), threshold, scanned, result.removed(), costMs,
+                    result.compared(), result.reused(), result.minDiff());
+            // 判定量：比对 / 复用次数 + 其中最低的不一致占比（最接近重复的一对有多近）
+            String cmpTxt = result.compared() + result.reused() > 0
+                    ? String.format("，比对 %d 次%s，最低不一致像素点占比 %s%%", result.compared(),
+                            result.reused() > 0 ? "（复用已存结果 " + result.reused() + " 次）" : "",
+                            pctText(result.minDiff()))
+                    : "，无可比对的同尺寸图";
+            if (result.removed() > 0) {
+                log.info("启动历史重复清理：按不一致像素点占比 ≤ 阈值 {}% 判据检查 resource/capture/ + resource/classify/ 全部截图，删除重复 {} 张{}",
+                        threshold, result.removed(), cmpTxt);
+            } else {
+                log.info("启动历史重复清理：resource/capture/ + resource/classify/ 共 {} 张，未发现不一致像素点占比 ≤ {}% 的重复截图{}",
+                        scanned, threshold, cmpTxt);
+            }
+            // 保留列表即清理后的基准全集：短暂持锁换进去（与运行期逐帧去重共用同一基准），
+            // 并把目录 mtime 守卫复位 —— 下一次判定会重新枚举一遍，把清理期间新保存的参考补进来
             synchronized (referenceLock) {
-                long started = System.nanoTime();
-                long startedAt = System.currentTimeMillis();
-                // 先置进行态快照：页面据此在扫描期间显示一直刷新的进度（含已耗时）
-                startupDedupProgress = new StartupDedupProgress(startedAt, 0, 0, "", 0, 0, 0, 0L, true);
-                log.info("启动历史重复清理：开始检查 resource/capture/ + resource/classify/ 的全部历史截图重复"
-                        + "（不一致像素点占比 ≤ 阈值 {}% 即视为重复删除，逐像素全尺寸比对；"
-                        + "文件名 + 修改时间都没变过的组合直接复用上次的比对结果）", threshold);
-                DedupResult result = dedupeHistoryLocked(threshold, startedAt);
-                long costMs = (System.nanoTime() - started) / 1_000_000;
-                int scanned = result.removed() + result.kept().size();
-                // 收尾：running=false 让页面撤掉进度提示，结果由下方 notice 给出
-                startupDedupProgress = new StartupDedupProgress(startedAt, scanned, scanned, "",
-                        result.compared(), result.reused(), result.removed(), costMs, false);
-                startupDedupNotice = new StartupDedupNotice(
-                        System.currentTimeMillis(), threshold, scanned, result.removed(), costMs,
-                        result.compared(), result.reused(), result.minDiff());
-                // 判定量：比对 / 复用次数 + 其中最低的不一致占比（最接近重复的一对有多近）
-                String cmpTxt = result.compared() + result.reused() > 0
-                        ? String.format("，比对 %d 次%s，最低不一致像素点占比 %s%%", result.compared(),
-                                result.reused() > 0 ? "（复用已存结果 " + result.reused() + " 次）" : "",
-                                pctText(result.minDiff()))
-                        : "，无可比对的同尺寸图";
-                if (result.removed() > 0) {
-                    log.info("启动历史重复清理：按不一致像素点占比 ≤ 阈值 {}% 判据检查 resource/capture/ + resource/classify/ 全部截图，删除重复 {} 张{}",
-                            threshold, result.removed(), cmpTxt);
-                } else {
-                    log.info("启动历史重复清理：resource/capture/ + resource/classify/ 共 {} 张，未发现不一致像素点占比 ≤ {}% 的重复截图{}",
-                            scanned, threshold, cmpTxt);
-                }
-                // 保留列表即最新基准全集：直接用它重建基准缓存，与运行期逐帧去重共用同一基准
                 referenceCache.clear();
                 for (Reference r : result.kept()) {
                     referenceCache.put(r.path.toString(), r);
                 }
+                lastCapDirMtime = Long.MIN_VALUE;
+                lastClsDirMtime = Long.MIN_VALUE;
             }
         } catch (Throwable e) {
             StartupDedupProgress p = startupDedupProgress;
@@ -324,7 +330,6 @@ public class ScreenCaptureService {
             log.warn("启动历史重复清理失败: {}", e.toString());
         } finally {
             dedupCache.saveIfDirty();   // 正常结束 / 异常中断都把已算出的比对结果落盘，下次不必重算同一对
-            referenceSeeded.countDown();
         }
     }
 
@@ -449,12 +454,6 @@ public class ScreenCaptureService {
             return new DedupScan(null, -1);   // 去重关闭：每次都保存
         }
         threshold = pct2(threshold);   // 统一口径：阈值也先四舍五入到两位小数，再与同口径的差异值比较
-        try {
-            referenceSeeded.await();   // 首轮须等基准载入完成，此后瞬时通过
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return new DedupScan(null, -1);   // 被中断：跳过去重放行保存（异常路径，尽量少影响截图）
-        }
         int w = image.getWidth();
         int h = image.getHeight();
         // 缩略图预筛：本帧的缩略图只抽一次；门槛 = 差异阈值的一半（缩略图差异达不到门槛即可判重复）
@@ -651,8 +650,12 @@ public class ScreenCaptureService {
     }
 
     /**
-     * 启动时对 resource/capture/（未标注原始截图）+ resource/classify/（已标注样本）的历史截图做一次重复清理
-     * （须在 {@link #referenceLock} 内调用）：按保留优先级排序后逐张判定，每张只与前面已保留的图比较。
+     * 启动时对 resource/capture/（未标注原始截图）+ resource/classify/（已标注样本）的历史截图做一次重复清理：
+     * 按保留优先级排序后逐张判定，每张只与前面已保留的图比较。
+     *
+     * <p><b>不持 {@link #referenceLock}、也不要求调用方持锁</b>：本方法只做磁盘删除与 {@link DedupCache} 读写，
+     * 因此可与页面按钮 / 截图循环 / 标注等完全并发，谁也不等谁。清理只删本次开始时枚举到的文件，
+     * 期间新保存的截图不受影响；被删掉的重复图由下一次运行期枚举基准时从缓存里剔除。</p>
      *
      * <ul>
      *   <li>保留优先级：resource/classify/ 已标注样本在前（有标注价值），resource/capture/ 次之；同目录内较早的优先；</li>
@@ -668,7 +671,7 @@ public class ScreenCaptureService {
      * @param startedAt 本次清理开始时刻（毫秒）：写进行态快照时原样带上，页面据此算「已耗时」
      * @return 删除张数、保留全集，以及判定量（比对次数 + 复用次数 + 其中最低的不一致像素点占比）
      */
-    private DedupResult dedupeHistoryLocked(double threshold, long startedAt) {
+    private DedupResult dedupeHistory(double threshold, long startedAt) {
         threshold = pct2(threshold);   // 与运行期判定同一口径：阈值两位舍入后再比较
         List<Path> all = new ArrayList<>();
         collectScreenshotPngs(storage.capture(), all);
