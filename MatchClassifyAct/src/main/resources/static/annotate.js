@@ -4699,6 +4699,7 @@ async function pollTick(){
    让「全部 / 未标注 / 汇总分析」的计数与产物尽快追上最新状态，不用等下一次轮询 */
 document.addEventListener("visibilitychange", ()=>{
   if(document.hidden) return;
+  if(appMode === "exec"){ execPollTick(); return; }  // 执行模式：恢复可见立即同步（后端循环一直在跑，别等下一个可能被节流过的 tick）
   if(appMode !== "mark" || dirty) return;
   if(FILTER === "think"){
     if(!thinkBusy){ updateCountsOnly(); refreshThink(false, true); }
